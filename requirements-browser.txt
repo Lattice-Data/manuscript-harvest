@@ -1,0 +1,12 @@
+# Optional: only the proxy_browser tier needs these.
+#
+#   pip install -r requirements-browser.txt
+#   python -m playwright install chromium
+#
+# Tiers 0-3 (Europe PMC, PMC, bioRxiv) work without any of this. If you never hit
+# a paywall, or you always pass --oa-only, you do not need to install it.
+#
+# If Google Chrome is installed, keep fetch.browser.channel: "chrome" in
+# config.yaml -- real Chrome clears bot checks that bundled Chromium does not,
+# and skips the chromium download entirely.
+playwright>=1.45

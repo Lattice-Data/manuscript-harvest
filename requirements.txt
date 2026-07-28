@@ -2,3 +2,6 @@ pymupdf>=1.24
 pydantic>=2.6
 requests>=2.31
 pyyaml>=6.0
+
+# The browser tier (paywalled articles) needs Playwright as well; it is optional
+# and lives in requirements-browser.txt so the open-access path stays dependency-light.

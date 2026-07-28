@@ -3,6 +3,12 @@ __pycache__/
 .venv/
 venv/
 *.egg-info/
+.DS_Store
 
 # Run output. Skills and examples ARE versioned; audit records are not, by default.
 audit/
+
+# Fetched papers. Manifests record provenance, but the bytes are the publisher's
+# and can be re-fetched from the DOI; keep them out of git.
+corpus/
+out.json
