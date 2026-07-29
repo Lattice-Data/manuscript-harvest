@@ -15,8 +15,8 @@ from pathlib import Path
 
 import pytest
 
-from curation.extract import extractor, jats, spreadsheet
-from curation.extract.limits import Limits
+from harvest.extract import extractor, jats, spreadsheet
+from harvest.extract.limits import Limits
 
 CORPUS = Path("corpus")
 L = Limits()
@@ -39,7 +39,7 @@ def _extractions():
         except ValueError:
             pytest.fail(f"unreadable extraction record: {path}")
     if not records:
-        pytest.skip("nothing extracted yet; run `python -m curation.extract.cli all`")
+        pytest.skip("nothing extracted yet; run `python -m harvest.extract.cli all`")
     return records
 
 

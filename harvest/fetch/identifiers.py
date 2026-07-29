@@ -1,7 +1,7 @@
 """DOI normalisation and identifier resolution.
 
-Deterministic and code-only, in the same spirit as `curation/patterns.py`: no
-model is involved in deciding what a paper is or where it lives.
+Deterministic and code-only: no model is involved in deciding what a paper is or
+where it lives.
 
 Europe PMC's search endpoint answers, in a single request, everything needed to
 route a fetch: the PMCID and PMID, whether the article is in PMC at all, and --

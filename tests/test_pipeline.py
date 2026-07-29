@@ -1,19 +1,17 @@
 """Tier orchestration end to end, with fake HTTP and no browser.
 
-The status taxonomy is what these tests defend. `audit/runs.jsonl` already holds a
-run that reported `valid` while extracting nothing, because an empty result and a
-failed result looked identical downstream; the equivalent trap here is an empty
-`supplementary/` directory. Every assertion about a status is really an assertion
-that the pipeline does not lie about what it got.
+The status taxonomy is what these tests defend. An empty result and a failed one
+look identical downstream unless something names them apart, and the trap here is
+an empty `supplementary/` directory. Every assertion about a status is really an
+assertion that the pipeline does not lie about what it got.
 """
 
-import json
 
 import pytest
 
-from curation.fetch import fetcher, store
-from curation.fetch.fetcher import _best_pdf_status, _supplement_status, suppl_flag_is_authoritative
-from curation.fetch.identifiers import Identifiers
+from harvest.fetch import fetcher, store
+from harvest.fetch.fetcher import _best_pdf_status, _supplement_status, suppl_flag_is_authoritative
+from harvest.fetch.identifiers import Identifiers
 from tests.fakes import (
     DOI,
     EUROPEPMC_EMPTY,
@@ -215,7 +213,7 @@ def test_dedup_on_bytes_and_name(tmp_path):
 
 
 def test_a_raising_tier_is_recorded_not_fatal(tmp_path, monkeypatch):
-    from curation.fetch.sources.europepmc import EuropePmcSource
+    from harvest.fetch.sources.europepmc import EuropePmcSource
 
     def explode(self, ids, need_pdf, need_supplements):
         raise RuntimeError("tier exploded")
@@ -233,7 +231,7 @@ def test_versioned_doi_falls_back_but_keeps_the_requested_slug(tmp_path):
         def get(self, url, params=None, accept=None, allow_redirects=True):
             if SEARCH in url and "104978.2" in (params or {}).get("query", ""):
                 self.calls.append(url)
-                from curation.fetch.http import Response
+                from harvest.fetch.http import Response
                 return Response(url=url, status=200, content=EUROPEPMC_EMPTY,
                                 content_type="application/json")
             return super().get(url, params, accept, allow_redirects)

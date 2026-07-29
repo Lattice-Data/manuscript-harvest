@@ -3,12 +3,13 @@ __pycache__/
 .venv/
 venv/
 *.egg-info/
+build/
+dist/
+.pytest_cache/
 .DS_Store
 
-# Run output. Skills and examples ARE versioned; audit records are not, by default.
-audit/
-
-# Fetched papers. Manifests record provenance, but the bytes are the publisher's
-# and can be re-fetched from the DOI; keep them out of git.
+# Fetched papers, and the blocks extracted from them. Manifests record provenance,
+# but the bytes are the publisher's and every article can be re-fetched from its
+# DOI; corpus/*/extracted/ is derived data, rebuilt by
+# `python -m harvest.extract.cli all`.
 corpus/
-out.json

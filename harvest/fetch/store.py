@@ -7,10 +7,11 @@
         supplementary/01_...     original filenames, sanitised and ordered
         landing.html             browser tier only, for adapter debugging
 
-The manifest follows the same principle as `curation/audit.py`: one record that
-says exactly where every byte came from, including the attempts that failed. A
-reader holding a manifest can tell which tier produced the PDF, whether the
-publisher claimed supplements existed, and what went wrong if some are missing.
+One record per article that says exactly where every byte came from, including
+the attempts that failed. A reader holding a manifest can tell which tier
+produced the PDF, whether the publisher claimed supplements existed, and what
+went wrong if some are missing. Downstream stages are entitled to trust it, so
+it records refusals as carefully as successes.
 """
 
 import hashlib
@@ -18,7 +19,7 @@ import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 from . import __version__
 from .identifiers import doi_slug

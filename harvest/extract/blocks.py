@@ -4,11 +4,11 @@ A block is deliberately small -- a paragraph, a heading, a figure caption, one
 table's summary card. The alternative, one concatenated text file per article,
 loses the two things that matter for curation:
 
-1. **Provenance.** `curation/runner.py` already verifies that every evidence
-   quote is a verbatim substring of the text it was given, but with a flat blob
-   it cannot say *which* of thirty supplementary files the quote came from. A
-   block carries `source_file` and `locator`, so a human can be pointed at
-   "sheet 'Table S6' of supplementary/03_mmc7.xlsx" and check the call.
+1. **Provenance.** Verifying that a quote is a verbatim substring of the text a
+   model was given is not enough on its own: with a flat blob it cannot say
+   *which* of thirty supplementary files the quote came from. A block carries
+   `source_file` and `locator`, so a human can be pointed at "sheet 'Table S6'
+   of supplementary/03_mmc7.xlsx" and check the call.
 2. **Selection.** The questions vary -- organism, age, sex, disease, treatment,
    library kit -- and each one wants a different slice. Blocks can be filtered by
    section and kind before anything is sent to a model; a blob can only be sent

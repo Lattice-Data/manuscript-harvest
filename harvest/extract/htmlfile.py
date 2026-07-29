@@ -124,7 +124,7 @@ def blocks_from_html(
         return [], NO_TEXT, meta
 
     # A page with no citation metadata and almost no prose is an interstitial.
-    # Returning it as `ok` would be the failure mode `curation/fetch/validate.py`
+    # Returning it as `ok` would be the failure mode `harvest/fetch/validate.py`
     # exists to prevent: an empty result that reads like a clean run.
     chars = sum(len(b.text) for b in blocks)
     if not reader.metas and chars < limits.min_landing_chars:

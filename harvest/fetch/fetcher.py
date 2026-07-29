@@ -3,10 +3,9 @@
 Each tier is asked only for what is still missing, and the loop stops as soon as
 there is a usable PDF and the supplement question is settled.
 
-The status taxonomy is the point of this module. `audit/runs.jsonl` already
-contains a run that reported `valid` while extracting nothing, because an empty
-result and a failed result looked identical downstream. The equivalent trap here
-is an empty `supplementary/` directory, so the two cases are named apart:
+The status taxonomy is the point of this module. An empty result and a failed
+result look identical downstream unless something names them apart, and the trap
+here is an empty `supplementary/` directory:
 
     none_listed          the publisher says this article has no supplements
     fetched              it has them and we have them
@@ -31,7 +30,6 @@ from .sources.base import (
     ROLE_PDF,
     ROLE_SUPPLEMENT,
     ROLE_XML,
-    SourceResult,
 )
 
 # Statuses that mean the PDF is on disk and usable.

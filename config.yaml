@@ -1,0 +1,77 @@
+# paper-harvest configuration. Every key here has a default in code; this file
+# only needs the ones you want to change.
+
+# Acquisition stage: DOI -> PDF + supplementary files.
+fetch:
+  corpus_dir: "corpus"
+
+  # SET THIS to your own address before running against a publisher. Crossref,
+  # NCBI and Europe PMC all ask callers to identify themselves, and it is what
+  # keeps a polite client out of the rate-limited pool. Left null, requests go
+  # out without one -- which works, but is not the documented convention.
+  contact_email: null
+
+  ncbi_api_key: null                      # optional; raises the NCBI rate limit from 3 to 10 req/s
+  min_interval_seconds: 3.0               # per host; 1-10 papers needs nothing cleverer
+  timeout_seconds: 60
+  max_files: 50                           # supplementary files per article; anything dropped is recorded
+  max_file_mb: 200
+
+  # Disk budget for corpus_dir. Articles average ~40 MB, and the bulk is content
+  # the pipeline wants (45% PDF, 25% spreadsheets), so there is no useful
+  # "drop the media" saving -- staying inside a budget means giving up whole
+  # articles. When exceeded, the oldest are evicted oldest-first; their manifests
+  # are kept, so you keep the record of what was there and can re-fetch with
+  # --force. null = unlimited. Inspect with `usage`, apply by hand with `prune`.
+  max_corpus_gb: null
+
+  # Tried in order. The first four need no credentials and no browser; the last
+  # one is the exception path. Drop "proxy_browser" (or pass --oa-only) to
+  # guarantee nothing ever opens a browser.
+  tiers:
+    - europepmc         # PDF + JATS XML + supplementaryFiles ZIP
+    - pmc_supplements   # PMC lists the files; the publisher's OA host serves them
+    - pmc_oa            # oa.fcgi: mainly an "is this in the OA subset" signal now
+    - biorxiv           # 10.1101 and 10.64898 preprints
+    - proxy_browser     # institutional proxy + real browser
+
+  # The oa_package FTP tree that oa.fcgi advertises is being retired and its
+  # packages currently 404, so the tarball download is off. Turn it on to try.
+  try_oa_package: false
+
+  # The last-resort tier reaches articles your library subscribes to, through
+  # your institution's proxy. That is your licence, not this tool's: check your
+  # institution's terms and your publishers' agreements before enabling it, and
+  # do not use it to bulk-download a catalogue. The prefix below is an example
+  # (Stanford's EZproxy); replace it with your own institution's.
+  proxy:
+    enabled: true
+    prefix: "https://stanford.idm.oclc.org/login?url="
+
+  browser:
+    profile_dir: "~/.paper-harvest/chrome-profile"
+    headless: true
+    channel: "chrome"                     # real Chrome clears bot checks bundled Chromium does not
+    nav_timeout_seconds: 60
+    download_timeout_seconds: 20
+    check_url: "https://www.nature.com/articles/s41586-026-10510-x"
+
+# Extraction stage: corpus files -> blocks of text with provenance.
+# Only the caps you want to change need to appear here; anything omitted comes
+# from harvest/extract/limits.py, where each default says why it exists.
+extract:
+  # Defaults to fetch.corpus_dir, so moving the corpus needs one edit, not two.
+  # corpus_dir: "corpus"
+
+  write_markdown: true          # also write extracted/article.md for reading
+
+  limits:
+    max_scan_rows: 5000         # rows profiled per sheet (one test corpus sheet is 16,596 x 88)
+    max_unique_values: 25       # a column with at most this many values is enumerated
+    max_unique_numeric_values: 12
+    max_card_chars: 4000        # budget for one table card's text
+    max_sample_rows: 3
+    max_archive_members: 25
+    max_member_mb: 50           # per file inside a zip
+    max_archive_depth: 2        # some zips contain only more zips
+    min_main_text_chars: 2000   # thinner JATS than this falls back to the PDF

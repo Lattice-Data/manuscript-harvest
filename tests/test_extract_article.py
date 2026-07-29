@@ -9,12 +9,12 @@ OCR, and a bot-check landing page is not an article.
 
 import pytest
 
-from curation.extract import extractor
-from curation.extract.blocks import BLOCKS_NAME, TABLE, read_blocks
-from curation.extract.cli import DEFAULT_EXTRACT_CONFIG, load_config, main
-from curation.extract.extractor import EXTRACT_DIR, extract_article, sniff_extension
-from curation.extract.limits import Limits
-from curation.fetch import store
+from harvest.extract import extractor
+from harvest.extract.blocks import BLOCKS_NAME, TABLE, read_blocks
+from harvest.extract.cli import DEFAULT_EXTRACT_CONFIG, load_config, main
+from harvest.extract.extractor import EXTRACT_DIR, extract_article, sniff_extension
+from harvest.extract.limits import Limits
+from harvest.fetch import store
 from tests.fakes import (
     DOI,
     LANDING_INTERSTITIAL,
@@ -265,7 +265,7 @@ def test_sniff_looks_inside_an_ooxml_package():
 
 def test_content_type_is_only_the_fallback():
     """Magic bytes decide, Content-Type is the fallback -- the same order
-    curation/fetch/validate.py uses, because a publisher that mislabels a paywall
+    harvest/fetch/validate.py uses, because a publisher that mislabels a paywall
     page as application/pdf will mislabel a supplement too."""
     assert sniff_extension(b"%PDF-1.7 real pdf", "text/csv") == ".pdf"
     assert sniff_extension(b"\x00\xff\x00\xfe binary", "application/pdf") == ".pdf"

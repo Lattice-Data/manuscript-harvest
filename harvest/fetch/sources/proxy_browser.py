@@ -73,7 +73,7 @@ def proxied_url(url: str, fetch_cfg: dict) -> str:
 def _profile_dir(fetch_cfg: dict) -> Path:
     browser_cfg = fetch_cfg.get("browser") or {}
     return Path(os.path.expanduser(
-        browser_cfg.get("profile_dir", "~/.curation-harness/chrome-profile")
+        browser_cfg.get("profile_dir", "~/.paper-harvest/chrome-profile")
     ))
 
 
@@ -307,12 +307,12 @@ def interactive_login(fetch_cfg: dict, probe_url: Optional[str] = None,
     if succeeded:
         print(f"\nLogged in. {detail}", flush=True)
         print(f"Cookie snapshot saved to {saved_to}")
-        print("Verify any time with:  python -m curation.fetch.cli check")
+        print("Verify any time with:  python -m harvest.fetch.cli check")
         return 0
     print(f"\nCould not confirm access: {detail}", flush=True)
     if saved_to:
         print(f"Cookies were still snapshotted to {saved_to}; try: "
-              "python -m curation.fetch.cli check")
+              "python -m harvest.fetch.cli check")
     return 1
 
 

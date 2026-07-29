@@ -60,7 +60,7 @@ class Limits:
     """Below this a JATS extraction is treated as too thin and the PDF is used
     instead. Some deposited XML carries only front matter."""
     min_pdf_text_chars: int = 200
-    """Matches curation.fetch.validate: less than this means scanned images."""
+    """Matches harvest.fetch.validate: less than this means scanned images."""
     running_header_min_pages: int = 3
     """A short line repeated on this many pages is a running head, not content."""
 

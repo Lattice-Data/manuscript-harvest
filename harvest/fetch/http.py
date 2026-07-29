@@ -1,7 +1,7 @@
 """Polite HTTP client shared by every non-browser source.
 
-Kept as a thin wrapper over `requests` on purpose, matching the style of
-`curation/llm_client.py`: the exact request stays visible and auditable.
+Kept as a thin wrapper over `requests` on purpose: the exact request stays
+visible and auditable rather than buried in a client library's abstractions.
 
 Two behaviours the sources rely on:
 
@@ -69,7 +69,7 @@ class Http:
         self._last_request: Dict[str, float] = {}
         self._session = requests.Session()
 
-        ua = f"curation-harness/{__version__}"
+        ua = f"paper-harvest/{__version__}"
         if contact_email:
             ua += f" (+mailto:{contact_email})"
         self._session.headers["User-Agent"] = ua
@@ -89,7 +89,7 @@ class Http:
         """NCBI asks callers to identify themselves via tool= and email=."""
         params = dict(params or {})
         if "ncbi.nlm.nih.gov" in urlparse(url).netloc:
-            params.setdefault("tool", "curation-harness")
+            params.setdefault("tool", "paper-harvest")
             if self.contact_email:
                 params.setdefault("email", self.contact_email)
             if self.ncbi_api_key:

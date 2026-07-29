@@ -3,7 +3,7 @@
 #   pip install -r requirements-browser.txt
 #   python -m playwright install chromium
 #
-# Tiers 0-3 (Europe PMC, PMC, bioRxiv) work without any of this. If you never hit
+# The open-access tiers (Europe PMC, PMC, bioRxiv) work without any of this. If you never hit
 # a paywall, or you always pass --oa-only, you do not need to install it.
 #
 # If Google Chrome is installed, keep fetch.browser.channel: "chrome" in

@@ -11,11 +11,6 @@ Two independent things happen here:
   docx Heading style) onto a canonical name.
 - `spans` recovers headings from flowed PDF text, where the only signal left is
   that the heading sits alone on its line.
-
-`curation/pdf_loader.py` has an older, narrower version of the same regexes. It
-is left alone deliberately: it serves the existing single-PDF CLI path, which has
-no test coverage, and quietly changing what that sends to the model is a worse
-trade than carrying two tables for now.
 """
 
 import re

@@ -11,9 +11,9 @@ import json
 
 import pytest
 
-from curation.fetch.adapters import adapter_for, candidate_hosts
-from curation.fetch.sources import proxy_browser as pb
-from curation.fetch.sources.base import ROLE_PDF, ROLE_SUPPLEMENT, SourceResult
+from harvest.fetch.adapters import adapter_for, candidate_hosts
+from harvest.fetch.sources import proxy_browser as pb
+from harvest.fetch.sources.base import SourceResult
 from tests.fakes import (
     POW_HTML,
     RECAPTCHA_HTML,

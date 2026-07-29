@@ -1,6 +1,5 @@
 """Adapter registry, selected by the hostname of the rendered page."""
 
-import re
 from urllib.parse import urlparse
 
 from .base import Adapter

@@ -11,9 +11,9 @@ import sys
 
 import pytest
 
-from curation.extract import archive, docxfile, htmlfile, jats, ooxml, pdf, sections
-from curation.extract import spreadsheet, tables
-from curation.extract.blocks import (
+from harvest.extract import archive, docxfile, htmlfile, jats, ooxml, pdf, sections
+from harvest.extract import spreadsheet, tables
+from harvest.extract.blocks import (
     CAPTION,
     HEADING,
     METADATA,
@@ -24,7 +24,7 @@ from curation.extract.blocks import (
     render_markdown,
     write_blocks,
 )
-from curation.extract.limits import Limits
+from harvest.extract.limits import Limits
 from tests.fakes import (
     LANDING_INTERSTITIAL,
     SPRINGER_SUPPLEMENT,
@@ -463,8 +463,8 @@ def test_xml_without_an_article_element_is_unreadable():
 # -- PDF ---------------------------------------------------------------------
 
 def test_hyphenated_line_breaks_are_rejoined():
-    """A hyphenated word is unsearchable and cannot be quoted, and the evidence
-    check in curation/runner.py compares quotes against this text."""
+    """A hyphenated word is unsearchable and cannot be quoted, and any check that
+    a quote really appears in the source compares it against this text."""
     data = make_pdf_pages([["We measured the perturba-\ntion of gene expression "
                             "across every single condition tested in this study, "
                             "and compared each result against the matched control "
@@ -576,7 +576,7 @@ def test_landing_page_metadata_and_prose_are_kept():
 def test_bot_check_landing_page_is_not_reported_as_text():
     """Nine Elsevier landing pages in this corpus hold 129 characters: the
     browser's own user-agent string. Calling that `ok` is the failure mode
-    curation/fetch/validate.py exists to prevent."""
+    harvest/fetch/validate.py exists to prevent."""
     blocks, status, meta = htmlfile.blocks_from_html(
         LANDING_INTERSTITIAL, "landing.html", L)
     assert (blocks, status) == ([], "no_text")

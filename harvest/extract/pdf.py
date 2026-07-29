@@ -7,9 +7,9 @@ two-column layouts, which most publisher PDFs are.
 Two clean-ups happen here and they change the characters:
 
 - **De-hyphenation.** "perturba-\\ntion" becomes "perturbation". Left alone, a
-  hyphenated word is unsearchable and cannot be quoted; the evidence check in
-  `curation/runner.py` compares quotes against the text this module produced, so
-  the text it produces is the text that counts.
+  hyphenated word is unsearchable and cannot be quoted. Any downstream check that
+  a quote really appears in the source compares it against the text this module
+  produced, so the text it produces is the text that counts.
 - **Running heads.** A journal footer repeated on every page would otherwise
   appear as thirty near-identical paragraphs. A short line seen on at least
   `limits.running_header_min_pages` pages is dropped and the count recorded.
