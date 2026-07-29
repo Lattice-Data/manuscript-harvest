@@ -1,4 +1,4 @@
-# paper-harvest
+# manuscript-harvest
 
 Fetch a published paper from its DOI — the article and every supplementary file —
 and turn it into blocks of text with provenance: paragraphs, headings, captions,
@@ -41,10 +41,15 @@ non-obvious ones whenever a corpus is present.
 ## Install
 
     python -m venv .venv && source .venv/bin/activate
-    pip install -r requirements.txt
+    pip install -e .
 
-    python -m harvest.fetch.cli get 10.1038/s41467-023-40505-5   # download
-    python -m harvest.extract.cli all                            # extract
+    manuscript-fetch get 10.1038/s41467-023-40505-5   # download
+    manuscript-extract all                            # extract
+
+Without installing, the same two entry points are reachable as
+`python -m manuscript_harvest.fetch.cli` and
+`python -m manuscript_harvest.extract.cli`; `pip install -r requirements.txt` is
+enough for that.
 
 Optional extras:
 
@@ -70,8 +75,8 @@ opens.
 
 ## Acquiring papers: DOI → PDF + supplementary files
 
-    python -m harvest.fetch.cli get 10.1038/s41586-021-03852-1
-    python -m harvest.fetch.cli batch dois.txt --report fetched.jsonl
+    manuscript-fetch get 10.1038/s41586-021-03852-1
+    manuscript-fetch batch dois.txt --report fetched.jsonl
 
 Writes `corpus/<doi_slug>/` containing `fulltext.pdf`, `supplementary/`, a
 `fulltext.nxml` when the JATS XML comes free, and a `manifest.json` recording
@@ -112,8 +117,8 @@ they are why the tiers are arranged this way:
 
 ### Paywalled articles
 
-    python -m harvest.fetch.cli login     # headed browser, one time
-    python -m harvest.fetch.cli check     # is the saved session still good?
+    manuscript-fetch login     # headed browser, one time
+    manuscript-fetch check     # is the saved session still good?
 
 Cardinal Key is a WebAuthn credential and Duo cannot be scripted, so **the login
 itself is not automatable and this does not pretend otherwise**. `login` opens a
@@ -129,7 +134,7 @@ Two things learned from getting this wrong:
 - **A persistent Chrome profile is not enough.** EZproxy issues *session*
   cookies, and Chrome discards those on restart — measured: three
   `.idm.oclc.org` cookies present right after login, gone by the next launch. So
-  `login` also snapshots cookies to `~/.paper-harvest/storage_state.json`
+  `login` also snapshots cookies to `~/.manuscript-harvest/storage_state.json`
   (Playwright's `storage_state` keeps session cookies) and later runs re-inject
   them. **That file is a live credential — treat it like one.**
 - **`check` downloads the PDF and validates it.** Finding a `citation_pdf_url` is
@@ -176,9 +181,9 @@ called directly rather than taking the dependency.
 
 Articles average **~40 MB**, so a few hundred papers is tens of gigabytes.
 
-    python -m harvest.fetch.cli usage --by-size     # what is taking the space
-    python -m harvest.fetch.cli prune --dry-run     # what a prune would remove
-    python -m harvest.fetch.cli prune --max-gb 20   # actually evict
+    manuscript-fetch usage --by-size     # what is taking the space
+    manuscript-fetch prune --dry-run     # what a prune would remove
+    manuscript-fetch prune --max-gb 20   # actually evict
 
 Set `fetch.max_corpus_gb` and the budget is enforced automatically after every
 fetch, evicting **oldest first**. Three things worth knowing:
@@ -199,11 +204,11 @@ articles rather than trimming fat.
 
 ## Extraction: corpus files → blocks
 
-    python -m harvest.extract.cli one 10.1038/s41467-023-40505-5
-    python -m harvest.extract.cli all                # every article; skips unchanged ones
-    python -m harvest.extract.cli status             # coverage across the corpus
-    python -m harvest.extract.cli show <doi> --section methods
-    python -m harvest.extract.cli show <doi> --kind table --full
+    manuscript-extract one 10.1038/s41467-023-40505-5
+    manuscript-extract all                # every article; skips unchanged ones
+    manuscript-extract status             # coverage across the corpus
+    manuscript-extract show <doi> --section methods
+    manuscript-extract show <doi> --kind table --full
 
 Offline: it reads only what the acquisition stage already wrote. Output lands
 beside the article, so an eviction removes it along with the rest of the payload:
@@ -354,7 +359,7 @@ in `tests/test_extract_corpus.py`.
   as a single block; the count is now judged by its mode.
 - **Thirteen files called `NN_url`.** Saved by the browser tier with no extension.
   Magic bytes decide what they are, with `Content-Type` only as a fallback — the
-  same order, and for the same reason, as `harvest/fetch/validate.py`.
+  same order, and for the same reason, as `manuscript_harvest/fetch/validate.py`.
 - **A bot-check page reported as an article.** Nine Elsevier `landing.html` files
   hold 129 characters: the browser's own user-agent string. A page with no citation
   metadata and less than `min_landing_chars` of text is named an interstitial, and
@@ -362,7 +367,7 @@ in `tests/test_extract_corpus.py`.
 
 ### Caps
 
-Every cap lives in `harvest/extract/limits.py`, each with a comment saying why it
+Every cap lives in `manuscript_harvest/extract/limits.py`, each with a comment saying why it
 exists, and any of them can be overridden under `extract.limits` in `config.yaml`.
 Nothing a cap drops is silent: it is recorded in `extraction.json` and in the
 affected table card's notes, so a thin result reads as "capped" rather than

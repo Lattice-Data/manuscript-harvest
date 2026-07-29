@@ -1,4 +1,4 @@
-# paper-harvest configuration. Every key here has a default in code; this file
+# manuscript-harvest configuration. Every key here has a default in code; this file
 # only needs the ones you want to change.
 
 # Acquisition stage: DOI -> PDF + supplementary files.
@@ -49,7 +49,7 @@ fetch:
     prefix: "https://stanford.idm.oclc.org/login?url="
 
   browser:
-    profile_dir: "~/.paper-harvest/chrome-profile"
+    profile_dir: "~/.manuscript-harvest/chrome-profile"
     headless: true
     channel: "chrome"                     # real Chrome clears bot checks bundled Chromium does not
     nav_timeout_seconds: 60
@@ -58,7 +58,7 @@ fetch:
 
 # Extraction stage: corpus files -> blocks of text with provenance.
 # Only the caps you want to change need to appear here; anything omitted comes
-# from harvest/extract/limits.py, where each default says why it exists.
+# from manuscript_harvest/extract/limits.py, where each default says why it exists.
 extract:
   # Defaults to fetch.corpus_dir, so moving the corpus needs one edit, not two.
   # corpus_dir: "corpus"

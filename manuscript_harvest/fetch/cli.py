@@ -1,9 +1,9 @@
 """Command line for the acquisition stage.
 
-    python -m harvest.fetch.cli get 10.1038/s41586-021-03852-1
-    python -m harvest.fetch.cli batch dois.txt
-    python -m harvest.fetch.cli login          # one-time Stanford SSO, headed
-    python -m harvest.fetch.cli check          # is the browser session alive?
+    manuscript-fetch get 10.1038/s41586-021-03852-1
+    manuscript-fetch batch dois.txt
+    manuscript-fetch login          # one-time Stanford SSO, headed
+    manuscript-fetch check          # is the browser session alive?
 
 `get` and `batch` work with no browser and no credentials for open-access papers.
 `login` and `check` exist only for the last-resort proxy tier.
@@ -36,7 +36,7 @@ DEFAULT_FETCH_CONFIG = {
         "prefix": "https://stanford.idm.oclc.org/login?url=",
     },
     "browser": {
-        "profile_dir": "~/.paper-harvest/chrome-profile",
+        "profile_dir": "~/.manuscript-harvest/chrome-profile",
         "headless": True,
         "channel": "chrome",
         "nav_timeout_seconds": 60,
@@ -226,7 +226,7 @@ def cmd_check(args) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="python -m harvest.fetch.cli",
+        prog="manuscript-fetch",
         description="Fetch a publication PDF and its supplementary files from a DOI.",
     )
     parser.add_argument("--config", default="config.yaml")

@@ -11,9 +11,9 @@ import json
 
 import pytest
 
-from harvest.fetch.adapters import adapter_for, candidate_hosts
-from harvest.fetch.sources import proxy_browser as pb
-from harvest.fetch.sources.base import SourceResult
+from manuscript_harvest.fetch.adapters import adapter_for, candidate_hosts
+from manuscript_harvest.fetch.sources import proxy_browser as pb
+from manuscript_harvest.fetch.sources.base import SourceResult
 from tests.fakes import (
     POW_HTML,
     RECAPTCHA_HTML,

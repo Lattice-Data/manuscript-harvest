@@ -44,7 +44,7 @@ jobs:
           if importlib.util.find_spec("playwright") is not None:
               sys.exit("playwright is installed; this job no longer proves the "
                        "browser tier is optional")
-          import harvest.fetch.cli, harvest.extract.cli  # must import regardless
+          import manuscript_harvest.fetch.cli, manuscript_harvest.extract.cli  # must import regardless
           print("ok: both CLIs import with no browser installed")
           PY
 

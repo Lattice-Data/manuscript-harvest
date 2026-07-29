@@ -69,7 +69,7 @@ class Http:
         self._last_request: Dict[str, float] = {}
         self._session = requests.Session()
 
-        ua = f"paper-harvest/{__version__}"
+        ua = f"manuscript-harvest/{__version__}"
         if contact_email:
             ua += f" (+mailto:{contact_email})"
         self._session.headers["User-Agent"] = ua
@@ -89,7 +89,7 @@ class Http:
         """NCBI asks callers to identify themselves via tool= and email=."""
         params = dict(params or {})
         if "ncbi.nlm.nih.gov" in urlparse(url).netloc:
-            params.setdefault("tool", "paper-harvest")
+            params.setdefault("tool", "manuscript-harvest")
             if self.contact_email:
                 params.setdefault("email", self.contact_email)
             if self.ncbi_api_key:

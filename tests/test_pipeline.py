@@ -9,9 +9,9 @@ assertion that the pipeline does not lie about what it got.
 
 import pytest
 
-from harvest.fetch import fetcher, store
-from harvest.fetch.fetcher import _best_pdf_status, _supplement_status, suppl_flag_is_authoritative
-from harvest.fetch.identifiers import Identifiers
+from manuscript_harvest.fetch import fetcher, store
+from manuscript_harvest.fetch.fetcher import _best_pdf_status, _supplement_status, suppl_flag_is_authoritative
+from manuscript_harvest.fetch.identifiers import Identifiers
 from tests.fakes import (
     DOI,
     EUROPEPMC_EMPTY,
@@ -213,7 +213,7 @@ def test_dedup_on_bytes_and_name(tmp_path):
 
 
 def test_a_raising_tier_is_recorded_not_fatal(tmp_path, monkeypatch):
-    from harvest.fetch.sources.europepmc import EuropePmcSource
+    from manuscript_harvest.fetch.sources.europepmc import EuropePmcSource
 
     def explode(self, ids, need_pdf, need_supplements):
         raise RuntimeError("tier exploded")
@@ -231,7 +231,7 @@ def test_versioned_doi_falls_back_but_keeps_the_requested_slug(tmp_path):
         def get(self, url, params=None, accept=None, allow_redirects=True):
             if SEARCH in url and "104978.2" in (params or {}).get("query", ""):
                 self.calls.append(url)
-                from harvest.fetch.http import Response
+                from manuscript_harvest.fetch.http import Response
                 return Response(url=url, status=200, content=EUROPEPMC_EMPTY,
                                 content_type="application/json")
             return super().get(url, params, accept, allow_redirects)

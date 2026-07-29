@@ -11,9 +11,9 @@ import sys
 
 import pytest
 
-from harvest.extract import archive, docxfile, htmlfile, jats, ooxml, pdf, sections
-from harvest.extract import spreadsheet, tables
-from harvest.extract.blocks import (
+from manuscript_harvest.extract import archive, docxfile, htmlfile, jats, ooxml, pdf, sections
+from manuscript_harvest.extract import spreadsheet, tables
+from manuscript_harvest.extract.blocks import (
     CAPTION,
     HEADING,
     METADATA,
@@ -24,7 +24,7 @@ from harvest.extract.blocks import (
     render_markdown,
     write_blocks,
 )
-from harvest.extract.limits import Limits
+from manuscript_harvest.extract.limits import Limits
 from tests.fakes import (
     LANDING_INTERSTITIAL,
     SPRINGER_SUPPLEMENT,
@@ -576,7 +576,7 @@ def test_landing_page_metadata_and_prose_are_kept():
 def test_bot_check_landing_page_is_not_reported_as_text():
     """Nine Elsevier landing pages in this corpus hold 129 characters: the
     browser's own user-agent string. Calling that `ok` is the failure mode
-    harvest/fetch/validate.py exists to prevent."""
+    manuscript_harvest/fetch/validate.py exists to prevent."""
     blocks, status, meta = htmlfile.blocks_from_html(
         LANDING_INTERSTITIAL, "landing.html", L)
     assert (blocks, status) == ([], "no_text")

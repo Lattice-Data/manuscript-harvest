@@ -1,10 +1,10 @@
 """Command line for the extraction stage.
 
-    python -m harvest.extract.cli one 10.1038/s41467-023-40505-5
-    python -m harvest.extract.cli all --limit 10
-    python -m harvest.extract.cli status
-    python -m harvest.extract.cli show 10.1038/s41467-023-40505-5 --section methods
-    python -m harvest.extract.cli show <doi> --kind table --full
+    manuscript-extract one 10.1038/s41467-023-40505-5
+    manuscript-extract all --limit 10
+    manuscript-extract status
+    manuscript-extract show 10.1038/s41467-023-40505-5 --section methods
+    manuscript-extract show <doi> --kind table --full
 
 Everything here is offline: it reads what the fetch stage already put in the
 corpus. `all` is safe to re-run -- an article whose manifest has not changed and
@@ -205,7 +205,7 @@ def cmd_show(args) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="python -m harvest.extract.cli",
+        prog="manuscript-extract",
         description="Extract text and table cards from fetched articles.",
     )
     parser.add_argument("--config", default="config.yaml")

@@ -9,26 +9,26 @@ fails.
 
 import pytest
 
-from harvest.fetch import store
-from harvest.fetch.adapters import adapter_for
-from harvest.fetch.adapters.base import (
+from manuscript_harvest.fetch import store
+from manuscript_harvest.fetch.adapters import adapter_for
+from manuscript_harvest.fetch.adapters.base import (
     dedupe_by_target,
     is_file_url,
     looks_like_supplement,
     url_without_fragment,
 )
-from harvest.fetch.adapters.publishers import ElsevierAdapter, WileyAdapter
-from harvest.fetch.cli import DEFAULT_FETCH_CONFIG, _merge, load_config
-from harvest.fetch.http import Http
-from harvest.fetch.identifiers import (
+from manuscript_harvest.fetch.adapters.publishers import ElsevierAdapter, WileyAdapter
+from manuscript_harvest.fetch.cli import DEFAULT_FETCH_CONFIG, _merge, load_config
+from manuscript_harvest.fetch.http import Http
+from manuscript_harvest.fetch.identifiers import (
     Identifiers,
     doi_slug,
     is_preprint_doi,
     normalize_doi,
     unversioned_doi,
 )
-from harvest.fetch.sources.pmc_oa import _classify, _unpack_tgz, ftp_to_https
-from harvest.fetch.validate import classify_denial, looks_like_pdf, validate_pdf
+from manuscript_harvest.fetch.sources.pmc_oa import _classify, _unpack_tgz, ftp_to_https
+from manuscript_harvest.fetch.validate import classify_denial, looks_like_pdf, validate_pdf
 from tests.fakes import (
     DOI,
     EZPROXY_HTML,
@@ -387,7 +387,7 @@ def test_generic_adapter_uses_citation_pdf_url():
 
 def test_user_agent_identifies_the_tool_and_contact():
     http = Http(contact_email="a@b.edu")
-    assert "paper-harvest" in http._session.headers["User-Agent"]
+    assert "manuscript-harvest" in http._session.headers["User-Agent"]
     assert "a@b.edu" in http._session.headers["User-Agent"]
 
 
@@ -395,16 +395,16 @@ def test_ncbi_calls_carry_tool_and_email():
     """NCBI asks callers to identify themselves; other hosts get nothing extra."""
     http = Http(contact_email="a@b.edu", ncbi_api_key="key123")
     params = http._ncbi_params("https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/", {})
-    assert params["tool"] == "paper-harvest"
+    assert params["tool"] == "manuscript-harvest"
     assert params["email"] == "a@b.edu" and params["api_key"] == "key123"
     assert http._ncbi_params("https://www.ebi.ac.uk/x", {"a": 1}) == {"a": 1}
 
 
 def test_per_host_interval_is_enforced(monkeypatch):
     slept = []
-    monkeypatch.setattr("harvest.fetch.http.time.sleep", lambda s: slept.append(s))
+    monkeypatch.setattr("manuscript_harvest.fetch.http.time.sleep", lambda s: slept.append(s))
     clock = {"t": 100.0}
-    monkeypatch.setattr("harvest.fetch.http.time.monotonic", lambda: clock["t"])
+    monkeypatch.setattr("manuscript_harvest.fetch.http.time.monotonic", lambda: clock["t"])
 
     http = Http(min_interval_seconds=3.0)
     http._wait_for_host("https://a.example/1")   # first call: no wait

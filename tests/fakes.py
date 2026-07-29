@@ -18,7 +18,7 @@ from typing import Dict, List, Optional
 
 import fitz
 
-from harvest.fetch.http import Response
+from manuscript_harvest.fetch.http import Response
 
 DOI = "10.1038/s41586-021-03852-1"
 PMCID = "PMC8426186"
@@ -59,7 +59,7 @@ def make_pdf_pages(pages) -> bytes:
     """A PDF with exact control over each page's text.
 
     `pages` is a list of lists of strings; each string becomes its own layout
-    block, which is the unit `harvest/extract/pdf.py` reads.
+    block, which is the unit `manuscript_harvest/extract/pdf.py` reads.
 
     Text that does not fit raises rather than being silently dropped: PyMuPDF's
     `insert_textbox` returns a negative number and inserts nothing in that case,
@@ -99,7 +99,7 @@ def make_xlsx(sheets) -> bytes:
     return buffer.getvalue()
 
 
-#: Transitional -> strict, the inverse of `harvest/extract/ooxml._NAMESPACES`.
+#: Transitional -> strict, the inverse of `manuscript_harvest/extract/ooxml._NAMESPACES`.
 _STRICT_SWAPS = [
     (b"http://schemas.openxmlformats.org/spreadsheetml/2006/main",
      b"http://purl.oclc.org/ooxml/spreadsheetml/main"),
@@ -503,12 +503,12 @@ def make_article(directory, fulltext=None, xml=None, supplements=(), landing=Non
 
     `supplements` is a list of `(filename, bytes)` or
     `(filename, bytes, original_name)`; the manifest records them the way
-    `harvest/fetch/store.py` does, retrieval-order prefix included.
+    `manuscript_harvest/fetch/store.py` does, retrieval-order prefix included.
     """
     from pathlib import Path
 
-    from harvest.fetch import store
-    from harvest.fetch.identifiers import doi_slug
+    from manuscript_harvest.fetch import store
+    from manuscript_harvest.fetch.identifiers import doi_slug
 
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)

@@ -10,7 +10,7 @@ the article is accounted for with a status, so a thin extraction is legible:
 `image_no_text` on 321 figure files across the corpus is a fact about the
 supplements, not a parser failure, and `no_text_scanned_pdf` is a file that needs
 OCR rather than a file with nothing in it. The failure mode being designed
-against is the same one `harvest/fetch/validate.py` guards: a plausible empty
+against is the same one `manuscript_harvest/fetch/validate.py` guards: a plausible empty
 result that looks like a clean run.
 
 Main text is chosen, not merged: JATS if it is there and substantial, else the
@@ -119,7 +119,7 @@ def sniff_extension(data: bytes, content_type: str = "") -> str:
     spreadsheets. They are recoverable, but only by looking inside.
 
     Magic bytes decide, and Content-Type is the fallback -- the same order
-    `harvest/fetch/validate.py` uses, and for the same reason: a publisher that
+    `manuscript_harvest/fetch/validate.py` uses, and for the same reason: a publisher that
     serves a paywall page as `application/pdf` will also mislabel a supplement.
     """
     head = data[:8]

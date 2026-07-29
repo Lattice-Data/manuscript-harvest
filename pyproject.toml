@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "paper-harvest"
+name = "manuscript-harvest"
 version = "0.1.0"
 description = "Fetch published papers from a DOI and extract their text and supplementary tables with provenance"
 readme = "README.md"
@@ -35,8 +35,8 @@ xls = ["xlrd>=2.0"]
 dev = ["pytest>=7.0"]
 
 [project.scripts]
-paper-harvest-fetch = "harvest.fetch.cli:main"
-paper-harvest-extract = "harvest.extract.cli:main"
+manuscript-fetch = "manuscript_harvest.fetch.cli:main"
+manuscript-extract = "manuscript_harvest.extract.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["harvest*"]
+include = ["manuscript_harvest*"]
