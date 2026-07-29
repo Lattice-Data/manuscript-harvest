@@ -30,6 +30,21 @@ CROSSREF_WORKS = "https://api.crossref.org/works/"
 _DOI_RX = re.compile(r"10\.\d{4,9}/\S+")
 _MAX_SLUG = 150
 
+# eLife reviewed preprints carry a version suffix (10.7554/eLife.104978.2) that
+# indexes do not always hold -- verified: the versioned form has no Europe PMC
+# record while the unversioned one resolves to PMC12893711. Only 1-2 trailing
+# digits count as a version, so an article number like
+# 10.1016/j.cell.2021.01.053 is never mistaken for one. This is a fallback tried
+# only after the exact DOI comes back empty, so a wrong guess costs one request
+# and is recorded either way.
+_VERSION_SUFFIX_RX = re.compile(r"^(?P<base>10\.\d{4,9}/.+)\.(?P<version>\d{1,2})$")
+
+
+def unversioned_doi(doi: str) -> Optional[str]:
+    """Strip a trailing version suffix, or None if there is nothing to strip."""
+    match = _VERSION_SUFFIX_RX.match(doi)
+    return match.group("base") if match else None
+
 
 def normalize_doi(raw: str) -> str:
     """Return a bare lowercase DOI, or raise ValueError.
@@ -96,6 +111,7 @@ class Identifiers:
     has_suppl: Optional[bool] = None
     full_text_urls: List[Dict] = field(default_factory=list)
     landing_url: Optional[str] = None          # publisher page, from Crossref or doi.org
+    lookup_doi: Optional[str] = None           # set when a variant DOI resolved instead
     resolved_by: List[str] = field(default_factory=list)
     problems: List[str] = field(default_factory=list)
 
@@ -134,18 +150,20 @@ class Identifiers:
             "has_suppl": self.has_suppl,
             "is_preprint": self.is_preprint,
             "landing_url": self.landing_url,
+            "lookup_doi": self.lookup_doi,
             "resolved_by": self.resolved_by,
             "problems": self.problems,
         }
 
 
-def _query_europepmc(ids: Identifiers, http: Http) -> None:
+def _query_europepmc(ids: Identifiers, http: Http, doi: Optional[str] = None) -> None:
     """Fill `ids` from Europe PMC. Records a problem rather than raising."""
+    doi = doi or ids.doi
     try:
         resp = http.get(
             EUROPEPMC_SEARCH,
             params={
-                "query": f'DOI:"{ids.doi}"',
+                "query": f'DOI:"{doi}"',
                 "format": "json",
                 "resultType": "core",
                 "pageSize": "1",
@@ -167,7 +185,7 @@ def _query_europepmc(ids: Identifiers, http: Http) -> None:
         return
 
     if not results:
-        ids.problems.append("europepmc has no record for this DOI")
+        ids.problems.append(f"europepmc has no record for {doi}")
         return
 
     record = results[0]
@@ -258,6 +276,20 @@ def resolve_identifiers(doi: str, http: Http, need_landing_url: bool = False) ->
     ids = Identifiers(doi=normalize_doi(doi), doi_raw=doi)
 
     _query_europepmc(ids, http)
+
+    # A versioned DOI (eLife reviewed preprints) is often absent from indexes
+    # while its unversioned form is present. Retry once before giving up.
+    if not ids.pmcid and ids.epmc_source is None:
+        base = unversioned_doi(ids.doi)
+        if base:
+            _query_europepmc(ids, http, doi=base)
+            if ids.epmc_source is not None:
+                ids.lookup_doi = base
+                ids.problems.append(
+                    f"resolved via the unversioned DOI {base} "
+                    f"(no index record for {ids.doi})"
+                )
+
     if not ids.pmcid:
         _query_ncbi_idconv(ids, http)
     if need_landing_url or not ids.title or not ids.journal:

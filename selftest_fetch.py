@@ -205,6 +205,51 @@ def check_doi_normalisation():
     print("  ok  DOI normalisation, slugs, and rejection of non-DOIs")
 
 
+def check_version_suffix_fallback(tmp):
+    """A versioned DOI must fall back to its unversioned form -- and only it.
+
+    eLife reviewed preprints (10.7554/eLife.104978.2) are frequently absent from
+    indexes while the unversioned DOI is present. The danger is over-stripping:
+    10.1016/j.cell.2021.01.053 also ends in dot-digits and must be left alone.
+    """
+    from curation.fetch.identifiers import unversioned_doi
+
+    assert unversioned_doi("10.7554/elife.104978.2") == "10.7554/elife.104978"
+    for keep in ["10.1016/j.cell.2021.01.053", "10.1101/2025.07.21.666016",
+                 "10.1126/science.aax6234", "10.1182/bloodadvances.2023011445"]:
+        assert unversioned_doi(keep) is None, f"over-stripped {keep}"
+
+    # End to end: the versioned DOI 404s, the base resolves, and the corpus
+    # directory still uses the DOI the caller asked for.
+    versioned = "10.7554/elife.104978.2"
+    corpus = tmp / "versioned"
+    calls = []
+
+    class VersionAwareHttp(FakeHttp):
+        def get(self, url, params=None, accept=None, allow_redirects=True):
+            query = (params or {}).get("query", "")
+            calls.append(query)
+            if "/webservices/rest/search" in url:
+                if "elife.104978.2" in query:      # versioned: no record
+                    body = json.dumps({"hitCount": 0, "resultList": {"result": []}}).encode()
+                else:                               # unversioned: found
+                    body = europepmc_search_json(doi="10.7554/elife.104978", hasSuppl="N")
+                return Response(url=url, status=200, content=body,
+                                content_type="application/json")
+            return super().get(url, params, accept, allow_redirects)
+
+    http = VersionAwareHttp({
+        "example.org/article.pdf": (200, make_pdf(), "application/pdf"),
+        "/fullTextXML": (404, b"", ""),
+    })
+    record = fetcher.fetch_publication(versioned, base_config(corpus, ["europepmc"]), http=http)
+    assert record["identifiers"]["lookup_doi"] == "10.7554/elife.104978", record["identifiers"]
+    assert record["fulltext"]["status"] == "ok", record["fulltext"]
+    assert record["slug"] == "10.7554_elife.104978.2", record["slug"]
+    assert any("unversioned DOI" in p for p in record["problems"]), record["problems"]
+    print("  ok  versioned DOI falls back to unversioned (and article numbers are not stripped)")
+
+
 def check_filename_sanitisation():
     assert store.sanitize_filename("a b/c.xlsx") == "c.xlsx"
     assert store.sanitize_filename("../../etc/passwd") == "passwd"
@@ -531,6 +576,7 @@ def main():
         tmp = Path(raw_tmp)
         print("acquisition self-test (offline)")
         check_doi_normalisation()
+        check_version_suffix_fallback(tmp)
         check_filename_sanitisation()
         check_denial_detection()
         check_adapter_selection_and_links()
