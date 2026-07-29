@@ -2,5 +2,5 @@
 # nothing beyond pytest and the runtime requirements.
 #
 #   pip install -r requirements.txt -r requirements-dev.txt
-#   python -m pytest tests -q         # or: python selftest_fetch.py
+#   python -m pytest tests -q
 pytest>=7.0

@@ -377,8 +377,7 @@ affected table card's notes, so a thin result reads as "capped" rather than
 
     pip install -r requirements-dev.txt
     python -m pytest tests -q            # everything offline: no network, no browser
-    python selftest_fetch.py             # the same suite, via the wrapper
-    python selftest_fetch.py -k budget   # just the matching tests
+    python -m pytest tests -q -k budget  # just the matching tests
 
 The tests live in `tests/` and run under pytest:
 

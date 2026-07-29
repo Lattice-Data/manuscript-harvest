@@ -60,4 +60,4 @@ jobs:
       # f-strings with no placeholders). Deliberately not a formatting gate --
       # this repo's style is hand-maintained and reformatting it would bury the
       # comments that explain why the odd branches exist.
-      - run: ruff check --select F harvest tests
+      - run: ruff check --select F manuscript_harvest tests
