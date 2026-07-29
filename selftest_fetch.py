@@ -250,6 +250,36 @@ def check_version_suffix_fallback(tmp):
     print("  ok  versioned DOI falls back to unversioned (and article numbers are not stripped)")
 
 
+def check_preprint_prefixes():
+    """Preprint detection must not be hard-wired to the 10.1101 prefix.
+
+    bioRxiv/medRxiv migrated to openRxiv's 10.64898 prefix, so every newly posted
+    preprint carries it. Verified: Crossref reports publisher "openRxiv" for
+    10.64898/2026.02.15.704933 and the bioRxiv details API answers for it, but
+    Europe PMC has it as hasPDF=N -- so gating the tier on 10.1101 meant the whole
+    preprint route was skipped and the paper came away with nothing. It now
+    fetches a PDF, JATS XML and 9 supplementary files.
+    """
+    from curation.fetch.identifiers import is_preprint_doi
+    from curation.fetch.sources.biorxiv import BiorxivSource
+
+    for doi in ["10.1101/2025.07.21.666016", "10.64898/2026.02.15.704933"]:
+        assert is_preprint_doi(doi), doi
+        ids = Identifiers(doi=doi, doi_raw=doi)
+        assert ids.is_preprint, doi
+        assert BiorxivSource(None, {}).applies(ids), f"biorxiv tier skipped {doi}"
+
+    # A journal article must not be mistaken for a preprint.
+    journal = Identifiers(doi=DOI, doi_raw=DOI)
+    assert not is_preprint_doi(DOI) and not journal.is_preprint
+    assert not BiorxivSource(None, {}).applies(journal)
+
+    # Europe PMC's own PPR classification also counts, whatever the prefix.
+    ppr = Identifiers(doi="10.21203/rs.3.rs-1", doi_raw="x", epmc_source="PPR")
+    assert ppr.is_preprint and BiorxivSource(None, {}).applies(ppr)
+    print("  ok  preprints detected for 10.1101, openRxiv 10.64898, and PPR source")
+
+
 def check_filename_sanitisation():
     assert store.sanitize_filename("a b/c.xlsx") == "c.xlsx"
     assert store.sanitize_filename("../../etc/passwd") == "passwd"
@@ -615,6 +645,7 @@ def main():
         print("acquisition self-test (offline)")
         check_doi_normalisation()
         check_version_suffix_fallback(tmp)
+        check_preprint_prefixes()
         check_filename_sanitisation()
         check_denial_detection()
         check_adapter_selection_and_links()

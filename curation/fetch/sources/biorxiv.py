@@ -38,7 +38,10 @@ class BiorxivSource(Source):
     name = "biorxiv"
 
     def applies(self, ids) -> bool:
-        return ids.doi.startswith("10.1101/")
+        # Covers both the historical 10.1101 prefix and openRxiv's 10.64898, plus
+        # anything Europe PMC classifies as a preprint (source PPR). A preprint from
+        # another server simply fails the details lookup and records that.
+        return ids.is_preprint
 
     def fetch(self, ids, need_pdf: bool, need_supplements: bool) -> SourceResult:
         result = SourceResult(tier=self.name)

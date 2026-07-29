@@ -46,6 +46,18 @@ def unversioned_doi(doi: str) -> Optional[str]:
     return match.group("base") if match else None
 
 
+# bioRxiv/medRxiv historically minted 10.1101 DOIs, but have migrated to openRxiv's
+# 10.64898 prefix -- so every newly posted preprint carries the new one. Verified:
+# Crossref reports publisher "openRxiv" for 10.64898/2026.02.15.704933, the bioRxiv
+# details API answers for it, and it resolves to biorxiv.org/lookup/doi/...
+# Gating only on 10.1101 silently skipped the whole tier for new preprints.
+PREPRINT_PREFIXES = ("10.1101/", "10.64898/")
+
+
+def is_preprint_doi(doi: str) -> bool:
+    return any(doi.startswith(prefix) for prefix in PREPRINT_PREFIXES)
+
+
 def normalize_doi(raw: str) -> str:
     """Return a bare lowercase DOI, or raise ValueError.
 
@@ -117,8 +129,7 @@ class Identifiers:
 
     @property
     def is_preprint(self) -> bool:
-        """bioRxiv/medRxiv DOIs all sit under the 10.1101 prefix."""
-        return self.doi.startswith("10.1101/") or self.epmc_source == "PPR"
+        return is_preprint_doi(self.doi) or self.epmc_source == "PPR"
 
     def open_access_pdf_urls(self) -> List[str]:
         """PDF URLs from Europe PMC's fullTextUrlList that are marked open."""
