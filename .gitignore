@@ -6,10 +6,14 @@ venv/
 build/
 dist/
 .pytest_cache/
+.coverage
+coverage.lcov
+coverage.xml
+htmlcov/
 .DS_Store
 
 # Fetched papers, and the blocks extracted from them. Manifests record provenance,
 # but the bytes are the publisher's and every article can be re-fetched from its
 # DOI; corpus/*/extracted/ is derived data, rebuilt by
-# `python -m harvest.extract.cli all`.
+# `python -m manuscript_harvest.extract.cli all`.
 corpus/

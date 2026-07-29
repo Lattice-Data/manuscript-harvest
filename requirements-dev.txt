@@ -2,5 +2,8 @@
 # nothing beyond pytest and the runtime requirements.
 #
 #   pip install -r requirements.txt -r requirements-dev.txt
-#   python -m pytest tests -q         # or: python selftest_fetch.py
+#   python -m pytest tests -q
 pytest>=7.0
+# pytest-cov 4.0 is the first release that can emit lcov, which is what CI hands to
+# Coveralls; it also pulls a coverage.py new enough to produce it.
+pytest-cov>=4.0

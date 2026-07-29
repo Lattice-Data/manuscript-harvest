@@ -34,8 +34,29 @@ jobs:
       # lazily inside a function, and its tests run against fakes, so the suite
       # must pass without a browser. If that ever stops being true, this job is
       # where it should fail.
+      # The floor is set just under the current number so it catches a real
+      # regression without tripping on noise. Note that CI always measures the
+      # no-corpus figure: tests/test_extract_corpus.py skips itself without a local
+      # `corpus/`, so a developer running with one present will read higher than the
+      # badge. That gap is expected, not a discrepancy.
       - name: Test
-        run: python -m pytest tests -q
+        run: >
+          python -m pytest tests -q
+          --cov=manuscript_harvest
+          --cov-report=lcov
+          --cov-report=term-missing:skip-covered
+          --cov-fail-under=70
+
+      # Uploaded from one interpreter only. Coverage is a property of the suite, not
+      # of the Python version, so four uploads per commit would buy no extra signal
+      # and would mean coordinating Coveralls' parallel-build protocol to get one
+      # number. Authenticates with the built-in GITHUB_TOKEN -- no external secret.
+      - name: Coveralls
+        if: matrix.python-version == '3.12'
+        uses: coverallsapp/github-action@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          file: coverage.lcov
 
       - name: Confirm the browser tier is still optional
         run: |
@@ -60,4 +81,4 @@ jobs:
       # f-strings with no placeholders). Deliberately not a formatting gate --
       # this repo's style is hand-maintained and reformatting it would bury the
       # comments that explain why the odd branches exist.
-      - run: ruff check --select F harvest tests
+      - run: ruff check --select F manuscript_harvest tests
