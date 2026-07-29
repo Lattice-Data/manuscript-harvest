@@ -448,6 +448,25 @@ class ProxyBrowserSource(Source):
         )
 
         denial = classify_denial(final_url, body)
+
+        if denial == "proxy_not_configured" and target != landing:
+            # EZproxy having no stanza for a host frequently means the host needs
+            # no proxy at all: Frontiers is fully open access, yet
+            # 10.3389/fdmed.2021.806294 failed outright because we insisted on
+            # proxying it. Retry the publisher directly before giving up.
+            result.note("landing", url=target, status="proxy_not_configured",
+                        detail="retrying without the proxy")
+            try:
+                page.goto(landing, wait_until="domcontentloaded")
+                final_url = settle_page(page)
+                body = stable_content(page)
+                denial = classify_denial(final_url, body)
+                result.note("landing", url=landing, final_url=final_url,
+                            status="loaded_unproxied", denial=denial)
+            except Exception as e:
+                result.note("landing", url=landing, status="navigation_failed",
+                            error=f"{type(e).__name__}: {e}")
+
         if denial in {"proxy_not_configured", "session_expired"}:
             # No point asking the adapter to parse a login page.
             result.problems.append(f"{denial} at {final_url}")
@@ -461,6 +480,29 @@ class ProxyBrowserSource(Source):
             return
 
         adapter = adapter_for(final_url)
+
+        # Some publishers answer automation with a plausible 200-OK shell instead of
+        # the article. Without this check it reads as "no PDF, no supplements".
+        if adapter.looks_blocked(page):
+            headless = bool((self.config.get("browser") or {}).get("headless", True))
+            hint = ("try --headed, though ScienceDirect stubs headed runs too" if headless
+                    else "the page rendered but exposed no article content")
+            result.problems.append(
+                f"{adapter.name} served a stub page to this browser at {final_url}; {hint}"
+            )
+            result.note("landing", url=target, final_url=final_url,
+                        status="publisher_stub_page", adapter=adapter.name,
+                        headless=headless)
+            if need_pdf:
+                result.pdf_status = "publisher_stub_page"
+            if need_supplements:
+                result.suppl_status = "page_not_parsed"
+            try:
+                page.close()
+            except Exception:
+                pass
+            return
+
         result.note("landing", url=target, final_url=final_url, status="loaded",
                     adapter=adapter.name, denial=denial)
 

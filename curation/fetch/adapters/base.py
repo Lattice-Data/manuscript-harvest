@@ -49,6 +49,16 @@ class Adapter:
     def find_supplements(self, page, doi: str) -> Tuple[List[dict], bool]:
         raise NotImplementedError
 
+    def looks_blocked(self, page) -> bool:
+        """True when the page is a stub served to automation, not the article.
+
+        Distinct from a paywall: the content is licensed and reachable, just not to
+        this browser. Publishers that do this return HTTP 200 with a plausible
+        shell, so without an explicit check it looks like an article that simply
+        has no PDF and no supplements.
+        """
+        return False
+
 
 def meta_content(page, name: str) -> Optional[str]:
     """Read a <meta name=...> value, or None."""

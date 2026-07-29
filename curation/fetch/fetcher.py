@@ -37,30 +37,31 @@ from .sources.base import (
 # Statuses that mean the PDF is on disk and usable.
 _PDF_SUCCESS = {"ok", "scanned_pdf_suspected"}
 
-# Most informative failure first: when several tiers fail differently, report the
-# one that best tells the user what to do next. "paywalled" is actionable;
-# "not_found" is not.
-_PDF_FAILURE_RANK = [
-    "paywalled",
-    "session_expired",
-    "proxy_not_configured",
-    "not_in_oa_subset",
-    "not_a_pdf",
-    "download_failed",
-    "not_found",
-]
+# Diagnoses that name a cause the user can act on. These win wherever they appear,
+# because "your session expired" beats "the last thing we tried returned HTML".
+_PDF_DIAGNOSES = ["paywalled", "session_expired", "proxy_not_configured",
+                  "publisher_stub_page"]
 
 _SETTLED_SUPPL = {"none_listed", "fetched", "not_requested"}
 
 
 def _best_pdf_status(reported: List[str]) -> str:
+    """Pick the most useful explanation from the statuses each tier reported.
+
+    `reported` is in tier order, so the last entry comes from the most capable tier
+    that tried. Preferring it avoids an early routing note drowning out a real
+    attempt: for 10.1002/path.5751 the tiers said
+    `[download_failed, not_in_oa_subset, not_a_pdf]`, and a static ranking surfaced
+    `not_in_oa_subset` when the actual cause was Wiley serving an HTML viewer.
+    An actionable diagnosis still wins wherever it appears.
+    """
     for status in reported:
         if status in _PDF_SUCCESS:
             return status
-    for candidate in _PDF_FAILURE_RANK:
+    for candidate in _PDF_DIAGNOSES:
         if candidate in reported:
             return candidate
-    return "not_found"
+    return reported[-1] if reported else "not_found"
 
 
 def suppl_flag_is_authoritative(ids: Identifiers) -> bool:

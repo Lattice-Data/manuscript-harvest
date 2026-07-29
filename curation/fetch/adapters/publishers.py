@@ -84,9 +84,15 @@ class WileyAdapter(Adapter):
     def find_pdf_url(self, page, doi: str) -> Optional[str]:
         value = meta_content(page, "citation_pdf_url")
         if value:
-            return value
+            # Wiley advertises `/doi/pdf/<doi>`, which is an HTML *viewer* -- 46 KB
+            # of text/html for 10.1002/path.5751, rejected as `not_a_pdf`. The bytes
+            # live at `/doi/pdfdirect/<doi>`.
+            return re.sub(r"/doi/(?:pdf|epdf)/", "/doi/pdfdirect/", value)
         if doi:
-            return f"https://onlinelibrary.wiley.com/doi/pdfdirect/{doi}"
+            # Built on the current origin so a proxied hostname survives.
+            parts = urlparse(page.url or "")
+            host = parts.netloc or "onlinelibrary.wiley.com"
+            return f"{parts.scheme or 'https'}://{host}/doi/pdfdirect/{doi}"
         return None
 
     def find_supplements(self, page, doi: str) -> Tuple[List[dict], bool]:
@@ -111,6 +117,26 @@ class ElsevierAdapter(Adapter):
 
     name = "elsevier"
     hosts = ("sciencedirect.com", "cell.com", "elsevier.com")
+
+    def looks_blocked(self, page) -> bool:
+        """ScienceDirect serves automation a shell page instead of the article.
+
+        Headless gets `<title>ScienceDirect</title>` with zero PDF anchors. A
+        headed browser on the same profile *sometimes* gets the real article -- one
+        manual run on 10.1016/j.stem.2023.12.013 returned the true title, 34 PDF
+        anchors and 96 `ars-els-cdn` supplement anchors -- but a headed batch over
+        eight articles was stubbed on every one. So visibility alone is not the
+        variable, and the status deliberately does not claim it is.
+        """
+        try:
+            title = (page.title() or "").strip()
+        except Exception:
+            return False
+        if title.lower() not in {"sciencedirect", "sciencedirect.com", ""}:
+            return False
+        # A real article page always links its own PDF somewhere.
+        return not any("pdf" in (link["url"] + link["text"]).lower()
+                       for link in collect_links(page))
 
     def find_pdf_url(self, page, doi: str) -> Optional[str]:
         value = meta_content(page, "citation_pdf_url")
