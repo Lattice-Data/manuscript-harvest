@@ -71,7 +71,12 @@ def _supplement_status(
 ) -> str:
     if not want_supplements:
         return "not_requested"
-    if ids.has_suppl is False:
+    # `hasSuppl` is authoritative for indexed journal articles but NOT for
+    # preprints. Measured: Europe PMC reports hasSuppl=N for
+    # 10.1101/2025.07.21.666016, whose bioRxiv page carries media-1.pdf and
+    # media-2.zip. Trusting the flag there produced a confident `none_listed`
+    # and silently lost both files, so preprints are always checked at source.
+    if ids.has_suppl is False and not ids.is_preprint:
         return "none_listed"
     if collected:
         # Judge on the outcome, not on the journey. An earlier tier failing and a
@@ -81,6 +86,10 @@ def _supplement_status(
         if "fetched" in reported:
             return "fetched"
         return "partial_failure"
+    # A source that owns the content (bioRxiv for its own preprints) can state
+    # authoritatively that there are none, even when the index disagrees.
+    if "none_listed" in reported:
+        return "none_listed"
     if ids.has_suppl is True:
         return "expected_but_missing"
     if "page_not_parsed" in reported:
@@ -134,7 +143,9 @@ def fetch_publication(
     record["tiers_configured"] = tier_names
 
     need_pdf = True
-    need_supplements = want_supplements and ids.has_suppl is not False
+    # See `_supplement_status`: hasSuppl=N cannot be trusted for preprints, so a
+    # preprint's own server is always asked regardless of what the index claims.
+    need_supplements = want_supplements and (ids.has_suppl is not False or ids.is_preprint)
 
     pdf_statuses: List[str] = []
     suppl_statuses: List[str] = []

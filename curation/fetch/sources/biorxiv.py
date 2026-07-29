@@ -154,13 +154,15 @@ class BiorxivSource(Source):
 
         links = _media_links(resp.text, base)
         if not links:
-            # The page loaded fine and simply lists nothing. Claiming
-            # `page_not_parsed` here would be a false alarm -- verified against
-            # 10.1101/2022.01.02.474723, whose supplement page carries no
-            # supplement links at all and which Europe PMC reports as hasSuppl=N.
-            # Leaving the status unset lets the fetcher reconcile against that
-            # authoritative flag instead of this source guessing.
-            result.note("supplements", url=page_url, status="no_media_links_found",
+            # bioRxiv is the authority on its own preprints, so a page that loads
+            # and lists nothing really means nothing -- report `none_listed`
+            # rather than the false alarm `page_not_parsed`. Verified against
+            # 10.1101/2022.01.02.474723, whose supplement page carries no links.
+            # This matters because the index flag cannot be trusted here either:
+            # Europe PMC says hasSuppl=N for 10.1101/2025.07.21.666016, which
+            # does have media-1.pdf and media-2.zip.
+            result.suppl_status = "none_listed"
+            result.note("supplements", url=page_url, status="none_listed",
                         detail="page loaded; no supplementary links present")
             return
 

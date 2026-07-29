@@ -546,6 +546,32 @@ def check_later_tier_rescues(tmp):
     print("  ok  a later tier's success is not poisoned by an earlier tier's failure")
 
 
+def check_preprint_hassuppl_not_trusted(tmp):
+    """hasSuppl=N is authoritative for journal articles, but NOT for preprints.
+
+    Regression guard for real silent data loss: Europe PMC reports hasSuppl=N for
+    10.1101/2025.07.21.666016, whose bioRxiv page carries media-1.pdf and
+    media-2.zip (72 MB together). Trusting the flag reported a confident
+    `none_listed` and dropped both files.
+    """
+    from curation.fetch.fetcher import _supplement_status
+
+    journal = Identifiers(doi=DOI, doi_raw=DOI, has_suppl=False)
+    preprint = Identifiers(doi="10.1101/2025.07.21.666016",
+                           doi_raw="10.1101/2025.07.21.666016", has_suppl=False)
+    assert preprint.is_preprint and not journal.is_preprint
+
+    # An indexed journal article may be taken at its word.
+    assert _supplement_status(journal, True, 0, []) == "none_listed"
+    # A preprint may not: the flag must never produce a bare "none_listed".
+    assert _supplement_status(preprint, True, 0, []) == "unknown_none_found"
+    # ...but the preprint's own server IS authoritative when it says none.
+    assert _supplement_status(preprint, True, 0, ["none_listed"]) == "none_listed"
+    # ...and files found despite hasSuppl=N are simply fetched.
+    assert _supplement_status(preprint, True, 2, ["fetched"]) == "fetched"
+    print("  ok  preprints are checked at source even when the index says hasSuppl=N")
+
+
 def check_dedup(tmp):
     """Same name AND same bytes is a duplicate. Same bytes alone is not.
 
@@ -589,6 +615,7 @@ def main():
         check_paywall_not_saved(tmp)
         check_cap_is_reported(tmp)
         check_later_tier_rescues(tmp)
+        check_preprint_hassuppl_not_trusted(tmp)
         check_dedup(tmp)
         print("SELFTEST_FETCH PASSED")
 

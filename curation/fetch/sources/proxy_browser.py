@@ -570,6 +570,24 @@ class ProxyBrowserSource(Source):
             fetched += 1
         return fetched, len(attempted)
 
+    def _oversize_mb(self, context, url: str, referer: str) -> Optional[float]:
+        """Content-Length in MB if it exceeds the cap, else None.
+
+        Checked *before* transferring. Measured on
+        10.1126/science.aax6234: one supplement is a 487.8 MB gzip, so the old
+        post-hoc check both wasted the whole transfer and then died inside
+        Playwright, whose Node driver marshals bodies as strings and cannot exceed
+        V8's ~512 MB limit ("Cannot create a string longer than 0x1fffffe8").
+        """
+        try:
+            head = context.request.head(url, headers={"Referer": referer})
+            length = int(head.headers.get("content-length") or 0)
+        except Exception:
+            return None
+        if length and length > self.max_file_bytes:
+            return round(length / 1024 / 1024, 1)
+        return None
+
     def _download_one(self, context, url: str, referer: str, result: SourceResult, via: str,
                       allow_page_fallback: bool = True):
         """Fetch one file, falling back to real navigation for JS challenges.
@@ -579,13 +597,32 @@ class ProxyBrowserSource(Source):
         comes back, the URL is opened in a real page and the resulting download is
         captured instead.
         """
+        oversize = self._oversize_mb(context, url, referer)
+        if oversize is not None:
+            result.problems.append(
+                f"{url.rsplit('/', 1)[-1]} not fetched: {oversize} MB exceeds the "
+                f"{self.config.get('max_file_mb', 200)} MB cap (fetch.max_file_mb)"
+            )
+            result.note("supplement_file", url=url, via=via, status="too_large",
+                        megabytes=oversize)
+            return None, None, None, "too_large"
+
         try:
             response = context.request.get(url, headers={"Referer": referer})
             content, status_code, headers = response.body(), response.status, response.headers
         except Exception as e:
-            result.note("supplement_file", url=url, via=via, status="request_failed",
+            # Playwright's Node driver marshals bodies as strings, so anything
+            # near V8's ~512 MB limit fails here regardless of the cap.
+            transport_limit = "longer than 0x1fffffe8" in str(e)
+            status = "too_large_for_transport" if transport_limit else "request_failed"
+            if transport_limit:
+                result.problems.append(
+                    f"{url.rsplit('/', 1)[-1]} exceeds what the browser transport can "
+                    "return (~512 MB); fetch it manually if it is needed"
+                )
+            result.note("supplement_file", url=url, via=via, status=status,
                         error=f"{type(e).__name__}: {e}")
-            return None, None, None, "request_failed"
+            return None, None, None, status
 
         if status_code >= 400 or not content:
             result.note("supplement_file", url=url, via=via, status="http_error",
@@ -656,14 +693,28 @@ class ProxyBrowserSource(Source):
                 except Exception:
                     pass
 
+        # Re-check the size: before the challenge was cleared, Content-Length
+        # described the 1.8 KB challenge page, not the file.
+        oversize = self._oversize_mb(context, url, url)
+        if oversize is not None:
+            result.problems.append(
+                f"{url.rsplit('/', 1)[-1]} not fetched: {oversize} MB exceeds the "
+                f"{self.config.get('max_file_mb', 200)} MB cap (fetch.max_file_mb)"
+            )
+            result.note("supplement_file", url=url, via=via, status="too_large",
+                        megabytes=oversize)
+            return None, None, "too_large"
+
         try:
             response = context.request.get(url)
             content, status_code = response.body(), response.status
             headers = response.headers
         except Exception as e:
-            result.note("supplement_file", url=url, via=via, status="request_failed",
+            transport_limit = "longer than 0x1fffffe8" in str(e)
+            status = "too_large_for_transport" if transport_limit else "request_failed"
+            result.note("supplement_file", url=url, via=via, status=status,
                         error=f"{type(e).__name__}: {e}")
-            return None, None, "request_failed"
+            return None, None, status
 
         if status_code >= 400 or not content:
             result.note("supplement_file", url=url, via=via, status="http_error",
