@@ -2,6 +2,15 @@ pymupdf>=1.24
 pydantic>=2.6
 requests>=2.31
 pyyaml>=6.0
+openpyxl>=3.1
 
 # The browser tier (paywalled articles) needs Playwright as well; it is optional
 # and lives in requirements-browser.txt so the open-access path stays dependency-light.
+#
+# openpyxl is required, not optional: 172 of the 191 spreadsheets in a 63-article
+# corpus are .xlsx, and they are where sample-level metadata actually lives.
+#
+# One optional extra, for the extraction stage:
+#   xlrd>=2.0     legacy binary .xls (1 file in 191). Without it that file is
+#                 reported `unsupported_format` rather than silently skipped.
+# Word documents, zips and JATS XML need nothing beyond the standard library.

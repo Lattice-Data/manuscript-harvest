@@ -1,4 +1,4 @@
-"""Run the acquisition test suite (no network, no browser).
+"""Run the offline test suite: acquisition and extraction (no network, no browser).
 
     python selftest_fetch.py            # everything
     python selftest_fetch.py -k budget  # just the matching tests
@@ -8,7 +8,10 @@ failures and selective runs as more journals and sources get added. This wrapper
 exists so the documented one-command entry point keeps working, and so the suite
 can be run without remembering pytest's invocation.
 
-`selftest.py` is separate and still covers the extraction pipeline.
+`tests/test_extract_corpus.py` skips itself unless a local `corpus/` is present,
+so this stays runnable in a clean checkout.
+
+`selftest.py` is separate and covers the skill pipeline against a mock model.
 """
 
 import subprocess

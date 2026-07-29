@@ -11,6 +11,7 @@ it so far was found by running real DOIs.
 
 import io
 import json
+import re
 import tarfile
 import zipfile
 from typing import Dict, List, Optional
@@ -52,6 +53,192 @@ def make_paywall_pdf() -> bytes:
     data = doc.tobytes()
     doc.close()
     return data
+
+
+def make_pdf_pages(pages) -> bytes:
+    """A PDF with exact control over each page's text.
+
+    `pages` is a list of lists of strings; each string becomes its own layout
+    block, which is the unit `curation/extract/pdf.py` reads.
+
+    Text that does not fit raises rather than being silently dropped: PyMuPDF's
+    `insert_textbox` returns a negative number and inserts nothing in that case,
+    which would hand the test an empty PDF and make it look like a parser bug.
+    """
+    doc = fitz.open()
+    for blocks in pages:
+        page = doc.new_page()
+        top, bottom = 50.0, 790.0
+        height = (bottom - top) / max(1, len(blocks))
+        for index, text in enumerate(blocks):
+            box = fitz.Rect(45, top + index * height, 550, top + (index + 1) * height)
+            overflow = page.insert_textbox(box, text, fontsize=7)
+            if overflow < 0:
+                raise ValueError(
+                    f"fixture text does not fit in its box ({len(text)} chars, "
+                    f"{overflow:.0f} short); use fewer blocks or less text")
+    data = doc.tobytes()
+    doc.close()
+    return data
+
+
+# -- spreadsheets ------------------------------------------------------------
+
+def make_xlsx(sheets) -> bytes:
+    """`sheets` is `{sheet_name: [row, ...]}`; rows are lists of cell values."""
+    import openpyxl
+
+    workbook = openpyxl.Workbook()
+    workbook.remove(workbook.active)
+    for name, rows in sheets.items():
+        sheet = workbook.create_sheet(title=name)
+        for row in rows:
+            sheet.append(list(row))
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
+#: Transitional -> strict, the inverse of `curation/extract/ooxml._NAMESPACES`.
+_STRICT_SWAPS = [
+    (b"http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+     b"http://purl.oclc.org/ooxml/spreadsheetml/main"),
+    (b"http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+     b"http://purl.oclc.org/ooxml/officeDocument/relationships"),
+]
+
+
+def make_strict_xlsx(sheets) -> bytes:
+    """A strict ISO-29500 workbook, the shape openpyxl reads as having no sheets.
+
+    Built by rewriting a normal workbook's namespaces, which is exactly how
+    Excel's "Strict Open XML Spreadsheet" option differs. Observed live on
+    10.1016/j.cell.2021.01.053's `mmc7.xlsx`, which held three worksheets and
+    reported as empty.
+    """
+    source = zipfile.ZipFile(io.BytesIO(make_xlsx(sheets)))
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as target:
+        for info in source.infolist():
+            content = source.read(info)
+            if info.filename.lower().endswith((".xml", ".rels")):
+                for transitional, strict in _STRICT_SWAPS:
+                    content = content.replace(transitional, strict)
+            target.writestr(info.filename, content)
+    source.close()
+    return buffer.getvalue()
+
+
+def make_dimensionless_xlsx(sheets) -> bytes:
+    """A workbook whose sheets declare no dimensions.
+
+    openpyxl raises `ValueError: Worksheet is unsized` from
+    `calculate_dimension()` for these. Observed on
+    10.1038/s44161-025-00612-6's `MOESM5_ESM.xlsx`.
+    """
+    source = zipfile.ZipFile(io.BytesIO(make_xlsx(sheets)))
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as target:
+        for info in source.infolist():
+            content = source.read(info)
+            if info.filename.startswith("xl/worksheets/"):
+                content = re.sub(rb"<dimension[^>]*/>", b"", content)
+            target.writestr(info.filename, content)
+    source.close()
+    return buffer.getvalue()
+
+
+# -- Word documents ----------------------------------------------------------
+
+_W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+
+
+def _docx_paragraph(text: str, style=None) -> str:
+    properties = f'<w:pPr><w:pStyle w:val="{style}"/></w:pPr>' if style else ""
+    return f"<w:p>{properties}<w:r><w:t>{text}</w:t></w:r></w:p>"
+
+
+def _docx_table(rows) -> str:
+    body = ""
+    for row in rows:
+        cells = "".join(
+            f"<w:tc>{_docx_paragraph(str(cell))}</w:tc>" for cell in row)
+        body += f"<w:tr>{cells}</w:tr>"
+    return f"<w:tbl>{body}</w:tbl>"
+
+
+def make_docx(parts) -> bytes:
+    """`parts` is a list of `("paragraph", text[, style])`, `("table", rows)`,
+    or `("raw", xml)` for exercising field codes and tracked deletions."""
+    body = ""
+    for part in parts:
+        kind = part[0]
+        if kind == "paragraph":
+            body += _docx_paragraph(part[1], part[2] if len(part) > 2 else None)
+        elif kind == "table":
+            body += _docx_table(part[1])
+        elif kind == "raw":
+            body += part[1]
+    document = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                f'<w:document xmlns:w="{_W}"><w:body>{body}</w:body></w:document>')
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("[Content_Types].xml",
+                         '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org'
+                         '/package/2006/content-types"><Default Extension="xml" '
+                         'ContentType="application/xml"/></Types>')
+        archive.writestr("_rels/.rels",
+                         '<?xml version="1.0"?><Relationships xmlns="http://schemas.'
+                         'openxmlformats.org/package/2006/relationships"/>')
+        archive.writestr("word/document.xml", document)
+    return buffer.getvalue()
+
+
+# -- JATS --------------------------------------------------------------------
+
+def jats_article(body: str = "", front_extra: str = "", back: str = "",
+                 doctype: bool = True) -> bytes:
+    """A JATS article shaped like Europe PMC's `fulltext.nxml`.
+
+    The DOCTYPE is included by default because it is present in every real file
+    and it is what makes named entities undefined for the stdlib parser.
+    """
+    prologue = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<!DOCTYPE article PUBLIC "-//NLM//DTD JATS (Z39.96) Journal Publishing '
+        'DTD v1.2 20190208//EN" "JATS-journalpublishing1.dtd">\n' if doctype else
+        '<?xml version="1.0" encoding="UTF-8"?>\n')
+    return (prologue + f"""<article xmlns:xlink="http://www.w3.org/1999/xlink"
+ article-type="research-article">
+<front><journal-meta><journal-title>Nature Communications</journal-title></journal-meta>
+<article-meta>
+<article-id pub-id-type="doi">{DOI}</article-id>
+<title-group><article-title>A test article about islets</article-title></title-group>
+<pub-date><year>2023</year></pub-date>
+<kwd-group><kwd>single-cell</kwd><kwd>pancreas</kwd></kwd-group>
+<abstract><p>We profiled human islets.</p></abstract>
+{front_extra}
+</article-meta></front>
+<body>{body}</body>
+<back>{back}</back>
+</article>""").encode("utf-8")
+
+
+#: The shape Springer uses: href and caption live on a nested <media>, not on
+#: <supplementary-material> itself. Reading only direct children found labels
+#: for none of the 40 XML files in the corpus.
+SPRINGER_SUPPLEMENT = """<sec sec-type="supplementary-material"><sec>
+<title>Supplementary information</title><p>
+<supplementary-material content-type="local-data" id="MOESM1">
+<media xlink:href="41467_2023_40505_MOESM3_ESM.xlsx"><caption><p>Supplementary Table 3</p>
+</caption></media></supplementary-material>
+</p></sec></sec>"""
+
+
+LANDING_INTERSTITIAL = (
+    b"<html><body><div>User Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    b"AppleWebKit/537.36 HeadlessChrome/150.0.0.0 Safari/537.36</div></body></html>"
+)
 
 
 # -- HTML shapes -------------------------------------------------------------
@@ -308,6 +495,52 @@ class FakeContext:
 
     def close(self):
         return None
+
+
+def make_article(directory, fulltext=None, xml=None, supplements=(), landing=None,
+                 doi=DOI) -> "object":
+    """Write a corpus article directory the extraction stage can be pointed at.
+
+    `supplements` is a list of `(filename, bytes)` or
+    `(filename, bytes, original_name)`; the manifest records them the way
+    `curation/fetch/store.py` does, retrieval-order prefix included.
+    """
+    from pathlib import Path
+
+    from curation.fetch import store
+    from curation.fetch.identifiers import doi_slug
+
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    record = {
+        "doi": doi, "doi_raw": doi, "slug": doi_slug(doi),
+        "fetched_at": "2026-07-01T00:00:00+00:00",
+        "identifiers": {"doi": doi}, "status": "complete",
+        "fulltext": {"status": "not_found", "path": None},
+        "fulltext_xml": None, "supplementary": [],
+    }
+    if fulltext is not None:
+        (directory / store.FULLTEXT_PDF).write_bytes(fulltext)
+        record["fulltext"] = {"path": store.FULLTEXT_PDF, "status": "ok",
+                             "bytes": len(fulltext)}
+    if xml is not None:
+        (directory / store.FULLTEXT_XML).write_bytes(xml)
+        record["fulltext_xml"] = {"path": store.FULLTEXT_XML, "bytes": len(xml)}
+    if landing is not None:
+        (directory / store.LANDING_HTML).write_bytes(landing)
+    for index, entry in enumerate(supplements, start=1):
+        name, content = entry[0], entry[1]
+        original = entry[2] if len(entry) > 2 else name
+        stored = f"{store.SUPPLEMENT_DIR}/{store.supplement_filename(index, name)}"
+        target = directory / stored
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+        record["supplementary"].append({
+            "path": stored, "bytes": len(content), "index": index,
+            "original_name": original, "content_type": "",
+        })
+    store.write_manifest(directory, record)
+    return directory
 
 
 def fetch_config(corpus_dir, tiers, **overrides) -> dict:

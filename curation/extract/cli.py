@@ -1,0 +1,262 @@
+"""Command line for the extraction stage.
+
+    python -m curation.extract.cli one 10.1038/s41467-023-40505-5
+    python -m curation.extract.cli all --limit 10
+    python -m curation.extract.cli status
+    python -m curation.extract.cli show 10.1038/s41467-023-40505-5 --section methods
+    python -m curation.extract.cli show <doi> --kind table --full
+
+Everything here is offline: it reads what the fetch stage already put in the
+corpus. `all` is safe to re-run -- an article whose manifest has not changed and
+whose extraction was made by this extractor version is skipped.
+"""
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+import yaml
+
+from ..fetch import store
+from ..fetch.cli import _merge
+from ..fetch.identifiers import doi_slug, normalize_doi
+from . import extractor
+from .blocks import BLOCKS_NAME, read_blocks
+from .limits import Limits
+
+DEFAULT_EXTRACT_CONFIG = {
+    "corpus_dir": "corpus",
+    "write_markdown": True,
+    "limits": Limits().to_dict(),
+}
+
+
+def load_config(path) -> dict:
+    raw = {}
+    config_path = Path(path)
+    if config_path.exists():
+        raw = yaml.safe_load(config_path.read_text()) or {}
+    config = dict(raw)
+    config["extract"] = _merge(DEFAULT_EXTRACT_CONFIG, raw.get("extract") or {})
+    # One corpus, two stages. Unless `extract` names its own directory, follow
+    # wherever the fetch stage was told to write, so moving the corpus needs one
+    # edit rather than two that can drift apart.
+    if "corpus_dir" not in (raw.get("extract") or {}):
+        fetch_corpus = (raw.get("fetch") or {}).get("corpus_dir")
+        if fetch_corpus:
+            config["extract"]["corpus_dir"] = fetch_corpus
+    return config
+
+
+def _settings(args) -> tuple:
+    config = load_config(args.config)
+    section = config["extract"]
+    corpus_dir = getattr(args, "corpus_dir", None) or section["corpus_dir"]
+    limits = Limits.from_dict(section.get("limits"))
+    if getattr(args, "max_scan_rows", None):
+        limits.max_scan_rows = args.max_scan_rows
+    return Path(corpus_dir).expanduser(), limits, bool(section.get("write_markdown", True))
+
+
+def _resolve(corpus_dir: Path, wanted: str) -> Path:
+    """Accept a DOI, a slug, or a path to an article directory."""
+    candidate = Path(wanted)
+    if candidate.is_dir() and (candidate / store.MANIFEST_NAME).exists():
+        return candidate
+    slug = wanted
+    try:
+        slug = doi_slug(normalize_doi(wanted))
+    except ValueError:
+        pass
+    directory = corpus_dir / slug
+    if not directory.exists():
+        raise ValueError(f"no article directory for {wanted!r} (looked in {directory})")
+    return directory
+
+
+def _article_dirs(corpus_dir: Path):
+    if not corpus_dir.exists():
+        return []
+    return sorted(p for p in corpus_dir.iterdir()
+                  if p.is_dir() and (p / store.MANIFEST_NAME).exists())
+
+
+def _exit_code(extraction: dict) -> int:
+    return {"complete": 0, "partial": 1}.get(extraction.get("status"), 2)
+
+
+def cmd_one(args) -> int:
+    corpus_dir, limits, markdown = _settings(args)
+    directory = _resolve(corpus_dir, args.article)
+    extraction = extractor.extract_article(directory, limits=limits, force=args.force,
+                                           write_markdown=markdown)
+    print(f"{extraction.get('slug')}  {extractor.summarize(extraction)}", file=sys.stderr)
+    if extraction.get("cached"):
+        print("    (cached; use --force to re-extract)", file=sys.stderr)
+    for note in [(extraction.get("main_text") or {}).get("note")]:
+        if note:
+            print(f"    ! {note}", file=sys.stderr)
+    for path in extraction.get("unextracted_text_files") or []:
+        print(f"    ! no text from {path}", file=sys.stderr)
+    if args.json:
+        Path(args.json).write_text(json.dumps(extraction, indent=2, ensure_ascii=False))
+    print(directory / extractor.EXTRACT_DIR)
+    return _exit_code(extraction)
+
+
+def cmd_all(args) -> int:
+    corpus_dir, limits, markdown = _settings(args)
+    directories = _article_dirs(corpus_dir)
+    if not directories:
+        print(f"{corpus_dir}: no articles with a manifest", file=sys.stderr)
+        return 2
+    if args.limit:
+        directories = directories[: args.limit]
+
+    by_status: dict = {}
+    for directory in directories:
+        extraction = extractor.extract_article(directory, limits=limits, force=args.force,
+                                               write_markdown=markdown)
+        status = extraction.get("status", "?")
+        by_status[status] = by_status.get(status, 0) + 1
+        marker = " (cached)" if extraction.get("cached") else ""
+        print(f"{directory.name:38s} {extractor.summarize(extraction)}{marker}",
+              file=sys.stderr)
+
+    print("\n" + "  ".join(f"{k}={v}" for k, v in sorted(by_status.items())), file=sys.stderr)
+    return 0 if by_status.get("complete") == len(directories) else 1
+
+
+def cmd_status(args) -> int:
+    """What has been extracted, and where the text is still missing."""
+    corpus_dir, _, _ = _settings(args)
+    directories = _article_dirs(corpus_dir)
+    if not directories:
+        print(f"{corpus_dir}: no articles with a manifest", file=sys.stderr)
+        return 2
+
+    totals = {"articles": 0, "extracted": 0, "blocks": 0, "tables": 0, "chars": 0}
+    file_statuses: dict = {}
+    sources: dict = {}
+    for directory in directories:
+        totals["articles"] += 1
+        extraction = extractor.read_extraction(directory)
+        if extraction is None:
+            print(f"{directory.name:38s} not extracted", file=sys.stderr)
+            continue
+        totals["extracted"] += 1
+        article_totals = extraction.get("totals") or {}
+        totals["blocks"] += article_totals.get("blocks", 0)
+        totals["tables"] += article_totals.get("tables", 0)
+        totals["chars"] += article_totals.get("chars", 0)
+        source = (extraction.get("main_text") or {}).get("source")
+        sources[source] = sources.get(source, 0) + 1
+        for status, count in (extraction.get("supplementary_by_status") or {}).items():
+            file_statuses[status] = file_statuses.get(status, 0) + count
+        if not args.quiet:
+            print(f"{directory.name:38s} {extractor.summarize(extraction)}", file=sys.stderr)
+
+    print(f"\n{totals['extracted']}/{totals['articles']} articles extracted: "
+          f"{totals['blocks']} blocks, {totals['tables']} tables, "
+          f"{totals['chars']} characters", file=sys.stderr)
+    print("main text source: " + "  ".join(f"{k}={v}" for k, v in sorted(
+        sources.items(), key=lambda kv: str(kv[0]))), file=sys.stderr)
+    print("supplementary files: " + "  ".join(f"{k}={v}" for k, v in sorted(
+        file_statuses.items())), file=sys.stderr)
+    return 0
+
+
+def cmd_show(args) -> int:
+    """Print blocks, filtered. The quickest way to see what a question would see."""
+    corpus_dir, _, _ = _settings(args)
+    directory = _resolve(corpus_dir, args.article)
+    path = directory / extractor.EXTRACT_DIR / BLOCKS_NAME
+    if not path.exists():
+        print(f"not extracted yet: {path}", file=sys.stderr)
+        return 2
+
+    shown = 0
+    for block in read_blocks(path):
+        if args.kind and block["kind"] != args.kind:
+            continue
+        if args.section and block.get("section") != args.section:
+            continue
+        if args.role and block.get("role") != args.role:
+            continue
+        if args.file and args.file not in block.get("source_file", ""):
+            continue
+        shown += 1
+        if args.limit and shown > args.limit:
+            break
+        header = (f"[{block['index']}] {block['kind']} "
+                  f"{block.get('section') or '-'} "
+                  f"{block['source_file']} {block.get('locator') or ''}")
+        print(header)
+        text = block["text"]
+        if not args.full and len(text) > 600:
+            text = text[:600] + f" ... (+{len(text) - 600} chars)"
+        print(text)
+        print()
+    if shown == 0:
+        print("no blocks matched", file=sys.stderr)
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="python -m curation.extract.cli",
+        description="Extract text and table cards from fetched articles.",
+    )
+    parser.add_argument("--config", default="config.yaml")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    def add_common(sub):
+        sub.add_argument("--corpus-dir", default=None)
+
+    one = subparsers.add_parser("one", help="extract a single article")
+    one.add_argument("article", help="DOI, slug, or path to the article directory")
+    one.add_argument("--force", action="store_true", help="re-extract even if unchanged")
+    one.add_argument("--json", default=None, help="also write the extraction record here")
+    one.add_argument("--max-scan-rows", type=int, default=None)
+    add_common(one)
+    one.set_defaults(func=cmd_one)
+
+    every = subparsers.add_parser("all", help="extract every article in the corpus")
+    every.add_argument("--force", action="store_true")
+    every.add_argument("--limit", type=int, default=None)
+    every.add_argument("--max-scan-rows", type=int, default=None)
+    add_common(every)
+    every.set_defaults(func=cmd_all)
+
+    status = subparsers.add_parser("status", help="report extraction coverage")
+    status.add_argument("--quiet", action="store_true", help="totals only")
+    add_common(status)
+    status.set_defaults(func=cmd_status)
+
+    show = subparsers.add_parser("show", help="print extracted blocks")
+    show.add_argument("article")
+    show.add_argument("--kind", default=None, help="heading, paragraph, caption, table, metadata")
+    show.add_argument("--section", default=None, help="methods, results, abstract, ...")
+    show.add_argument("--role", default=None, help="main_text or supplement")
+    show.add_argument("--file", default=None, help="only blocks whose source path contains this")
+    show.add_argument("--limit", type=int, default=20)
+    show.add_argument("--full", action="store_true", help="do not truncate block text")
+    add_common(show)
+    show.set_defaults(func=cmd_show)
+
+    return parser
+
+
+def main(argv=None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        return args.func(args)
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
