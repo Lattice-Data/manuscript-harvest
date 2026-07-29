@@ -30,6 +30,14 @@ and record what they did not get, with the reason. A downstream answer of "no
 perturbations found" is only meaningful if the record can show the text was
 actually there.
 
+**About the numbers below.** Counts like "40 of the 63 articles" or "323 figure
+images" are measurements over the 63-paper development corpus this code was built
+against — single-cell and genomics papers across Nature, Cell Press, Wiley,
+Science, eLife, PMC and bioRxiv. That corpus is not in this repository (the bytes
+are the publishers'), but it is why each rule exists, and
+`tests/test_extract_corpus.py` re-checks the specific files that motivated the
+non-obvious ones whenever a corpus is present.
+
 ## Install
 
     python -m venv .venv && source .venv/bin/activate
