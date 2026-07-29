@@ -186,6 +186,32 @@ def stable_content(page, attempts: int = 4) -> bytes:
     raise RuntimeError(f"could not read page content: {last_error}")
 
 
+def settle_page(page, rounds: int = 3, timeout_ms: int = 15000) -> str:
+    """Wait out client-side redirects and return the settled URL.
+
+    Necessary because several hops in this path are JS redirects rather than HTTP
+    ones: EZproxy bounces to the rewritten host, and a DOI on an Elsevier journal
+    resolves to `linkinghub.elsevier.com`, which is a redirect shim. Reading the
+    DOM at `domcontentloaded` captures a page titled "Redirecting" with no article
+    content in it -- which is what made the first Elsevier fetch report
+    `page_not_parsed`.
+    """
+    previous = None
+    for _ in range(rounds):
+        current = page.url
+        try:
+            page.wait_for_load_state("networkidle", timeout=timeout_ms)
+        except Exception:
+            try:
+                page.wait_for_load_state("load", timeout=5000)
+            except Exception:
+                time.sleep(1)
+        if page.url == current == previous:
+            break
+        previous = current
+    return page.url
+
+
 def _authenticated_yet(page, context=None) -> Tuple[bool, str]:
     """Is the article actually reachable, not merely advertised?
 
@@ -297,6 +323,7 @@ def check_session(fetch_cfg: dict, probe_url: Optional[str] = None) -> Tuple[boo
         with browser_context(fetch_cfg) as context:
             page = context.new_page()
             page.goto(target, wait_until="domcontentloaded")
+            settle_page(page)
             return _authenticated_yet(page, context)
     except ImportError as e:
         return False, str(e)
@@ -306,6 +333,11 @@ def check_session(fetch_cfg: dict, probe_url: Optional[str] = None) -> Tuple[boo
 
 class ProxyBrowserSource(Source):
     name = "proxy_browser"
+
+    def __init__(self, http, config: Optional[dict] = None):
+        super().__init__(http, config)
+        # The proof-of-work challenge is per-session, so clear it at most once.
+        self._challenge_cleared = False
 
     def applies(self, ids) -> bool:
         # Useful either for a paywalled publisher page or for PMC's challenge.
@@ -344,8 +376,23 @@ class ProxyBrowserSource(Source):
         page = context.new_page()
         try:
             page.goto(url, wait_until="domcontentloaded")
-            links, parsed = adapter_for(page.url).find_supplements(page, ids.doi)
-            referer = page.url
+            referer = settle_page(page)
+            body = stable_content(page)
+
+            # Measured: NCBI serves headless Chrome a reCAPTCHA interstitial
+            # ("Checking your browser") with no article content, while plain HTTP
+            # gets the page fine. A visible browser passes. Say that plainly
+            # instead of reporting an empty supplement list.
+            if classify_denial(referer, body) == "javascript_challenge":
+                result.suppl_status = "page_not_parsed"
+                result.problems.append(
+                    "PMC served a bot check to the headless browser; re-run with "
+                    "--headed to collect these supplementary files"
+                )
+                result.note("pmc_page", url=url, status="bot_check_headless")
+                return
+
+            links, parsed = adapter_for(referer).find_supplements(page, ids.doi)
         except Exception as e:
             result.note("pmc_page", url=url, status="error", error=f"{type(e).__name__}: {e}")
             return
@@ -380,10 +427,10 @@ class ProxyBrowserSource(Source):
         page = context.new_page()
         try:
             page.goto(target, wait_until="domcontentloaded")
-            # The proxy lands via client-side redirects, so read the body with
-            # the retrying helper rather than racing the navigation.
+            # Both EZproxy and Elsevier's linkinghub redirect via JavaScript, so
+            # let the page settle before the adapter looks at it.
+            final_url = settle_page(page)
             body = stable_content(page)
-            final_url = page.url
         except Exception as e:
             result.note("landing", url=target, status="navigation_failed",
                         error=f"{type(e).__name__}: {e}")
@@ -580,36 +627,58 @@ class ProxyBrowserSource(Source):
         return content, filename, content_type, None
 
     def _download_via_page(self, context, url: str, result: SourceResult, via: str):
-        """Open a URL in a real page and capture the download it triggers."""
-        timeout_ms = int((self.config.get("browser") or {}).get("download_timeout_seconds", 20)) * 1000
-        page = context.new_page()
-        try:
-            with page.expect_download(timeout=timeout_ms) as info:
-                try:
-                    page.goto(url, wait_until="commit")
-                except Exception:
-                    # A navigation that turns into a download raises; the
-                    # expect_download context is what actually matters.
-                    pass
-            download = info.value
-            path = download.path()
-            if not path:
-                result.note("supplement_file", url=url, via=via, status="download_empty")
-                return None, None, "download_empty"
-            content = Path(path).read_bytes()
-            filename = download.suggested_filename or _filename_for(url, {})
-            result.note("supplement_file", url=url, via=via, status="ok_via_page",
-                        bytes=len(content), filename=filename)
-            return content, filename, None
-        except Exception as e:
-            result.note("supplement_file", url=url, via=via, status="javascript_challenge",
-                        detail=f"no download captured: {type(e).__name__}")
-            return None, None, "javascript_challenge"
-        finally:
+        """Clear the proof-of-work challenge, then re-request the file.
+
+        Waiting for a `download` event does NOT work: many of these files are
+        media (PMC author-manuscript supplements are often .mp4) which Chrome
+        renders inline instead of downloading, so no event ever fires.
+
+        What does work, measured: navigate to the URL once so the proof-of-work
+        script executes and sets its cookies, then fetch through
+        `context.request` as normal -- a 35 MB video came back on the retry. The
+        challenge is per-session, not per-file, so this happens once per fetch.
+        """
+        if not self._challenge_cleared:
+            wait_seconds = int((self.config.get("browser") or {}).get("challenge_wait_seconds", 8))
+            page = context.new_page()
             try:
-                page.close()
-            except Exception:
-                pass
+                try:
+                    page.goto(url, wait_until="domcontentloaded")
+                except Exception:
+                    pass  # the challenge page may abort the navigation
+                time.sleep(wait_seconds)
+                self._challenge_cleared = True
+                result.note("challenge", url=url, via=via, status="cleared",
+                            waited_seconds=wait_seconds)
+            finally:
+                try:
+                    page.close()
+                except Exception:
+                    pass
+
+        try:
+            response = context.request.get(url)
+            content, status_code = response.body(), response.status
+            headers = response.headers
+        except Exception as e:
+            result.note("supplement_file", url=url, via=via, status="request_failed",
+                        error=f"{type(e).__name__}: {e}")
+            return None, None, "request_failed"
+
+        if status_code >= 400 or not content:
+            result.note("supplement_file", url=url, via=via, status="http_error",
+                        http_status=status_code)
+            return None, None, "http_error"
+
+        if classify_denial(url, content) == "javascript_challenge":
+            result.note("supplement_file", url=url, via=via, status="javascript_challenge",
+                        detail="still challenged after clearing")
+            return None, None, "javascript_challenge"
+
+        filename = _filename_for(url, headers)
+        result.note("supplement_file", url=url, via=via, status="ok_after_challenge",
+                    bytes=len(content), filename=filename)
+        return content, filename, None
 
 
 def _filename_for(url: str, headers) -> str:

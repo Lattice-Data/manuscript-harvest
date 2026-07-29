@@ -481,6 +481,26 @@ def check_cap_is_reported(tmp):
     print("  ok  max_files cap applied and recorded (5 of 12)")
 
 
+def check_later_tier_rescues(tmp):
+    """An earlier tier failing must not poison a later tier's success.
+
+    Regression guard: the status used to OR every tier's verdict together, so a
+    complete set of supplements still reported `partial_failure` because an
+    earlier route had failed first.
+    """
+    from curation.fetch.fetcher import _supplement_status
+
+    ids = Identifiers(doi=DOI, doi_raw=DOI, has_suppl=True)
+    # tier A failed, tier B fetched everything it attempted
+    assert _supplement_status(ids, True, 4, ["partial_failure", "fetched"]) == "fetched"
+    assert _supplement_status(ids, True, 4, ["page_not_parsed", "fetched"]) == "fetched"
+    # nobody reported a clean fetch, so partial is the honest answer
+    assert _supplement_status(ids, True, 2, ["partial_failure"]) == "partial_failure"
+    # and nothing retrieved at all is still the bug case
+    assert _supplement_status(ids, True, 0, ["partial_failure"]) == "expected_but_missing"
+    print("  ok  a later tier's success is not poisoned by an earlier tier's failure")
+
+
 def check_dedup(tmp):
     """Same name AND same bytes is a duplicate. Same bytes alone is not.
 
@@ -522,6 +542,7 @@ def main():
         check_not_in_oa_subset(tmp)
         check_paywall_not_saved(tmp)
         check_cap_is_reported(tmp)
+        check_later_tier_rescues(tmp)
         check_dedup(tmp)
         print("SELFTEST_FETCH PASSED")
 

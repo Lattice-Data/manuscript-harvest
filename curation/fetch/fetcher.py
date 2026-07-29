@@ -74,9 +74,13 @@ def _supplement_status(
     if ids.has_suppl is False:
         return "none_listed"
     if collected:
-        if "partial_failure" in reported or "page_not_parsed" in reported:
-            return "partial_failure"
-        return "fetched"
+        # Judge on the outcome, not on the journey. An earlier tier failing and a
+        # later tier succeeding is a complete result -- the failed attempts are
+        # still in `attempts` and `problems`. Only a tier that got everything it
+        # attempted reports "fetched", so seeing it means the set is whole.
+        if "fetched" in reported:
+            return "fetched"
+        return "partial_failure"
     if ids.has_suppl is True:
         return "expected_but_missing"
     if "page_not_parsed" in reported:
