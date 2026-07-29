@@ -22,8 +22,10 @@ Deliberately absent: any User-Agent spoofing. Publishers fingerprint automation,
 and a fake UA on a real browser reads as more suspicious than the real one.
 """
 
+import json
 import os
 import re
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -68,16 +70,63 @@ def proxied_url(url: str, fetch_cfg: dict) -> str:
     return prefix + url
 
 
+def _profile_dir(fetch_cfg: dict) -> Path:
+    browser_cfg = fetch_cfg.get("browser") or {}
+    return Path(os.path.expanduser(
+        browser_cfg.get("profile_dir", "~/.curation-harness/chrome-profile")
+    ))
+
+
+def state_path(fetch_cfg: dict) -> Path:
+    """Where the cookie snapshot lives, next to the browser profile."""
+    return _profile_dir(fetch_cfg).parent / "storage_state.json"
+
+
+def save_state(context, fetch_cfg: dict) -> Optional[Path]:
+    """Snapshot cookies, including session cookies, to disk.
+
+    This exists because a persistent Chrome profile is NOT sufficient on its own.
+    Measured: after `login` succeeded, the profile held three `.idm.oclc.org`
+    cookies, and they were gone after the next browser start -- EZproxy issues
+    *session* cookies, which Chrome discards on restart. Playwright's
+    `storage_state()` captures them (with `expires: -1`) so they can be re-injected
+    into the next run, which is what actually keeps a library-proxy login alive.
+    """
+    target = state_path(fetch_cfg)
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        context.storage_state(path=str(target))
+        return target
+    except Exception:
+        return None
+
+
+def _restore_state(context, fetch_cfg: dict) -> int:
+    """Re-inject a saved cookie snapshot. Returns how many cookies were added."""
+    source = state_path(fetch_cfg)
+    if not source.exists():
+        return 0
+    try:
+        cookies = json.loads(source.read_text()).get("cookies") or []
+        if cookies:
+            context.add_cookies(cookies)
+        return len(cookies)
+    except Exception:
+        return 0
+
+
 @contextmanager
-def browser_context(fetch_cfg: dict, headless: Optional[bool] = None):
+def browser_context(fetch_cfg: dict, headless: Optional[bool] = None,
+                    restore: bool = True):
     """A persistent Playwright context rooted at the configured profile dir.
 
-    Persistence is the whole point: it is what carries the hand-made SSO session
-    (and any proof-of-work cookies) from one run to the next.
+    The on-disk profile carries the durable things (Duo device trust, publisher
+    entitlement markers); the cookie snapshot carries the session cookies the
+    profile drops. Both are needed.
     """
     sync_playwright = _import_playwright()
     browser_cfg = fetch_cfg.get("browser") or {}
-    profile = Path(os.path.expanduser(browser_cfg.get("profile_dir", "~/.curation-harness/chrome-profile")))
+    profile = _profile_dir(fetch_cfg)
     profile.mkdir(parents=True, exist_ok=True)
     if headless is None:
         headless = bool(browser_cfg.get("headless", True))
@@ -99,6 +148,8 @@ def browser_context(fetch_cfg: dict, headless: Optional[bool] = None):
             # Chromium does not) but is not always installed.
             context = playwright.chromium.launch_persistent_context(**options)
         context.set_default_timeout(int(browser_cfg.get("nav_timeout_seconds", 60)) * 1000)
+        if restore:
+            _restore_state(context, fetch_cfg)
         yield context
     finally:
         if context is not None:
@@ -111,30 +162,132 @@ def browser_context(fetch_cfg: dict, headless: Optional[bool] = None):
 
 def _default_check_url(fetch_cfg: dict) -> str:
     return (fetch_cfg.get("browser") or {}).get(
-        "check_url", "https://www.nature.com/articles/s41586-021-03852-1"
+        "check_url", "https://www.nature.com/articles/s41586-026-10510-x"
     )
 
 
-def interactive_login(fetch_cfg: dict, probe_url: Optional[str] = None) -> int:
-    """Open a headed browser so the user can complete Stanford SSO by hand."""
+def stable_content(page, attempts: int = 4) -> bytes:
+    """`page.content()` that tolerates a page still navigating.
+
+    EZproxy bounces through a couple of client-side redirects before landing on
+    the publisher, and calling `content()` mid-flight raises
+    "the page is navigating and changing the content". Retrying is the fix.
+    """
+    last_error = None
+    for attempt in range(attempts):
+        try:
+            return page.content().encode("utf-8", "replace")
+        except Exception as e:
+            last_error = e
+            try:
+                page.wait_for_load_state("load", timeout=10000)
+            except Exception:
+                time.sleep(1 + attempt)
+    raise RuntimeError(f"could not read page content: {last_error}")
+
+
+def _authenticated_yet(page, context=None) -> Tuple[bool, str]:
+    """Is the article actually reachable, not merely advertised?
+
+    Finding a PDF link is NOT evidence of access: publishers emit
+    `citation_pdf_url` on paywalled articles too, because Google Scholar requires
+    it. So when a context is available the PDF is downloaded and validated -- the
+    only signal that distinguishes entitlement from a purchase page.
+    """
+    try:
+        url = page.url
+        body = stable_content(page)
+    except Exception as e:
+        return False, f"page not readable yet ({type(e).__name__})"
+
+    denial = classify_denial(url, body)
+    if denial:
+        return False, f"{denial} at {url}"
+
+    adapter = adapter_for(url)
+    try:
+        pdf_url = adapter.find_pdf_url(page, "")
+    except Exception:
+        pdf_url = None
+    if not pdf_url:
+        return False, f"at {url}, no PDF link yet (adapter={adapter.name})"
+
+    if context is None:
+        return False, f"found a PDF link at {url} but could not test it"
+
+    try:
+        response = context.request.get(pdf_url, headers={"Referer": url})
+        content, status_code = response.body(), response.status
+        content_type = (response.headers.get("content-type") or "").split(";")[0].strip().lower()
+    except Exception as e:
+        return False, f"PDF link found but download failed ({type(e).__name__}: {e})"
+
+    if status_code >= 400:
+        return False, f"PDF link found but returned HTTP {status_code}: {pdf_url}"
+
+    accepted, status, meta = validate_pdf(content, content_type=content_type, url=pdf_url)
+    if accepted:
+        return True, (f"downloaded and validated the PDF ({meta.get('pages')} pages, "
+                      f"{meta.get('bytes')} bytes) via the {adapter.name} adapter")
+    return False, f"PDF rejected as '{status}' ({meta.get('bytes')} bytes): {pdf_url}"
+
+
+def interactive_login(fetch_cfg: dict, probe_url: Optional[str] = None,
+                      timeout_seconds: int = 600) -> int:
+    """Open a headed browser so the user can complete Stanford SSO by hand.
+
+    Deliberately does NOT wait on a keypress. The browser window takes keyboard
+    focus during login, so an `input()` prompt in the terminal silently swallows
+    the Enter that never arrives. Instead this polls the page until it looks like
+    the article, and also stops when you simply close the browser window --
+    neither of which competes with the browser for focus.
+    """
     target = proxied_url(probe_url or _default_check_url(fetch_cfg), fetch_cfg)
     print(
         "Opening a browser window.\n"
         "  1. Complete Stanford login (SUNet ID, Cardinal Key / Duo).\n"
-        "  2. Wait until you can see the article page.\n"
-        "  3. Return here and press Enter.\n"
-        f"Target: {target}\n"
+        "  2. Nothing else to do -- this detects success on its own.\n"
+        "     (If it does not, just close the browser window and the session is still saved.)\n"
+        f"Target: {target}\n",
+        flush=True,
     )
+
+    detail = "no attempt made"
+    succeeded = False
+    saved_to = None
     with browser_context(fetch_cfg, headless=False) as context:
         page = context.new_page()
         try:
             page.goto(target, wait_until="domcontentloaded")
         except Exception as e:
-            print(f"navigation warning: {e}")
-        input("Press Enter once you are logged in and the article is visible... ")
-        final = page.url
-    print(f"Saved session for profile; last URL was {final}")
-    return 0
+            print(f"navigation warning: {e}", flush=True)
+
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            if not context.pages:
+                detail = "browser window closed by user"
+                break
+            live = context.pages[-1]
+            succeeded, detail = _authenticated_yet(live, context)
+            if succeeded:
+                break
+            time.sleep(2)
+        else:
+            detail = f"timed out after {timeout_seconds}s ({detail})"
+
+        # Snapshot before the context closes: session cookies die with it.
+        saved_to = save_state(context, fetch_cfg)
+
+    if succeeded:
+        print(f"\nLogged in. {detail}", flush=True)
+        print(f"Cookie snapshot saved to {saved_to}")
+        print("Verify any time with:  python -m curation.fetch.cli check")
+        return 0
+    print(f"\nCould not confirm access: {detail}", flush=True)
+    if saved_to:
+        print(f"Cookies were still snapshotted to {saved_to}; try: "
+              "python -m curation.fetch.cli check")
+    return 1
 
 
 def check_session(fetch_cfg: dict, probe_url: Optional[str] = None) -> Tuple[bool, str]:
@@ -144,20 +297,11 @@ def check_session(fetch_cfg: dict, probe_url: Optional[str] = None) -> Tuple[boo
         with browser_context(fetch_cfg) as context:
             page = context.new_page()
             page.goto(target, wait_until="domcontentloaded")
-            url, body = page.url, page.content().encode("utf-8", "replace")
-            denial = classify_denial(url, body)
-            adapter = adapter_for(url)
-            pdf_url = adapter.find_pdf_url(page, "")
+            return _authenticated_yet(page, context)
     except ImportError as e:
         return False, str(e)
     except Exception as e:
         return False, f"{type(e).__name__}: {e}"
-
-    if denial:
-        return False, f"{denial} at {url}"
-    if pdf_url:
-        return True, f"reached {url} and found a PDF link via the {adapter.name} adapter"
-    return False, f"reached {url} but found no PDF link (adapter={adapter.name})"
 
 
 class ProxyBrowserSource(Source):
@@ -180,6 +324,9 @@ class ProxyBrowserSource(Source):
                         need_pdf=need_pdf,
                         need_supplements=still_need_supplements,
                     )
+                # Refresh the snapshot so a working session keeps rolling forward
+                # instead of expiring at whatever `login` captured.
+                save_state(context, self.config)
         except ImportError as e:
             result.problems.append(str(e))
             result.note("browser", status="playwright_missing", detail=str(e))
@@ -233,8 +380,10 @@ class ProxyBrowserSource(Source):
         page = context.new_page()
         try:
             page.goto(target, wait_until="domcontentloaded")
+            # The proxy lands via client-side redirects, so read the body with
+            # the retrying helper rather than racing the navigation.
+            body = stable_content(page)
             final_url = page.url
-            body = page.content().encode("utf-8", "replace")
         except Exception as e:
             result.note("landing", url=target, status="navigation_failed",
                         error=f"{type(e).__name__}: {e}")

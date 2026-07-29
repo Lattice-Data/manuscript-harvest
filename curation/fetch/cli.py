@@ -39,7 +39,7 @@ DEFAULT_FETCH_CONFIG = {
         "headless": True,
         "channel": "chrome",
         "nav_timeout_seconds": 60,
-        "check_url": "https://www.nature.com/articles/s41586-021-03852-1",
+        "check_url": "https://www.nature.com/articles/s41586-026-10510-x",
     },
 }
 
@@ -156,7 +156,8 @@ def cmd_login(args) -> int:
     from .sources.proxy_browser import interactive_login
 
     config = _apply_cli_overrides(load_config(args.config), args)
-    return interactive_login(config["fetch"], probe_url=args.url)
+    return interactive_login(config["fetch"], probe_url=args.url,
+                             timeout_seconds=args.timeout)
 
 
 def cmd_check(args) -> int:
@@ -205,11 +206,15 @@ def build_parser() -> argparse.ArgumentParser:
         "login", help="open a headed browser to complete Stanford SSO once"
     )
     login_parser.add_argument("--url", default=None, help="probe URL to land on after login")
+    login_parser.add_argument("--timeout", type=int, default=600,
+                              help="seconds to wait for login to complete (default 600)")
     login_parser.set_defaults(func=cmd_login)
 
     check_parser = subparsers.add_parser("check", help="test whether the saved session still works")
     check_parser.add_argument("--url", default=None)
     check_parser.add_argument("--headed", action="store_true")
+    check_parser.add_argument("--no-proxy", action="store_true",
+                              help="probe the publisher directly instead of via the proxy")
     check_parser.set_defaults(func=cmd_check)
 
     return parser
