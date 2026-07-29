@@ -1,0 +1,6 @@
+# Test dependencies. The suite is offline -- no network, no browser -- so it needs
+# nothing beyond pytest and the runtime requirements.
+#
+#   pip install -r requirements.txt -r requirements-dev.txt
+#   python selftest_fetch.py          # or: python -m pytest tests -q
+pytest>=7.0

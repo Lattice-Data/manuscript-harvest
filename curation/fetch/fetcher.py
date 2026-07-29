@@ -265,6 +265,20 @@ def fetch_publication(
     )
     store.finalize_status(record)
     store.write_manifest(directory, {k: v for k, v in record.items() if k != "_directory"})
+
+    # Keep the corpus inside its size budget, evicting oldest-first. The article
+    # just fetched is never the one evicted.
+    max_gb = fetch_cfg.get("max_corpus_gb")
+    if max_gb:
+        outcome = store.enforce_budget(corpus_dir, int(float(max_gb) * 1024 ** 3))
+        if outcome["evicted"]:
+            record["budget"] = outcome
+            for item in outcome["evicted"]:
+                record["problems"].append(
+                    f"evicted {item['slug']} ({store.human_bytes(item['freed_bytes'])}) "
+                    f"to stay under the {max_gb} GB corpus budget"
+                )
+
     return record
 
 

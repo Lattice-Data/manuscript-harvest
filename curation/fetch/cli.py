@@ -30,6 +30,7 @@ DEFAULT_FETCH_CONFIG = {
     "timeout_seconds": 60,
     "max_file_mb": 200,
     "max_files": 50,
+    "max_corpus_gb": None,
     "proxy": {
         "enabled": True,
         "prefix": "https://stanford.idm.oclc.org/login?url=",
@@ -152,6 +153,60 @@ def cmd_batch(args) -> int:
     return 0 if by_status.get("complete") == len(records) else 1
 
 
+def cmd_usage(args) -> int:
+    """Report corpus disk usage, largest or oldest first."""
+    config = _apply_cli_overrides(load_config(args.config), args)
+    corpus_dir = config["fetch"]["corpus_dir"]
+    entries = store.corpus_usage(corpus_dir)
+    if not entries:
+        print(f"{corpus_dir}: empty", file=sys.stderr)
+        return 0
+
+    total = sum(e["bytes"] for e in entries)
+    max_gb = config["fetch"].get("max_corpus_gb")
+    ordered = sorted(entries, key=lambda e: -e["bytes"]) if args.by_size else entries
+
+    for entry in ordered[: args.limit]:
+        print(f"  {store.human_bytes(entry['bytes']):>9}  {entry['files']:>4} files  "
+              f"{entry['status']:<9} {entry['slug']}")
+    if len(ordered) > args.limit:
+        print(f"  ... {len(ordered) - args.limit} more", file=sys.stderr)
+
+    line = f"{len(entries)} articles, {store.human_bytes(total)}"
+    if max_gb:
+        budget = int(float(max_gb) * 1024 ** 3)
+        line += f" of {max_gb} GB budget ({100 * total / budget:.0f}%)"
+    else:
+        line += " (no budget set; see fetch.max_corpus_gb)"
+    print(line, file=sys.stderr)
+    return 0
+
+
+def cmd_prune(args) -> int:
+    """Evict oldest articles until the corpus fits the budget."""
+    config = _apply_cli_overrides(load_config(args.config), args)
+    fetch_cfg = config["fetch"]
+    max_gb = args.max_gb if args.max_gb is not None else fetch_cfg.get("max_corpus_gb")
+    if not max_gb:
+        print("no budget: pass --max-gb or set fetch.max_corpus_gb", file=sys.stderr)
+        return 2
+
+    outcome = store.enforce_budget(
+        fetch_cfg["corpus_dir"], int(float(max_gb) * 1024 ** 3), dry_run=args.dry_run
+    )
+    verb = "would evict" if args.dry_run else "evicted"
+    for item in outcome["evicted"]:
+        print(f"  {verb} {item['slug']}  {store.human_bytes(item['freed_bytes'])}")
+    print(f"{verb} {len(outcome['evicted'])} article(s), freed "
+          f"{store.human_bytes(outcome['freed_bytes'])}; corpus now "
+          f"{store.human_bytes(outcome['total_bytes'])} against a {max_gb} GB budget",
+          file=sys.stderr)
+    if outcome.get("note"):
+        print(f"  ! {outcome['note']}", file=sys.stderr)
+    print("Manifests are kept; re-fetch an evicted article with --force.", file=sys.stderr)
+    return 0
+
+
 def cmd_login(args) -> int:
     from .sources.proxy_browser import interactive_login
 
@@ -201,6 +256,22 @@ def build_parser() -> argparse.ArgumentParser:
     batch_parser.add_argument("--report", default=None, help="write one manifest per line here")
     add_common(batch_parser)
     batch_parser.set_defaults(func=cmd_batch)
+
+    usage_parser = subparsers.add_parser("usage", help="report corpus disk usage")
+    usage_parser.add_argument("--corpus-dir", default=None)
+    usage_parser.add_argument("--by-size", action="store_true",
+                              help="largest first (default: oldest first)")
+    usage_parser.add_argument("--limit", type=int, default=20)
+    usage_parser.set_defaults(func=cmd_usage)
+
+    prune_parser = subparsers.add_parser(
+        "prune", help="evict oldest articles until the corpus fits its budget"
+    )
+    prune_parser.add_argument("--corpus-dir", default=None)
+    prune_parser.add_argument("--max-gb", type=float, default=None,
+                              help="override fetch.max_corpus_gb")
+    prune_parser.add_argument("--dry-run", action="store_true")
+    prune_parser.set_defaults(func=cmd_prune)
 
     login_parser = subparsers.add_parser(
         "login", help="open a headed browser to complete Stanford SSO once"

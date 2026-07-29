@@ -93,12 +93,20 @@ def write_manifest(directory, record: dict) -> Path:
 
 
 def manifest_is_complete(record: Optional[dict]) -> bool:
-    """True only for a manifest whose files are all present on disk.
+    """True when this article needs no further fetching.
 
     A `complete` status is not trusted on its own: if the PDF was deleted or the
     directory was partially copied, the fetch should run again rather than
     report a cached success.
+
+    `evicted` is the exception. Those bytes were removed deliberately to stay
+    inside the size budget, and the manifest still records what was there.
+    Treating eviction as "incomplete" would make the next batch re-download
+    everything the budget just freed, thrash against the cap, and never settle.
+    Use `--force` to deliberately re-fetch an evicted article.
     """
+    if record and record.get("status") == "evicted":
+        return True
     if not record or record.get("status") != "complete":
         return False
     directory = Path(record.get("_directory", "")) if record.get("_directory") else None
@@ -161,6 +169,123 @@ def finalize_status(record: dict) -> dict:
     else:
         record["status"] = "failed"
     return record
+
+
+# -- size budget -------------------------------------------------------------
+# Roughly 40 MB per paper in practice, and the bulk is content the pipeline
+# actually wants: measured over 63 papers, 45% PDF and 25% spreadsheets/CSV,
+# with only 8% video and images. So there is no useful "drop the media" saving --
+# staying inside a budget means giving up whole articles, which is why eviction
+# keeps the manifest and can be undone with --force.
+
+def article_size(directory) -> int:
+    """Bytes on disk for one article, manifest included."""
+    total = 0
+    for path in Path(directory).rglob("*"):
+        if path.is_file():
+            total += path.stat().st_size
+    return total
+
+
+def corpus_usage(corpus_dir) -> List[dict]:
+    """Per-article usage, oldest first, for reporting and eviction."""
+    root = Path(corpus_dir).expanduser()
+    if not root.exists():
+        return []
+    entries = []
+    for directory in sorted(p for p in root.iterdir() if p.is_dir()):
+        record = read_manifest(directory) or {}
+        entries.append({
+            "slug": directory.name,
+            "path": str(directory),
+            "doi": record.get("doi"),
+            "status": record.get("status", "unknown"),
+            "fetched_at": record.get("fetched_at") or "",
+            "bytes": article_size(directory),
+            "files": sum(1 for p in directory.rglob("*") if p.is_file()),
+        })
+    entries.sort(key=lambda e: (e["fetched_at"], e["slug"]))
+    return entries
+
+
+def evict_article(directory) -> int:
+    """Delete an article's payload but keep its manifest. Returns bytes freed.
+
+    The manifest is rewritten with `status: evicted` and each file entry marked,
+    so the record of what existed -- names, sizes, sha256 -- survives even though
+    the bytes do not. A corpus that forgets what it deleted is worse than one that
+    never had it.
+    """
+    directory = Path(directory)
+    record = read_manifest(directory)
+    freed = 0
+
+    for path in sorted(directory.rglob("*"), key=lambda p: -len(p.parts)):
+        if path.name == MANIFEST_NAME:
+            continue
+        try:
+            if path.is_file():
+                freed += path.stat().st_size
+                path.unlink()
+            elif path.is_dir():
+                path.rmdir()
+        except OSError:
+            continue
+
+    if record is not None:
+        record["status"] = "evicted"
+        record["evicted_at"] = datetime.now(timezone.utc).isoformat()
+        record["evicted_bytes"] = freed
+        for group in ("supplementary", "media"):
+            for entry in record.get(group) or []:
+                entry["evicted"] = True
+        for key in ("fulltext", "fulltext_xml", "landing_html"):
+            entry = record.get(key)
+            if isinstance(entry, dict) and entry.get("path"):
+                entry["evicted"] = True
+        write_manifest(directory, record)
+    return freed
+
+
+def enforce_budget(corpus_dir, max_bytes: Optional[int], dry_run: bool = False) -> dict:
+    """Evict oldest-first until the corpus fits inside `max_bytes`.
+
+    Articles already evicted are skipped, and an article is never evicted to make
+    room for itself -- the newest is kept because it is the one just fetched.
+    """
+    entries = corpus_usage(corpus_dir)
+    total = sum(e["bytes"] for e in entries)
+    result = {"total_bytes": total, "max_bytes": max_bytes, "evicted": [], "freed_bytes": 0}
+    if not max_bytes or total <= max_bytes:
+        return result
+
+    # Oldest first, but never the most recent article.
+    candidates = [e for e in entries[:-1] if e["status"] != "evicted"]
+    for entry in candidates:
+        if total <= max_bytes:
+            break
+        freed = entry["bytes"] if dry_run else evict_article(entry["path"])
+        total -= freed
+        result["evicted"].append({"slug": entry["slug"], "doi": entry["doi"],
+                                  "freed_bytes": freed})
+        result["freed_bytes"] += freed
+
+    result["total_bytes"] = total
+    if total > max_bytes:
+        result["note"] = (
+            "still over budget: the remaining articles cannot be evicted "
+            "(all evicted already, or only the newest is left)"
+        )
+    return result
+
+
+def human_bytes(count: int) -> str:
+    value = float(count)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if value < 1024 or unit == "TB":
+            return f"{value:.1f}{unit}" if unit != "B" else f"{int(value)}B"
+        value /= 1024
+    return f"{value:.1f}TB"
 
 
 def summarize(record: dict) -> str:
