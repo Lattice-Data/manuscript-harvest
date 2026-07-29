@@ -1,5 +1,8 @@
 # manuscript-harvest
 
+[![tests](https://github.com/Lattice-Data/manuscript-harvest/actions/workflows/tests.yml/badge.svg)](https://github.com/Lattice-Data/manuscript-harvest/actions/workflows/tests.yml)
+[![coverage](https://coveralls.io/repos/github/Lattice-Data/manuscript-harvest/badge.svg?branch=main)](https://coveralls.io/github/Lattice-Data/manuscript-harvest?branch=main)
+
 Fetch a published paper from its DOI — the article and every supplementary file —
 and turn it into blocks of text with provenance: paragraphs, headings, captions,
 and structured summaries of supplementary tables, each carrying the file and
@@ -378,6 +381,12 @@ affected table card's notes, so a thin result reads as "capped" rather than
     pip install -r requirements-dev.txt
     python -m pytest tests -q            # everything offline: no network, no browser
     python -m pytest tests -q -k budget  # just the matching tests
+    python -m pytest tests --cov=manuscript_harvest --cov-report=term-missing
+
+CI gates coverage at 70%, a little under where it stands, so the check fires on a
+real regression rather than on noise. The figure it reports is always the
+no-corpus one — `tests/test_extract_corpus.py` skips itself without a local
+`corpus/`, so running with one present reads higher than the badge.
 
 The tests live in `tests/` and run under pytest:
 
