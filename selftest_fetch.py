@@ -546,30 +546,42 @@ def check_later_tier_rescues(tmp):
     print("  ok  a later tier's success is not poisoned by an earlier tier's failure")
 
 
-def check_preprint_hassuppl_not_trusted(tmp):
-    """hasSuppl=N is authoritative for journal articles, but NOT for preprints.
+def check_hassuppl_only_trusted_when_held(tmp):
+    """hasSuppl=N describes Europe PMC's holdings, not the article.
 
-    Regression guard for real silent data loss: Europe PMC reports hasSuppl=N for
-    10.1101/2025.07.21.666016, whose bioRxiv page carries media-1.pdf and
-    media-2.zip (72 MB together). Trusting the flag reported a confident
-    `none_listed` and dropped both files.
+    Regression guard for real silent data loss in two distinct shapes:
+      - preprints: hasSuppl=N for 10.1101/2025.07.21.666016 (2 files) and
+        10.1101/2024.01.23.576878 (6 files)
+      - articles Europe PMC does not hold: 10.1016/j.stem.2023.12.013 and
+        10.1038/s41591-018-0269-2 report inEPMC=N, inPMC=N, hasSuppl=N
+    Believing the flag in either case reported a confident `none_listed`.
     """
-    from curation.fetch.fetcher import _supplement_status
+    from curation.fetch.fetcher import _supplement_status, suppl_flag_is_authoritative
 
-    journal = Identifiers(doi=DOI, doi_raw=DOI, has_suppl=False)
+    held = Identifiers(doi=DOI, doi_raw=DOI, has_suppl=False, in_pmc=True, in_epmc=True)
     preprint = Identifiers(doi="10.1101/2025.07.21.666016",
-                           doi_raw="10.1101/2025.07.21.666016", has_suppl=False)
-    assert preprint.is_preprint and not journal.is_preprint
+                           doi_raw="10.1101/2025.07.21.666016",
+                           has_suppl=False, in_pmc=True, in_epmc=True)
+    not_held = Identifiers(doi="10.1016/j.stem.2023.12.013",
+                           doi_raw="10.1016/j.stem.2023.12.013",
+                           has_suppl=False, in_pmc=False, in_epmc=False)
+    unknown = Identifiers(doi=DOI, doi_raw=DOI, has_suppl=None)
 
-    # An indexed journal article may be taken at its word.
-    assert _supplement_status(journal, True, 0, []) == "none_listed"
-    # A preprint may not: the flag must never produce a bare "none_listed".
+    # Believable only for an indexed article Europe PMC actually holds.
+    assert suppl_flag_is_authoritative(held) is True
+    assert suppl_flag_is_authoritative(preprint) is False
+    assert suppl_flag_is_authoritative(not_held) is False
+    assert suppl_flag_is_authoritative(unknown) is False
+
+    assert _supplement_status(held, True, 0, []) == "none_listed"
+    # Neither a preprint nor an unheld article may produce a bare "none_listed".
     assert _supplement_status(preprint, True, 0, []) == "unknown_none_found"
-    # ...but the preprint's own server IS authoritative when it says none.
+    assert _supplement_status(not_held, True, 0, []) == "unknown_none_found"
+    # A source that owns the content may still state it authoritatively.
     assert _supplement_status(preprint, True, 0, ["none_listed"]) == "none_listed"
-    # ...and files found despite hasSuppl=N are simply fetched.
+    # And files found despite hasSuppl=N are simply fetched.
     assert _supplement_status(preprint, True, 2, ["fetched"]) == "fetched"
-    print("  ok  preprints are checked at source even when the index says hasSuppl=N")
+    print("  ok  hasSuppl=N trusted only for articles Europe PMC actually holds")
 
 
 def check_dedup(tmp):
@@ -615,7 +627,7 @@ def main():
         check_paywall_not_saved(tmp)
         check_cap_is_reported(tmp)
         check_later_tier_rescues(tmp)
-        check_preprint_hassuppl_not_trusted(tmp)
+        check_hassuppl_only_trusted_when_held(tmp)
         check_dedup(tmp)
         print("SELFTEST_FETCH PASSED")
 

@@ -6,8 +6,13 @@ part of this codebase most likely to break when a publisher redesigns, which is
 why `find_supplements` distinguishes "found none" from "could not read the page".
 """
 
+import re
 from typing import List, Optional, Tuple
-from urllib.parse import quote
+from urllib.parse import urlparse
+
+# ScienceDirect article URLs carry the Elsevier PII, from which the PDF URL can be
+# constructed when the page exposes no link.
+_PII_RX = re.compile(r"/pii/([A-Z0-9]+)", re.IGNORECASE)
 
 from .base import (
     Adapter,
@@ -118,6 +123,19 @@ class ElsevierAdapter(Adapter):
                     return href
             except Exception:
                 continue
+
+        # Nothing to scrape: a ScienceDirect article page carries no
+        # `citation_pdf_url` and no PDF href at all -- verified on an 833 KB
+        # settled page for 10.1016/j.stem.2023.12.013, which is why that fetch
+        # failed with `no_pdf_link`. The link is built client-side, but the PII in
+        # the URL is enough to construct it. Built against the *current* origin so
+        # the library-proxy hostname is preserved; a bare sciencedirect.com URL
+        # would leave the proxy and lose entitlement.
+        pii = _PII_RX.search(page.url or "")
+        if pii:
+            parts = urlparse(page.url)
+            return (f"{parts.scheme}://{parts.netloc}/science/article/pii/"
+                    f"{pii.group(1)}/pdfft?isDTMRedir=true&download=true")
         return None
 
     def find_supplements(self, page, doi: str) -> Tuple[List[dict], bool]:

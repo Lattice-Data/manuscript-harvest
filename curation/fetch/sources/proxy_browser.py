@@ -506,8 +506,25 @@ class ProxyBrowserSource(Source):
             return
 
         if status_code >= 400:
-            result.pdf_status = "download_failed"
-            result.note("pdf", url=pdf_url, status="download_failed", http_status=status_code)
+            # The supplement path has a fallback for this and the PDF path did
+            # not. ScienceDirect refuses `pdfft` for anything that is not a real
+            # navigation -- 403 even unproxied with a browser User-Agent -- so try
+            # once through a page before giving up.
+            content, _name, why = self._download_via_page(context, pdf_url, result, "pdf")
+            if content is None:
+                result.pdf_status = "download_failed"
+                result.note("pdf", url=pdf_url, status="download_failed",
+                            http_status=status_code, fallback=why)
+                return
+            content_type = ""
+            accepted, status, meta = validate_pdf(content, url=pdf_url)
+            result.pdf_status = status
+            result.note("pdf", url=pdf_url, status=status, via="page_fallback", **meta)
+            if accepted:
+                result.files.append(
+                    FetchedFile(role=ROLE_PDF, name="fulltext.pdf", content=content,
+                                url=pdf_url, content_type=content_type)
+                )
             return
 
         content_type = (headers.get("content-type") or "").split(";")[0].strip().lower()
@@ -624,6 +641,23 @@ class ProxyBrowserSource(Source):
                         error=f"{type(e).__name__}: {e}")
             return None, None, None, status
 
+        # A 401/403 can also be the bot gate rather than a real refusal: for
+        # 10.1084/jem.20232192, PMC answered 403 for four supplementary tables
+        # that do exist, and the old code short-circuited here without ever
+        # trying to clear the challenge. Treat it as challengeable once.
+        if status_code in (401, 403) and allow_page_fallback:
+            # A stale proof-of-work cookie is answered with 403 rather than a
+            # fresh challenge, so reusing it deadlocks: we cannot re-solve what we
+            # are never served. Measured on 10.1084/jem.20232192, where plain curl
+            # got the 1.8 KB challenge page while the cookie-bearing browser got
+            # 403. Dropping the host's cookies makes NCBI issue a new challenge.
+            content, filename, why = self._download_via_page(context, url, result, via)
+            if content is not None:
+                return content, filename, "", None
+            result.note("supplement_file", url=url, via=via, status="http_error",
+                        http_status=status_code, detail="still refused after clearing")
+            return None, None, None, why or "http_error"
+
         if status_code >= 400 or not content:
             result.note("supplement_file", url=url, via=via, status="http_error",
                         http_status=status_code)
@@ -675,6 +709,13 @@ class ProxyBrowserSource(Source):
         `context.request` as normal -- a 35 MB video came back on the retry. The
         challenge is per-session, not per-file, so this happens once per fetch.
         """
+        # Deliberately NOT clearing cookies here. It was tried: the theory was that
+        # a stale proof-of-work cookie draws a 403 instead of a fresh challenge, and
+        # dropping it would force a new one. Measured, it fixed nothing (the files
+        # for 10.1084/jem.20232192 stayed refused) and it destroyed the warm NCBI
+        # state that lets a headless browser through at all -- a paper that had
+        # fetched 4/4 supplements regressed to a reCAPTCHA. The cookies are worth
+        # more than the retry.
         if not self._challenge_cleared:
             wait_seconds = int((self.config.get("browser") or {}).get("challenge_wait_seconds", 8))
             page = context.new_page()

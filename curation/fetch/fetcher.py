@@ -63,6 +63,30 @@ def _best_pdf_status(reported: List[str]) -> str:
     return "not_found"
 
 
+def suppl_flag_is_authoritative(ids: Identifiers) -> bool:
+    """Can `hasSuppl: N` be believed as "this article has no supplements"?
+
+    Only when Europe PMC or PMC actually holds the article. The flag describes
+    *their* holdings, not the article, and two measured cases prove the
+    difference:
+
+    - Preprints: Europe PMC says hasSuppl=N for 10.1101/2025.07.21.666016 and
+      10.1101/2024.01.23.576878, which have 2 and 6 supplementary files.
+    - Articles it does not hold: 10.1016/j.stem.2023.12.013 and
+      10.1038/s41591-018-0269-2 both come back inEPMC=N, inPMC=N, hasSuppl=N --
+      which says only that Europe PMC has nothing, not that the publisher does.
+
+    Believing the flag in those cases produced a confident `none_listed` over
+    files that exist, which is the exact silent loss this pipeline exists to
+    prevent.
+    """
+    if ids.has_suppl is not False:
+        return False
+    if ids.is_preprint:
+        return False
+    return bool(ids.in_epmc) or bool(ids.in_pmc)
+
+
 def _supplement_status(
     ids: Identifiers,
     want_supplements: bool,
@@ -71,12 +95,7 @@ def _supplement_status(
 ) -> str:
     if not want_supplements:
         return "not_requested"
-    # `hasSuppl` is authoritative for indexed journal articles but NOT for
-    # preprints. Measured: Europe PMC reports hasSuppl=N for
-    # 10.1101/2025.07.21.666016, whose bioRxiv page carries media-1.pdf and
-    # media-2.zip. Trusting the flag there produced a confident `none_listed`
-    # and silently lost both files, so preprints are always checked at source.
-    if ids.has_suppl is False and not ids.is_preprint:
+    if suppl_flag_is_authoritative(ids):
         return "none_listed"
     if collected:
         # Judge on the outcome, not on the journey. An earlier tier failing and a
@@ -143,9 +162,9 @@ def fetch_publication(
     record["tiers_configured"] = tier_names
 
     need_pdf = True
-    # See `_supplement_status`: hasSuppl=N cannot be trusted for preprints, so a
-    # preprint's own server is always asked regardless of what the index claims.
-    need_supplements = want_supplements and (ids.has_suppl is not False or ids.is_preprint)
+    # Only skip the supplement search when hasSuppl=N is actually believable --
+    # see `suppl_flag_is_authoritative` for the cases where it is not.
+    need_supplements = want_supplements and not suppl_flag_is_authoritative(ids)
 
     pdf_statuses: List[str] = []
     suppl_statuses: List[str] = []
