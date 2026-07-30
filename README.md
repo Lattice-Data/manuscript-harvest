@@ -150,6 +150,36 @@ EZproxy sessions are short-lived, so expect to re-run `login` periodically;
 `check` tells you when. A dead session reports `session_expired`, not a silent
 failure.
 
+That promise had a hole in front of it until the page could be read at all.
+Stanford's SSO hop is a self-submitting SAML2 POST form, so on an expired session
+the document never stops navigating and `page.content()` keeps raising. Measured:
+`goto` returned in 0.4s, settling gave up after 31s, and the retry loop then spent
+minutes returning nothing — four attempts, each able to block for the full
+navigation timeout. `classify_denial` is only reached *after* those bytes arrive,
+so the most actionable status in the taxonomy could not be reported for the case
+that most needs it, and `check` prints its one line only at the end, so the log
+stayed empty throughout and it read as a hang rather than a dead session.
+
+The obvious fix does not work, and it is worth knowing why before trying it
+again. `page.content()` takes no timeout argument, and `page.set_default_timeout`
+does not govern it either — measured, with a 4s page default and a 12s deadline
+the call still had not returned after 88s. On a document that never stops
+navigating, `content()` is uninterruptible from the sync API, so no deadline
+around it can help.
+
+What works is not reading the page at all. `page.url` and `page.title()` answer
+instantly on exactly the pages where `content()` will not return, and a navigating
+document is titled for where it is going:
+`Loading https://login.stanford.edu/idp/profile/SAML2/POST/SSO`. So every read is
+now preceded by a classification from those two alone, and a page that already
+names itself is never asked for its body. Note where the IdP appears: only in the
+title. The URL is still EZproxy's own, so matching on the URL alone sees nothing.
+
+`settle_page` gets a real deadline too (`browser.settle_deadline_seconds`,
+default 20), since it was 31s of the wait and nothing bounded it. Measured end to
+end against a genuinely expired session: **21s, reporting `session_expired`**,
+against 7.5 minutes of silence before.
+
 ### What the statuses mean
 
 The point of this vocabulary is that "no supplements" and "we failed to get the

@@ -8,18 +8,22 @@ half-empty corpus directory weeks later.
 """
 
 import json
+import time
 
 import pytest
 
 from manuscript_harvest.fetch.adapters import adapter_for, candidate_hosts
 from manuscript_harvest.fetch.sources import proxy_browser as pb
 from manuscript_harvest.fetch.sources.base import SourceResult
+from manuscript_harvest.fetch.validate import classify_denial
 from tests.fakes import (
     DUO_PROMPT_HTML,
     DUO_PROMPT_URL,
     POW_HTML,
     RECAPTCHA_HTML,
     RESOURCE_NOT_FOUND_XML,
+    SAML_REDIRECT_TITLE,
+    SAML_REDIRECT_URL,
     FakeContext,
     FakePage,
     FakeRequest,
@@ -92,6 +96,114 @@ def test_stable_content_gives_up_loudly():
         pb.stable_content(page, attempts=2)
 
 
+def test_stable_content_stops_at_its_deadline():
+    """An expired session's SAML2 POST form never stops navigating, so every
+    attempt raises and every wait times out. Without an overall deadline this
+    burned minutes in total silence -- `check` prints only afterwards, so the log
+    stayed empty and it read as a hang rather than a dead session."""
+    page = FakePage(content=RuntimeError("the page is navigating and changing the content"),
+                    load_state_error=RuntimeError("timeout waiting for load"))
+    started = time.monotonic()
+    with pytest.raises(RuntimeError, match="could not read page content"):
+        pb.stable_content(page, attempts=40, deadline_seconds=0.3)
+    elapsed = time.monotonic() - started
+    # 40 attempts with the old escalating back-off would run for minutes.
+    assert elapsed < 3.0, f"took {elapsed:.1f}s despite a 0.3s deadline"
+
+
+class NeverReadable(FakePage):
+    """A document that never stops navigating: `content()` does not return.
+
+    Not merely slow -- measured 2026-07-30, `page.content()` on an expired
+    session had not returned after 88s despite a 12s deadline and a 4s page
+    default, because neither governs it. So the fake blocks rather than raising:
+    a test that only made it raise would pass against code that still hangs in
+    production.
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.content_calls = 0
+
+    def content(self):
+        self.content_calls += 1
+        time.sleep(30)  # never reached if the guard works; fails the test if not
+        raise AssertionError("unreachable")
+
+
+def test_an_identifiable_page_is_never_read():
+    """The deadline cannot save us here, so the body must not be asked for.
+
+    `page.content()` is uninterruptible on a perpetually navigating document --
+    no timeout argument, and `set_default_timeout` does not govern it either.
+    The only defence is to recognise the page from `url` and `title`, which
+    answer instantly, and never call `content()` at all. If someone reorders
+    this so the body is read first, the multi-minute hang comes straight back.
+    """
+    page = NeverReadable(url=SAML_REDIRECT_URL, title=SAML_REDIRECT_TITLE)
+    denial, url = pb.denial_before_reading(page)
+    assert denial == "session_expired"
+    assert page.content_calls == 0, "the body must not be touched"
+
+    # A healthy article page is not caught by the guard, so it still gets read.
+    healthy = FakePage(url="https://www-nature-com.stanford.idm.oclc.org/articles/x",
+                       title="Epigenetic and 3D genome reprogramming during ageing",
+                       content=b"<html>the article</html>")
+    assert pb.denial_before_reading(healthy)[0] is None
+
+
+def test_settle_page_stops_at_its_deadline():
+    """A page that never settles has to be given up on, not waited out. On an
+    expired session no round reaches `networkidle`, so each pays its full timeout
+    twice over -- measured at 31s, all of it ahead of the first byte anyone could
+    classify."""
+    page = FakePage(url="https://stanford.idm.oclc.org/login?url=x",
+                    load_state_error=RuntimeError("timeout"))
+    started = time.monotonic()
+    pb.settle_page(page, rounds=10, timeout_ms=15000, deadline_seconds=0.3)
+    elapsed = time.monotonic() - started
+    assert elapsed < 3.0, f"took {elapsed:.1f}s despite a 0.3s deadline"
+
+
+def test_a_navigating_page_is_still_identifiable():
+    """`content()` and `evaluate()` hang on a perpetually navigating document but
+    `title()` answers instantly, and on an expired session the title names the
+    IdP. That is the whole diagnosis, and it was being thrown away with the
+    exception."""
+    page = FakePage(url=SAML_REDIRECT_URL, title=SAML_REDIRECT_TITLE,
+                    content=RuntimeError("the page is navigating"))
+    marker_url, body = pb.navigation_marker(page)
+    # The IdP is in the title only -- the URL is still EZproxy's own.
+    assert "login.stanford.edu" not in page.url
+    assert classify_denial(marker_url, body) == "session_expired"
+
+
+def test_an_unreadable_landing_page_reports_the_session_not_a_failure():
+    """End to end: the tier must turn the wedge into `session_expired`, which
+    tells you to run `login`, rather than `download_failed`, which tells you
+    nothing."""
+    # The body genuinely blocks, as it does in production -- if the tier reads it
+    # before classifying, this test hangs, which is the failure we want.
+    class Wedged(ProxyRedirectPage):
+        def content(self):
+            time.sleep(30)
+            raise AssertionError("unreachable")
+
+    page = Wedged(SAML_REDIRECT_URL, title=SAML_REDIRECT_TITLE)
+    source = _source(proxy=PROXY)
+    result = SourceResult(tier="proxy_browser")
+
+    class Ids:
+        doi = "10.1038/s41586-026-10510-x"
+        landing_url = "https://www.nature.com/articles/s41586-026-10510-x"
+
+    source._publisher_page(FakeContext(pages=[page]), Ids(), result,
+                           need_pdf=True, need_supplements=True)
+    assert result.pdf_status == "session_expired"
+    assert result.suppl_status == "page_not_parsed"
+    assert any("session_expired" in p for p in result.problems)
+
+
 def test_settle_page_returns_the_final_url():
     page = FakePage(url="https://linkinghub.elsevier.com/retrieve/pii/X")
     assert pb.settle_page(page, rounds=2) == "https://linkinghub.elsevier.com/retrieve/pii/X"
@@ -151,7 +263,9 @@ def test_filename_for(url, headers, expected):
 def _source(**config):
     # challenge_wait_seconds: 0 keeps the suite fast; the live default is 8.
     base = {"max_files": 50, "max_file_mb": 200,
-            "browser": {"headless": True, "challenge_wait_seconds": 0}}
+            "browser": {"headless": True, "challenge_wait_seconds": 0,
+                        # 0 keeps the suite fast; the live default is 25.
+                        "content_deadline_seconds": 0}}
     base.update(config)
     return pb.ProxyBrowserSource(None, base)
 

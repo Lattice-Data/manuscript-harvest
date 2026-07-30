@@ -274,6 +274,16 @@ DUO_PROMPT_HTML = (
 )
 DUO_PROMPT_URL = "https://api-1b2c3d4e.duosecurity.com/prompt/?sid=frameless-xyz"
 
+# What an expired session actually looks like at the moment it wedges. Stanford's
+# SSO hop is a self-submitting SAML2 POST form, so the document never stops
+# navigating: `page.content()` and `page.evaluate()` both hang indefinitely while
+# `page.title()` answers instantly. Measured 2026-07-30 -- these two strings are
+# verbatim. Note where the IdP appears: in the title, never in the URL, which is
+# still EZproxy's own.
+SAML_REDIRECT_URL = ("https://stanford.idm.oclc.org/login?url="
+                     "https://www.nature.com/articles/s41586-026-10510-x")
+SAML_REDIRECT_TITLE = "Loading https://login.stanford.edu/idp/profile/SAML2/POST/SSO"
+
 # ClinicalKey's answer for an article it does not carry: an XML error document,
 # HTTP 200, 2562 bytes live. Rendered through Chrome's XML viewer, which is why
 # the markup appears twice -- once as the hidden source and once escaped in the
@@ -521,13 +531,18 @@ class FakePage:
     """The slice of Playwright's Page that adapters and the browser tier use."""
 
     def __init__(self, url="https://www.nature.com/articles/x", metas=None, links=None,
-                 title="An article", content=b"<html></html>", goto_error=None):
+                 title="An article", content=b"<html></html>", goto_error=None,
+                 load_state_error=None):
         self.url = url
         self.metas = metas or {}
         self.links = links or []
         self._title = title
         self._content = content
         self.goto_error = goto_error
+        # A perpetually navigating document never reaches `load`, so the retry
+        # helper's own wait raises too -- without this a fake page settles
+        # instantly and cannot reproduce the wedge that motivated the deadline.
+        self.load_state_error = load_state_error
         self.closed = False
         self.visited: List[str] = []
 
@@ -539,6 +554,8 @@ class FakePage:
         self.url = url
 
     def wait_for_load_state(self, state=None, timeout=None):
+        if isinstance(self.load_state_error, Exception):
+            raise self.load_state_error
         return None
 
     def title(self):

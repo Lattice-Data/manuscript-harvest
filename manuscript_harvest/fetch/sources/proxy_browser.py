@@ -167,27 +167,129 @@ def _default_check_url(fetch_cfg: dict) -> str:
     )
 
 
-def stable_content(page, attempts: int = 4) -> bytes:
-    """`page.content()` that tolerates a page still navigating.
+# How long an unresponsive page is given before it is named rather than waited
+# out. Read from config here rather than on the source, because `check_session`
+# needs them too and is the command whose silence was the original complaint.
+def settle_deadline(fetch_cfg: dict) -> float:
+    return float((fetch_cfg.get("browser") or {}).get("settle_deadline_seconds", 20.0))
+
+
+def content_deadline(fetch_cfg: dict) -> float:
+    return float((fetch_cfg.get("browser") or {}).get("content_deadline_seconds", 12.0))
+
+
+def stable_content(page, attempts: int = 4, deadline_seconds: float = 12.0) -> bytes:
+    """`page.content()` that tolerates a page still navigating -- but not forever.
 
     EZproxy bounces through a couple of client-side redirects before landing on
     the publisher, and calling `content()` mid-flight raises
     "the page is navigating and changing the content". Retrying is the fix.
+
+    The deadline bounds the retries, which is worth having when `content()` fails
+    fast -- the ordinary EZproxy case, where it raises and the next attempt
+    succeeds.
+
+    It is NOT sufficient on its own, and the reason is worth stating because it
+    is not obvious. `page.content()` takes no timeout argument, and measured
+    2026-07-30 against a dead session, `page.set_default_timeout()` does not
+    govern it either: with a 4s page default and a 12s deadline this still had
+    not returned after 88s. On a document that never stops navigating -- which is
+    what Stanford's self-submitting SAML2 POST form produces -- a single
+    `content()` call is simply uninterruptible from the sync API. No loop around
+    it can help.
+
+    So callers must not reach here with a page they could already have named.
+    `denial_before_reading` is the guard: `page.url` and `page.title()` answer
+    instantly on exactly the pages where `content()` will not return, so the
+    refusal is classified before the body is ever asked for.
     """
+    deadline = time.monotonic() + deadline_seconds
     last_error = None
     for attempt in range(attempts):
         try:
             return page.content().encode("utf-8", "replace")
         except Exception as e:
             last_error = e
-            try:
-                page.wait_for_load_state("load", timeout=10000)
-            except Exception:
-                time.sleep(1 + attempt)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        try:
+            page.wait_for_load_state("load", timeout=min(2000.0, remaining * 1000))
+        except Exception:
+            time.sleep(min(0.5 * (attempt + 1), max(0.0, deadline - time.monotonic())))
     raise RuntimeError(f"could not read page content: {last_error}")
 
 
-def settle_page(page, rounds: int = 3, timeout_ms: int = 15000) -> str:
+class _AlreadyIdentified(Exception):
+    """The page named itself before its body was read.
+
+    Carried as an exception so it unwinds the same `try` that guards navigation,
+    rather than duplicating the teardown, and caught separately so a real
+    navigation failure is still reported as one.
+    """
+
+    def __init__(self, denial: str, url: str):
+        super().__init__(f"{denial} at {url}")
+        self.denial = denial
+        self.url = url
+
+
+def denial_before_reading(page):
+    """Name a refusal from `url` + `title` alone, before asking for the body.
+
+    Returns `(denial, url)` with `denial` None when the page looks like an
+    article and the body is worth reading.
+
+    This is a guard, not an optimisation. `page.content()` cannot be interrupted
+    on a document that never stops navigating (see `stable_content`), and that is
+    exactly what an expired session produces -- so the only way not to hang on one
+    is to recognise it without reading it. The two things that still answer are
+    the URL and the title, and on an expired session the title is
+    "Loading https://login.stanford.edu/idp/profile/SAML2/POST/SSO", which names
+    the cause outright.
+
+    Safe against false positives because it is the same `classify_denial` used on
+    real bodies, given far less to match on: a healthy article page offers only
+    its own URL and headline, neither of which contains an SSO host, a
+    proof-of-work marker or a purchase phrase.
+    """
+    marker_url, marker_body = navigation_marker(page)
+    return classify_denial(marker_url, marker_body), marker_url
+
+
+def navigation_marker(page):
+    """What can still be read from a document that will not stop navigating.
+
+    Returns `(url, body)` shaped for `classify_denial`, so a page whose content
+    is unreadable can still be named instead of reported as a bare failure.
+
+    `page.url` and `page.title()` are what still answer. Measured on the expired
+    session above: `content()` and `evaluate()` both hung indefinitely while
+    `title()` came back instantly with
+    "Loading https://login.stanford.edu/idp/profile/SAML2/POST/SSO".
+
+    The title is folded into the *url* half deliberately. `classify_denial`
+    matches `_SSO_HOSTS` against the URL string, and the URL here is still
+    EZproxy's -- `stanford.idm.oclc.org/login?url=...`, which is not an SSO host.
+    The IdP appears only in the title, because a navigating document is titled
+    for where it is going rather than where it is. Without folding it in, the SSO
+    bounce is invisible and the answer degrades to `not_a_pdf`/`navigation_failed`
+    for what is really `session_expired` -- the most actionable status there is.
+    """
+    try:
+        url = page.url or ""
+    except Exception:
+        url = ""
+    try:
+        title = page.title() or ""
+    except Exception:
+        title = ""
+    body = f"<html><head><title>{title}</title></head><body>{url}</body></html>"
+    return f"{url} {title}", body.encode("utf-8", "replace")
+
+
+def settle_page(page, rounds: int = 3, timeout_ms: int = 15000,
+                deadline_seconds: float = 20.0) -> str:
     """Wait out client-side redirects and return the settled URL.
 
     Necessary because several hops in this path are JS redirects rather than HTTP
@@ -196,24 +298,39 @@ def settle_page(page, rounds: int = 3, timeout_ms: int = 15000) -> str:
     DOM at `domcontentloaded` captures a page titled "Redirecting" with no article
     content in it -- which is what made the first Elsevier fetch report
     `page_not_parsed`.
+
+    A page that never settles has to be given up on, not waited out. Stanford's
+    SSO hop is a self-submitting SAML2 POST form, so on an expired session no
+    round ever reaches `networkidle` and each one pays its full timeout twice
+    over: measured at 31s before this deadline existed, all of it ahead of the
+    first byte anyone could classify. The deadline caps the whole loop rather
+    than each wait, because it is the total silence that matters.
+
+    Healthy pages are untouched -- they settle in a second or two, well inside it.
     """
+    deadline = time.monotonic() + deadline_seconds
     previous = None
     for _ in range(rounds):
         current = page.url
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
         try:
-            page.wait_for_load_state("networkidle", timeout=timeout_ms)
+            page.wait_for_load_state("networkidle", timeout=min(timeout_ms, remaining * 1000))
         except Exception:
-            try:
-                page.wait_for_load_state("load", timeout=5000)
-            except Exception:
-                time.sleep(1)
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                try:
+                    page.wait_for_load_state("load", timeout=min(5000.0, remaining * 1000))
+                except Exception:
+                    time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
         if page.url == current == previous:
             break
         previous = current
     return page.url
 
 
-def _authenticated_yet(page, context=None) -> Tuple[bool, str]:
+def _authenticated_yet(page, context=None, fetch_cfg=None) -> Tuple[bool, str]:
     """Is the article actually reachable, not merely advertised?
 
     Finding a PDF link is NOT evidence of access: publishers emit
@@ -223,8 +340,22 @@ def _authenticated_yet(page, context=None) -> Tuple[bool, str]:
     """
     try:
         url = page.url
-        body = stable_content(page)
+        cfg = fetch_cfg or {}
+        # Ask what the page is before asking for its body: on an expired session
+        # `content()` never returns, so reading first means never getting here.
+        early, marker_url = denial_before_reading(page)
+        if early:
+            return False, f"{early} at {marker_url}"
+        body = stable_content(page, deadline_seconds=content_deadline(cfg))
     except Exception as e:
+        # An unreadable page is usually a page still navigating, and on an expired
+        # session it navigates forever. Say which rather than "not readable yet":
+        # this is the line `manuscript-fetch check` prints, and "session_expired"
+        # tells you to run `login` where the generic wording tells you nothing.
+        marker_url, marker_body = navigation_marker(page)
+        denial = classify_denial(marker_url, marker_body)
+        if denial:
+            return False, f"{denial} at {marker_url}"
         return False, f"page not readable yet ({type(e).__name__})"
 
     denial = classify_denial(url, body)
@@ -295,7 +426,7 @@ def interactive_login(fetch_cfg: dict, probe_url: Optional[str] = None,
                 detail = "browser window closed by user"
                 break
             live = context.pages[-1]
-            succeeded, detail = _authenticated_yet(live, context)
+            succeeded, detail = _authenticated_yet(live, context, fetch_cfg)
             if succeeded:
                 break
             time.sleep(2)
@@ -324,8 +455,8 @@ def check_session(fetch_cfg: dict, probe_url: Optional[str] = None) -> Tuple[boo
         with browser_context(fetch_cfg) as context:
             page = context.new_page()
             page.goto(target, wait_until="domcontentloaded")
-            settle_page(page)
-            return _authenticated_yet(page, context)
+            settle_page(page, deadline_seconds=settle_deadline(fetch_cfg))
+            return _authenticated_yet(page, context, fetch_cfg)
     except ImportError as e:
         return False, str(e)
     except Exception as e:
@@ -339,6 +470,14 @@ class ProxyBrowserSource(Source):
         super().__init__(http, config)
         # The proof-of-work challenge is per-session, so clear it at most once.
         self._challenge_cleared = False
+
+    @property
+    def _settle_deadline(self) -> float:
+        return settle_deadline(self.config)
+
+    @property
+    def _content_deadline(self) -> float:
+        return content_deadline(self.config)
 
     def applies(self, ids) -> bool:
         # Useful either for a paywalled publisher page or for PMC's challenge.
@@ -377,8 +516,8 @@ class ProxyBrowserSource(Source):
         page = context.new_page()
         try:
             page.goto(url, wait_until="domcontentloaded")
-            referer = settle_page(page)
-            body = stable_content(page)
+            referer = settle_page(page, deadline_seconds=self._settle_deadline)
+            body = stable_content(page, deadline_seconds=self._content_deadline)
 
             # Measured: NCBI serves headless Chrome a reCAPTCHA interstitial
             # ("Checking your browser") with no article content, while plain HTTP
@@ -432,13 +571,43 @@ class ProxyBrowserSource(Source):
             page.goto(target, wait_until="domcontentloaded")
             # Both EZproxy and Elsevier's linkinghub redirect via JavaScript, so
             # let the page settle before the adapter looks at it.
-            final_url = settle_page(page)
-            body = stable_content(page)
-        except Exception as e:
-            result.note("landing", url=target, status="navigation_failed",
-                        error=f"{type(e).__name__}: {e}")
+            final_url = settle_page(page, deadline_seconds=self._settle_deadline)
+            # Ask what it is before asking for the body. On an expired session
+            # `content()` never returns at all, so reading first means hanging
+            # instead of reporting -- see `denial_before_reading`.
+            early, marker_url = denial_before_reading(page)
+            if early:
+                raise _AlreadyIdentified(early, marker_url)
+            body = stable_content(page, deadline_seconds=self._content_deadline)
+        except _AlreadyIdentified as named:
+            result.note("landing", url=target, status=named.denial,
+                        final_url=named.url, detail="named without reading the body")
+            result.problems.append(f"{named.denial} at {named.url}")
             if need_pdf:
-                result.pdf_status = "download_failed"
+                result.pdf_status = named.denial
+            if need_supplements:
+                result.suppl_status = "page_not_parsed"
+            try:
+                page.close()
+            except Exception:
+                pass
+            return
+        except Exception as e:
+            # Before settling for `download_failed`, ask the page what it is. A
+            # document that never stops navigating is unreadable but not
+            # anonymous, and on an expired session it is an SSO bounce -- which
+            # is a cause the user can act on, unlike "navigation failed".
+            marker_url, marker_body = navigation_marker(page)
+            denial = classify_denial(marker_url, marker_body)
+            result.note("landing", url=target, status=denial or "navigation_failed",
+                        final_url=marker_url, error=f"{type(e).__name__}: {e}")
+            if denial:
+                result.problems.append(f"{denial} at {marker_url}")
+            if need_pdf:
+                result.pdf_status = denial or "download_failed"
+            if need_supplements:
+                # Nothing was looked at, so nothing licenses "none".
+                result.suppl_status = "page_not_parsed"
             try:
                 page.close()
             except Exception:
@@ -461,8 +630,8 @@ class ProxyBrowserSource(Source):
                         detail="retrying without the proxy")
             try:
                 page.goto(landing, wait_until="domcontentloaded")
-                final_url = settle_page(page)
-                body = stable_content(page)
+                final_url = settle_page(page, deadline_seconds=self._settle_deadline)
+                body = stable_content(page, deadline_seconds=self._content_deadline)
                 denial = classify_denial(final_url, body)
                 result.note("landing", url=landing, final_url=final_url,
                             status="loaded_unproxied", denial=denial)
