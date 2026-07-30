@@ -399,6 +399,8 @@ The tests live in `tests/` and run under pytest:
 | `tests/test_extract_units.py` | sections, table cards, and each parser: JATS, PDF, xlsx, docx, HTML, zip |
 | `tests/test_extract_article.py` | source choice, per-file statuses, the extraction record, the CLI |
 | `tests/test_extract_corpus.py` | the real files that taught the extractor its rules — skipped without `corpus/` |
+| `tests/test_manual_fetch_units.py` | the comparison rules: publisher filename conventions, archives, article versions |
+| `tests/test_manual_fetch_live.py` | fetches those same DOIs for real and compares — off unless asked for twice |
 
 They lean on failure cases rather than happy paths, because every bug found so far
 was a *plausible-looking success*: a paywall page served as `application/pdf`,
@@ -416,6 +418,48 @@ regression in it surfaced only after a real run against a real publisher.
 is gitignored, so it skips in a clean checkout and runs on a machine that has
 fetched the papers; the synthetic equivalents of every shape it checks are pinned
 in `tests/test_extract_units.py`.
+
+### Checking the fetcher against papers fetched by hand
+
+`corpus/` tests what the extractor does with files that were already fetched. It
+cannot tell you whether the *fetch* was right — whether a paper with twelve
+supplements came back with twelve. That needs ground truth: a human opening the
+publisher's page and saving everything by hand.
+
+    MANUSCRIPT_HARVEST_MANUAL_DIR=~/manual-fetch-papers \
+    MANUSCRIPT_HARVEST_MANUAL_NETWORK=1 \
+    python -m pytest tests/test_manual_fetch_live.py -v
+
+`manual_fetch/manual_fetch.yaml` is checked in; the bytes it describes are not, for the same reason
+`corpus/` is ignored. Point `MANUSCRIPT_HARVEST_MANUAL_DIR` at wherever they live —
+there is no need to copy them into the repo. To add papers, drop a folder per DOI
+and regenerate:
+
+    python -m manuscript_harvest.fetch.manual_fetch bootstrap 10.1126/science.adt8307=Science
+
+The spec it writes is a draft for a human to confirm, not an answer. Two things it
+gets right that are worth knowing about, because both were found on the first three
+papers:
+
+- **The article PDF is compared on page count and identity, never on bytes.**
+  Publishers stamp per-download watermarks and embed timestamps, so two correct
+  fetches of one paper differ. And only the *published* rendition is held to a page
+  count: Cell Genomics ships an extended version as `mmc12.pdf` running 59 pages
+  against a 37-page typeset article, and both are the same paper.
+- **Supplements are compared as a set of content hashes, with archives normalised
+  both ways.** Filenames never line up — browsers rename downloads and
+  `store.supplement_filename` prefixes retrieval order. Science ships 28 tables as
+  one zip, so a tier that unpacks it and a human who saved it whole have to count as
+  the same thing.
+
+The check that justifies the exercise is `supplementary_status`. No synthetic
+fixture can catch a *silent* false negative — a paper that really has supplements,
+that fetch comes away from with none, reported as `none_listed` rather than
+`expected_but_missing`. Only ground truth knows the difference.
+
+This cannot run in CI: no network, no browser, no proxy credentials. So it is a
+diagnostic, and what it finds belongs in `tests/fakes.py` afterwards, where it will
+run on every commit.
 
 ## Known limitations
 
