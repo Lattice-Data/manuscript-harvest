@@ -14,6 +14,7 @@ from manuscript_harvest.fetch.adapters import adapter_for
 from manuscript_harvest.fetch.adapters.base import (
     dedupe_by_target,
     is_file_url,
+    is_supplement_url,
     looks_like_supplement,
     url_without_fragment,
 )
@@ -31,9 +32,13 @@ from manuscript_harvest.fetch.sources.pmc_oa import _classify, _unpack_tgz, ftp_
 from manuscript_harvest.fetch.validate import classify_denial, looks_like_pdf, validate_pdf
 from tests.fakes import (
     DOI,
+    DUO_PROMPT_HTML,
+    DUO_PROMPT_URL,
     EZPROXY_HTML,
     PAYWALL_HTML,
     POW_HTML,
+    RESOURCE_NOT_FOUND_XML,
+    SCIENCE_ARTICLE_LINKS,
     SSO_HTML,
     FakePage,
     make_paywall_pdf,
@@ -113,7 +118,11 @@ def test_scanned_pdf_kept_but_flagged():
     (PAYWALL_HTML * 20, "application/pdf", "https://p/a", "paywalled"),
     (EZPROXY_HTML * 20, "text/html", "https://p/a", "proxy_not_configured"),
     (SSO_HTML * 20, "text/html", "https://login.stanford.edu/idp", "session_expired"),
+    (DUO_PROMPT_HTML, "text/html", DUO_PROMPT_URL, "session_expired"),
     (POW_HTML * 20, "text/html", "https://pmc/bin/x", "javascript_challenge"),
+    (RESOURCE_NOT_FOUND_XML, "text/xml",
+     "https://www-clinicalkey-com.stanford.idm.oclc.org/content/playBy/pii/"
+     "?v=S2666979X26001667", "link_resolver_error"),
     (b"", "application/pdf", "https://p/a", "download_failed"),
     (b"%PDF-1.4 truncated" * 50, "application/pdf", "https://p/a", "not_a_pdf"),
 ])
@@ -122,6 +131,32 @@ def test_denials_are_named_precisely(body, content_type, url, expected):
     stored. Magic bytes decide."""
     accepted, status, _ = validate_pdf(body, content_type=content_type, url=url)
     assert not accepted and status == expected
+
+
+def test_duo_is_an_expired_session_by_host_alone():
+    """An expired proxy session lands on Duo, not on Stanford's login page.
+
+    The host is the durable signal: Duo can restyle its prompt, but a request
+    that ends up at `duosecurity.com` is a dead session either way. Checked
+    separately from the body so neither route can rot unnoticed.
+    """
+    assert classify_denial(DUO_PROMPT_URL, b"<html><body>anything</body></html>") \
+        == "session_expired"
+    # ... and by wording alone, for the frameless prompt embedded elsewhere.
+    assert classify_denial("https://www-science-org.stanford.idm.oclc.org/doi/10.1/x",
+                           DUO_PROMPT_HTML) == "session_expired"
+
+
+def test_link_resolver_error_is_not_a_page_we_failed_to_parse():
+    """10.1016/j.xgen.2026.101304: the proxy routed an Elsevier DOI to
+    ClinicalKey, which does not carry Cell Genomics and answered HTTP 200 with
+    `<ServiceErrorResponse><status>RESOURCE_NOT_FOUND</status>`. Unnamed, that
+    reached the generic adapter and came back as `no_pdf_link`."""
+    assert classify_denial("https://www-clinicalkey-com.stanford.idm.oclc.org/x",
+                           RESOURCE_NOT_FOUND_XML) == "link_resolver_error"
+    # An article that merely discusses resolvers is not one.
+    assert classify_denial("https://p/a", b"<html><body>We used a link resolver to "
+                                          b"locate each cited article.</body></html>") is None
 
 
 def test_small_paywall_pdf_stub_rejected():
@@ -310,6 +345,33 @@ def test_real_supplement_link_recognised():
         "text": "Supplementary Information"})
 
 
+def test_aaas_abbreviates_supplement_to_suppl():
+    """10.1126/science.adt8307 serves its three supplements from
+    `/doi/suppl/<doi>/suppl_file/<name>`. Requiring the whole word `supplement`
+    made all three invisible and reported `unknown_none_found` for an article
+    that has them."""
+    base = "https://www-science-org.stanford.idm.oclc.org/doi/suppl/10.1126/science.adt8307"
+    assert looks_like_supplement(
+        {"url": f"{base}/suppl_file/science.adt8307_sm.pdf", "text": "Download"})
+    assert looks_like_supplement(
+        {"url": f"{base}/suppl_file/science.adt8307_tables_s1_to_s28.zip", "text": "Download"})
+
+
+@pytest.mark.parametrize("url", [
+    # The article's own PDF, which the fallback in `find_pdf_url` must still reach.
+    "https://www-science-org.stanford.idm.oclc.org/doi/pdf/10.1126/science.adt8307",
+    "https://www-science-org.stanford.idm.oclc.org/doi/10.1126/science.adt8307",
+    # `suppl` is a prefix of ordinary words, which is why the path segment is
+    # anchored rather than matched as a bare substring.
+    "https://x.example/files/supplier-list.pdf",
+    "https://x.example/supply/chain.pdf",
+    "https://x.example/supplication.pdf",
+])
+def test_suppl_is_anchored_to_a_path_segment(url):
+    assert not is_supplement_url(url)
+    assert not looks_like_supplement({"url": url, "text": "Download PDF"})
+
+
 def test_dedupe_by_target_collapses_fragments():
     links = [{"url": "https://x/a#1"}, {"url": "https://x/a#2"}, {"url": "https://x/b"}]
     assert [l["url"] for l in dedupe_by_target(links)] == ["https://x/a", "https://x/b"]
@@ -381,6 +443,47 @@ def test_generic_adapter_uses_citation_pdf_url():
                     metas={"citation_pdf_url": "https://journals.plos.org/x.pdf"})
     assert adapter_for(page.url).name == "generic"
     assert adapter_for(page.url).find_pdf_url(page, DOI) == "https://journals.plos.org/x.pdf"
+
+
+def _science_page() -> FakePage:
+    """The AAAS page for 10.1126/science.adt8307: no citation_pdf_url, and every
+    supplement anchor ahead of both article-PDF anchors."""
+    return FakePage(
+        url="https://www-science-org.stanford.idm.oclc.org/doi/10.1126/science.adt8307",
+        metas={}, links=SCIENCE_ARTICLE_LINKS)
+
+
+def test_pdf_fallback_never_returns_a_supplement():
+    """10.1126/science.adt8307. With no `citation_pdf_url` the fallback takes the
+    first `.pdf` anchor -- and on this page that is
+    `/doi/suppl/<doi>/suppl_file/science.adt8307_sm.pdf`, so the Supplementary
+    Materials PDF was written to `fulltext.pdf` and reported `ok` while the real
+    19-page article was never fetched.
+
+    An identity check does not catch this: the SM PDF carries the DOI as well, so
+    it passed as "the right paper". Only 29 pages against 19 gave it away. Link
+    order is the publisher's to change, so the exclusion has to be explicit."""
+    page = _science_page()
+    adapter = adapter_for(page.url)
+    assert adapter.name == "generic"
+    url = adapter.find_pdf_url(page, "10.1126/science.adt8307")
+    assert "/suppl_file/" not in url and "_sm.pdf" not in url
+    assert url == ("https://www-science-org.stanford.idm.oclc.org"
+                   "/doi/pdf/10.1126/science.adt8307?download=true")
+
+
+def test_generic_adapter_finds_the_aaas_supplements():
+    """The same page's three real supplements, and nothing else: not the two
+    article-PDF anchors, and not the in-page `#supplementary-materials` jump --
+    which has the words but is a section of the page, not a file."""
+    page = _science_page()
+    links, parsed = adapter_for(page.url).find_supplements(page, "10.1126/science.adt8307")
+    assert parsed
+    assert [link["url"].rsplit("/", 1)[-1] for link in links] == [
+        "science.adt8307_sm.pdf",
+        "science.adt8307_tables_s1_to_s28.zip",
+        "science.adt8307_mdar_reproducibility_checklist.pdf",
+    ]
 
 
 # -- HTTP politeness ---------------------------------------------------------

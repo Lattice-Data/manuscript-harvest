@@ -17,6 +17,7 @@ from .base import (
     Adapter,
     collect_links,
     dedupe_by_target,
+    is_supplement_url,
     looks_like_supplement,
     meta_content,
     url_without_fragment,
@@ -36,8 +37,21 @@ class GenericAdapter(Adapter):
             if value and ".pdf" in value.lower():
                 return value
 
-        # Fall back to a link that advertises itself as the PDF.
+        # Fall back to a link that advertises itself as the PDF -- but never a
+        # supplementary one. Measured on 10.1126/science.adt8307, which carries
+        # no `citation_pdf_url` at all: the first `.pdf` anchor on the page is
+        # `/doi/suppl/<doi>/suppl_file/science.adt8307_sm.pdf`, so the
+        # Supplementary Materials PDF was stored as `fulltext.pdf` and reported
+        # `ok`, and the 19-page article was never fetched. Link order decides
+        # which anchor is seen first, so the exclusion has to be explicit rather
+        # than left to the page to get right.
+        #
+        # Identity is not a substitute for this check: the SM PDF carries the
+        # DOI too, so it passed a "is this the right paper?" comparison. Only
+        # the page count (29 against 19) caught it.
         for link in collect_links(page):
+            if is_supplement_url(link["url"]):
+                continue
             url = link["url"].lower()
             text = link["text"].lower()
             if url.endswith(".pdf") or "pdf" in text.split():

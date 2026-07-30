@@ -262,8 +262,69 @@ POW_HTML = (
 
 SSO_HTML = b"<html><body><h1>Stanford Login</h1><p>Enter your SUNet ID</p></body></html>"
 
+# Duo's universal prompt, where an expired proxy session actually lands. Served
+# from `api-<id>.duosecurity.com/prompt/...`, and note what is *not* on it: no
+# SUNet ID, no "Stanford Login", no "two-step authentication". Matching only
+# Stanford's own wording left this classified as no denial at all.
+DUO_PROMPT_HTML = (
+    b"<html><head><title>Duo Security</title></head><body>"
+    b"<h1>Select an option to log in</h1>"
+    b"<button>Duo Push</button><button>Send to Mobile Phone</button>"
+    b"<footer>Secured by Duo</footer></body></html>"
+)
+DUO_PROMPT_URL = "https://api-1b2c3d4e.duosecurity.com/prompt/?sid=frameless-xyz"
+
+# ClinicalKey's answer for an article it does not carry: an XML error document,
+# HTTP 200, 2562 bytes live. Rendered through Chrome's XML viewer, which is why
+# the markup appears twice -- once as the hidden source and once escaped in the
+# pretty-print tree. Observed on 10.1016/j.xgen.2026.101304, where the proxy
+# routed an Elsevier DOI to a clinical-content platform that has no Cell
+# Genomics. The Chromium viewer's ~2 KB of stylesheet is dropped here; nothing
+# in it is load-bearing.
+RESOURCE_NOT_FOUND_XML = (
+    b'<html xmlns="http://www.w3.org/1999/xhtml"><head></head><body>'
+    b'<div id="webkit-xml-viewer-source-xml"><ServiceErrorResponse xmlns="">'
+    b"<status>RESOURCE_NOT_FOUND</status><message>Could not find EID for link "
+    b"resolver with params: field: pii; value: S2666979X26001667</message>"
+    b"</ServiceErrorResponse></div>"
+    b'<div class="header"><span>This XML file does not appear to have any style '
+    b"information associated with it. The document tree is shown below.</span></div>"
+    b'<div class="pretty-print"><div class="line">'
+    b'<span class="html-tag">&lt;ServiceErrorResponse&gt;</span></div>'
+    b'<div class="line"><span class="html-tag">&lt;status&gt;</span>'
+    b"<span>RESOURCE_NOT_FOUND</span></div></div></body></html>"
+)
+
 # NCBI's reCAPTCHA gate, served to headless Chrome while plain HTTP got the page.
 RECAPTCHA_HTML = b"<html><head><title>Checking your browser - reCAPTCHA</title></head></html>"
+
+
+# -- rendered anchor sets ----------------------------------------------------
+
+#: The AAAS article page for 10.1126/science.adt8307, reduced to the anchors that
+#: matter, in the order `collect_links` really saw them (absolute, as `e.href`
+#: yields them, and proxied, because that is the only way the page is reachable).
+#:
+#: Two bugs live in this ordering. The page carries no `citation_pdf_url` at all,
+#: and every supplement anchor precedes both article-PDF anchors -- so the naive
+#: "first link ending in .pdf" fallback stored the 29-page Supplementary
+#: Materials PDF as `fulltext.pdf` and never fetched the 19-page article. The
+#: three real supplements were invisible at the same time, because `suppl_file`
+#: is not the word `supplement`.
+_SCIENCE_HOST = "https://www-science-org.stanford.idm.oclc.org"
+SCIENCE_ARTICLE_LINKS = [
+    {"url": f"{_SCIENCE_HOST}/doi/10.1126/science.adt8307#supplementary-materials",
+     "text": "Supplementary Materials"},
+    {"url": f"{_SCIENCE_HOST}/doi/suppl/10.1126/science.adt8307/suppl_file/"
+            "science.adt8307_sm.pdf", "text": "Download"},
+    {"url": f"{_SCIENCE_HOST}/doi/suppl/10.1126/science.adt8307/suppl_file/"
+            "science.adt8307_tables_s1_to_s28.zip", "text": "Download"},
+    {"url": f"{_SCIENCE_HOST}/doi/suppl/10.1126/science.adt8307/suppl_file/"
+            "science.adt8307_mdar_reproducibility_checklist.pdf", "text": "Download"},
+    {"url": f"{_SCIENCE_HOST}/doi/pdf/10.1126/science.adt8307?download=true",
+     "text": "Download PDF"},
+    {"url": f"{_SCIENCE_HOST}/doi/pdf/10.1126/science.adt8307", "text": "Download PDF"},
+]
 
 
 # -- API payloads ------------------------------------------------------------

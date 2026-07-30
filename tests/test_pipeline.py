@@ -171,6 +171,11 @@ def test_paywall_response_is_never_written_as_fulltext(tmp_path):
     (["download_failed", "not_in_oa_subset"], "not_in_oa_subset"),
     (["not_a_pdf", "paywalled"], "paywalled"),                            # diagnosis wins
     (["not_in_oa_subset", "publisher_stub_page"], "publisher_stub_page"),
+    # Tier order is configurable (`--tiers`), so the browser tier is not always
+    # the last to speak. 10.1016/j.xgen.2026.101304's resolver error names the
+    # cause -- the proxy sent us to a platform that does not carry this journal
+    # -- and must still beat a later tier's generic miss.
+    (["link_resolver_error", "not_in_oa_subset"], "link_resolver_error"),
     (["not_in_oa_subset", "ok"], "ok"),
     ([], "not_found"),
 ])

@@ -38,7 +38,7 @@ _PDF_SUCCESS = {"ok", "scanned_pdf_suspected"}
 # Diagnoses that name a cause the user can act on. These win wherever they appear,
 # because "your session expired" beats "the last thing we tried returned HTML".
 _PDF_DIAGNOSES = ["paywalled", "session_expired", "proxy_not_configured",
-                  "publisher_stub_page"]
+                  "publisher_stub_page", "link_resolver_error"]
 
 _SETTLED_SUPPL = {"none_listed", "fetched", "not_requested"}
 

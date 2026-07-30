@@ -50,12 +50,38 @@ _PROXY_NOT_CONFIGURED = [
 ]
 
 # Stanford SSO, i.e. the session died and we were bounced to the IdP.
+#
+# Duo is the second leg of that bounce and shares none of its vocabulary: it is
+# served from `api-<id>.duosecurity.com/prompt/...` and reads "Select an option
+# to log in / Duo Push / Send to Mobile Phone / Secured by Duo" -- not one word
+# of Stanford's own login page. Measured on an expired proxy session: nothing
+# below matched, `classify_denial` returned None, and the Duo prompt was handed
+# to the generic adapter, which reported `no_pdf_link`. "Your session expired"
+# is the most actionable answer this module can give, so it must survive a
+# second-factor hop to a host with a different name.
 _SSO_MARKERS = [
     "sunet id",
     "stanford login",
     "two-step authentication",
+    "duo push",
+    "secured by duo",
 ]
-_SSO_HOSTS = ("login.stanford.edu", "idp.stanford.edu", "weblogin.stanford.edu")
+_SSO_HOSTS = ("login.stanford.edu", "idp.stanford.edu", "weblogin.stanford.edu",
+              "duosecurity.com")
+
+# A link resolver answering "I have no such article" -- an error document served
+# with HTTP 200, not a page. Measured on 10.1016/j.xgen.2026.101304: the proxy
+# routed the DOI through linkinghub to ClinicalKey, which is a clinical-content
+# platform and does not carry Cell Genomics, and got back 2562 bytes of
+# `<ServiceErrorResponse><status>RESOURCE_NOT_FOUND</status>`. The tier recorded
+# `loaded`, saved it as landing.html and let the adapter conclude `no_pdf_link`
+# -- "we could not find a PDF link on the page" for something that was never an
+# article page. Naming it separates "this platform does not have this article"
+# from "the page rendered and had no PDF", which point at different fixes.
+_LINK_RESOLVER_ERRORS = [
+    "serviceerrorresponse",
+    "could not find eid for link resolver",
+]
 
 # NCBI fronts its file downloads with a proof-of-work page that only a real
 # browser can clear. It is not a refusal -- the file is public -- so it gets its
@@ -87,7 +113,7 @@ def classify_denial(url: str, content: bytes, content_type: str = "") -> Optiona
     """Name the refusal if these bytes are an access-denied page, else None.
 
     Returns one of `proxy_not_configured`, `session_expired`, `paywalled`,
-    `javascript_challenge`.
+    `javascript_challenge`, `link_resolver_error`.
     """
     host_matched = any(host in (url or "") for host in _SSO_HOSTS)
     # Only inspect the head of the body; denial pages announce themselves early.
@@ -98,6 +124,8 @@ def classify_denial(url: str, content: bytes, content_type: str = "") -> Optiona
         return "javascript_challenge"
     if _contains_any(body, _PROXY_NOT_CONFIGURED):
         return "proxy_not_configured"
+    if _contains_any(body, _LINK_RESOLVER_ERRORS):
+        return "link_resolver_error"
     if host_matched or _contains_any(body, _SSO_MARKERS):
         return "session_expired"
     if _contains_any(body, _PAYWALL_PHRASES):
@@ -116,7 +144,7 @@ def validate_pdf(
     Returns `(accepted, status, meta)`. `status` is one of the `fulltext.status`
     values: `ok`, `scanned_pdf_suspected` (accepted, flagged), or one of
     `download_failed`, `not_a_pdf`, `paywalled`, `proxy_not_configured`,
-    `session_expired` (all rejected).
+    `session_expired`, `link_resolver_error` (all rejected).
     """
     meta: dict = {"bytes": len(content or b""), "content_type": content_type}
 

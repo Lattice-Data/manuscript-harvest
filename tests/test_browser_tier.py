@@ -15,8 +15,11 @@ from manuscript_harvest.fetch.adapters import adapter_for, candidate_hosts
 from manuscript_harvest.fetch.sources import proxy_browser as pb
 from manuscript_harvest.fetch.sources.base import SourceResult
 from tests.fakes import (
+    DUO_PROMPT_HTML,
+    DUO_PROMPT_URL,
     POW_HTML,
     RECAPTCHA_HTML,
+    RESOURCE_NOT_FOUND_XML,
     FakeContext,
     FakePage,
     FakeRequest,
@@ -292,6 +295,56 @@ def test_pmc_bot_check_says_use_headed():
     source._pmc_supplements(FakeContext(pages=[page]), Ids(), result)
     assert result.suppl_status == "page_not_parsed"
     assert any("--headed" in p for p in result.problems)
+
+
+def test_link_resolver_error_is_reported_not_parsed():
+    """10.1016/j.xgen.2026.101304. The proxy routed this Elsevier DOI via
+    linkinghub to ClinicalKey, which does not carry Cell Genomics and returned
+    2562 bytes of `<ServiceErrorResponse><status>RESOURCE_NOT_FOUND</status>`
+    with HTTP 200. The tier called that `loaded`, saved it as landing.html and
+    let the generic adapter conclude `no_pdf_link` and `page_not_parsed` -- a
+    knowable cause reported as "we could not find a PDF link on the page"."""
+    resolver = ProxyRedirectPage(
+        "https://www-clinicalkey-com.stanford.idm.oclc.org/content/playBy/pii/"
+        "?v=S2666979X26001667",
+        title="", links=[], content=RESOURCE_NOT_FOUND_XML)
+    source = _source(proxy=PROXY)
+    result = SourceResult(tier="proxy_browser")
+
+    class Ids:
+        doi = "10.1016/j.xgen.2026.101304"
+        landing_url = "https://linkinghub.elsevier.com/retrieve/pii/S2666979X26001667"
+
+    source._publisher_page(FakeContext(pages=[resolver]), Ids(), result,
+                           need_pdf=True, need_supplements=True)
+    assert result.pdf_status == "link_resolver_error"
+    assert any("link_resolver_error" in p for p in result.problems)
+    assert [a["status"] for a in result.attempts] == ["link_resolver_error"]
+    # Never `unknown_none_found`: no supplement list was ever looked at, so
+    # nothing licenses the claim that this article has none.
+    assert result.suppl_status == "page_not_parsed"
+    # The bytes are still kept -- they are the only way to debug the next one.
+    assert [f.name for f in result.files if f.role == "landing_html"] == ["landing.html"]
+
+
+def test_duo_landing_is_an_expired_session_not_a_missing_pdf():
+    """An expired proxy session lands on Duo's prompt, which carries none of
+    Stanford's login wording. Unrecognised, the guard below never fired and the
+    2FA page was handed to the generic adapter, which said `no_pdf_link`."""
+    duo = ProxyRedirectPage(DUO_PROMPT_URL, title="Duo Security", links=[],
+                            content=DUO_PROMPT_HTML)
+    source = _source(proxy=PROXY)
+    result = SourceResult(tier="proxy_browser")
+
+    class Ids:
+        doi = "10.1126/science.adt8307"
+        landing_url = "https://www.science.org/doi/10.1126/science.adt8307"
+
+    source._publisher_page(FakeContext(pages=[duo]), Ids(), result,
+                           need_pdf=True, need_supplements=True)
+    assert result.pdf_status == "session_expired"
+    assert result.suppl_status == "page_not_parsed"
+    assert any("session_expired" in p for p in result.problems)
 
 
 def test_unconfigured_proxy_retries_the_publisher_directly():

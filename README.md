@@ -158,7 +158,9 @@ an empty list and gets logged as a clean success.
 
 `fulltext.status`: `ok` · `scanned_pdf_suspected` (saved, but has no extractable
 text — needs OCR) · `paywalled` · `not_in_oa_subset` · `proxy_not_configured` ·
-`session_expired` · `not_a_pdf` · `download_failed` · `not_found`
+`session_expired` · `link_resolver_error` (a resolver answered "no such article
+here", so this is not a page we failed to parse) · `not_a_pdf` ·
+`download_failed` · `not_found`
 
 `supplementary_status`:
 

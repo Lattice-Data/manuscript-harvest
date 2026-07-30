@@ -467,12 +467,21 @@ class ProxyBrowserSource(Source):
                 result.note("landing", url=landing, status="navigation_failed",
                             error=f"{type(e).__name__}: {e}")
 
-        if denial in {"proxy_not_configured", "session_expired"}:
-            # No point asking the adapter to parse a login page.
+        if denial in {"proxy_not_configured", "session_expired", "link_resolver_error"}:
+            # No point asking the adapter to parse a login page or an error
+            # document. `link_resolver_error` is here because handing one on is
+            # actively misleading: for 10.1016/j.xgen.2026.101304 ClinicalKey's
+            # RESOURCE_NOT_FOUND XML was recorded as `loaded` and the generic
+            # adapter turned it into `no_pdf_link` -- "we could not find a PDF
+            # link on the page" for a resolver saying it has no such article.
             result.problems.append(f"{denial} at {final_url}")
             result.note("landing", url=target, final_url=final_url, status=denial)
             if need_pdf:
                 result.pdf_status = denial
+            if need_supplements:
+                # Never `unknown_none_found` here: nothing was looked at, so
+                # nothing licenses the claim that this article has none.
+                result.suppl_status = "page_not_parsed"
             try:
                 page.close()
             except Exception:
