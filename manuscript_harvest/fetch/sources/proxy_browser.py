@@ -413,7 +413,9 @@ class ProxyBrowserSource(Source):
 
         fetched, attempted = self._download_all(context, links, referer, result, "pmc")
         if fetched and fetched == attempted:
-            result.suppl_status = "fetched"
+            # `attempted` counts anchors the adapter recognised, not files PMC
+            # holds, so this says "we got what we saw". See `store.SUPPL_SETTLED`.
+            result.suppl_status = "fetched_unverified"
         else:
             result.suppl_status = "partial_failure"
         result.note("pmc_page", url=url, status=result.suppl_status,
@@ -529,8 +531,14 @@ class ProxyBrowserSource(Source):
                 fetched, attempted = self._download_all(
                     context, links, final_url, result, adapter.name
                 )
+                # Never plain `fetched` here. This is the site that reported
+                # `fetched` for 10.1016/j.xgen.2026.101304 while holding 1 of its
+                # 12 supplements: `attempted` counts the anchors
+                # `looks_like_supplement` matched, and a heuristic cannot know
+                # what it missed. See `store.SUPPL_SETTLED`.
                 result.suppl_status = (
-                    "fetched" if fetched and fetched == attempted else "partial_failure"
+                    "fetched_unverified" if fetched and fetched == attempted
+                    else "partial_failure"
                 )
                 result.note("supplements", status=result.suppl_status, listed=len(links),
                             attempted=attempted, fetched=fetched, adapter=adapter.name)

@@ -393,6 +393,39 @@ def test_unconfigured_proxy_retries_the_publisher_directly():
     assert result.pdf_status != "proxy_not_configured"
 
 
+def test_a_scraped_supplement_set_is_never_plain_fetched():
+    """This is the site that reported `fetched` for 10.1016/j.xgen.2026.101304
+    while holding 1 of its 12 supplements.
+
+    Both links here are found and both download, so the old rule said `fetched` --
+    "they exist and we have them". But `attempted` counts the anchors
+    `looks_like_supplement` matched, and a heuristic cannot know what it missed,
+    which is exactly how eleven files went unreported. Nothing about this page
+    bounds the set, so the honest answer is `fetched_unverified`.
+    """
+    article = "https://www.nature.com/articles/x"
+    page = ProxyRedirectPage(article, content=b"<html>real</html>", links=[
+        {"url": "https://static-content.springer.com/esm/a_MOESM1_ESM.pdf",
+         "text": "Supplementary Information"},
+        {"url": "https://static-content.springer.com/esm/a_MOESM2_ESM.xlsx",
+         "text": "Supplementary Table 1"},
+    ])
+    context = FakeContext(pages=[page], request=FakeRequest({
+        "_ESM": FakeResponse(200, b"bytes", {"content-type": "application/pdf"})}))
+    source = _source(proxy={"enabled": False})
+    result = SourceResult(tier="proxy_browser")
+
+    class Ids:
+        doi = "10.1038/x"
+        landing_url = article
+
+    source._publisher_page(context, Ids(), result, need_pdf=False, need_supplements=True)
+    assert result.suppl_status == "fetched_unverified"
+    # Every file it identified did arrive -- this is not a failure report.
+    note = next(a for a in result.attempts if a.get("action") == "supplements")
+    assert (note["listed"], note["attempted"], note["fetched"]) == (2, 2, 2)
+
+
 def test_landing_html_is_kept_for_debugging():
     page = FakePage(url="https://www.nature.com/articles/x", content=b"<html>real</html>",
                     metas={"citation_pdf_url": "https://www.nature.com/x.pdf"})

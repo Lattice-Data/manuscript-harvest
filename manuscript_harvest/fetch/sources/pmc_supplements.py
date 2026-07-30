@@ -90,7 +90,10 @@ class PmcSupplementsSource(Source):
                 failed += 1
 
         if fetched and not (challenged or failed):
-            result.suppl_status = "fetched"
+            # Not `fetched`: the list came from `_BIN_RX` over PMC's HTML, so it
+            # is what the pattern matched rather than what PMC holds. A markup
+            # change would shrink it silently. See `store.SUPPL_SETTLED`.
+            result.suppl_status = "fetched_unverified"
         elif fetched:
             result.suppl_status = "partial_failure"
         elif challenged:

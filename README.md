@@ -167,11 +167,33 @@ here", so this is not a page we failed to parse) · `not_a_pdf` ·
 | Status | Meaning |
 |---|---|
 | `none_listed` | the publisher says there are none (`hasSuppl: N`) |
-| `fetched` | they exist and we have them |
+| `fetched` | an archive that *is* the deposit was unpacked whole — they exist and we have them |
+| `fetched_unverified` | every file we identified arrived, but nothing bounds the set |
 | `partial_failure` | some arrived; at least one failed |
 | `expected_but_missing` | `hasSuppl: Y` and we came away with nothing — **the bug case** |
 | `page_not_parsed` | a page loaded but no file list could be read from it |
 | `unknown_none_found` | nobody said whether any exist, and none were found |
+
+**Why `fetched` splits in two.** The taxonomy told its own version of the lie it
+exists to prevent. For `10.1016/j.xgen.2026.101304` the adapter matched 1 of 12
+supplementary links, downloaded that one, and the article was recorded `fetched`
+while eleven files were missing. Nothing had broken — the tier really did get
+everything it found. The claim was just larger than the evidence, because a regex
+over page anchors cannot know what it failed to match. Worse, the ground-truth
+harness's own `supplementary_status` check *passed*; only comparing hashes against
+hand-downloaded files caught it.
+
+So the two are split by what bounded the set, the only thing the code can actually
+know. Europe PMC's supplementary ZIP and the PMC OA tarball are self-delimiting: a
+member list is not a guess. Every other route pattern-matches a rendered page —
+`pmc_supplements` regexes PMC's HTML for `/bin/` paths, the browser tier scrapes
+anchors, bioRxiv regexes its supplement page — and gets `fetched_unverified` even
+when it is in fact complete, as all three ground-truth papers are. That is not an
+alarm: it is the difference between "we counted" and "we looked, and this is what
+we saw". Only the first licenses "they exist and we have them".
+
+Both count as settled, so an article still finishes `complete` and is never
+re-fetched. An unbounded set is not a failed one.
 
 A refusal is never written to disk as `fulltext.pdf`: acceptance requires PDF
 magic bytes (not the `Content-Type` header, which lies), a successful parse, and

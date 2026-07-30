@@ -138,10 +138,42 @@ def test_no_metadata_anywhere_never_claims_none(tmp_path):
     (["partial_failure"], 2, "partial_failure"),
     (["partial_failure"], 0, "expected_but_missing"),
     (["none_listed"], 0, "none_listed"),                 # the source owns the content
+    # An unpacked deposit archive outranks a scrape: it is the stronger evidence,
+    # not merely the better news. Whichever order the tiers ran in.
+    (["fetched_unverified", "fetched"], 4, "fetched"),
+    (["fetched", "fetched_unverified"], 4, "fetched"),
+    # A scrape alone can never earn plain `fetched`.
+    (["fetched_unverified"], 12, "fetched_unverified"),
+    (["partial_failure", "fetched_unverified"], 4, "fetched_unverified"),
 ])
 def test_supplement_status_precedence(reported, collected, expected):
     ids = Identifiers(doi=DOI, doi_raw=DOI, has_suppl=True, in_pmc=True)
     assert _supplement_status(ids, True, collected, reported) == expected
+
+
+def test_unverified_is_settled_so_batches_do_not_thrash(tmp_path):
+    """`fetched_unverified` must count as settled, or every batch re-downloads.
+
+    The set is unbounded, not incomplete, and a re-run would scrape the same page
+    and reach the same answer. Leaving it out of `store.SUPPL_SETTLED` would make
+    the article never reach `complete`, so `manifest_is_complete` would be False
+    forever and each batch would re-fetch it and thrash against the size budget --
+    the same trap `evicted` exists to avoid.
+    """
+    assert "fetched_unverified" in store.SUPPL_SETTLED
+    (tmp_path / "fulltext.pdf").write_bytes(b"%PDF")
+    record = {
+        "_directory": str(tmp_path),
+        "fulltext": {"status": "ok", "path": "fulltext.pdf"},
+        "supplementary": [],
+        "supplementary_status": "fetched_unverified",
+    }
+    store.finalize_status(record)
+    assert record["status"] == "complete"
+    assert store.manifest_is_complete(record) is True
+
+    # And it is genuinely a distinct claim, not an alias.
+    assert "fetched_unverified" != "fetched"
 
 
 def test_suppl_flag_authority_matrix():

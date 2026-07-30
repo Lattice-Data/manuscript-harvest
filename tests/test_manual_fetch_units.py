@@ -312,8 +312,12 @@ def test_bootstrap_writes_a_reviewable_spec(tmp_path):
     assert entry["main_pdf"]["pages"] == 19
     assert entry["main_pdf"]["version"] == manual_fetch.PUBLISHED
     assert len(entry["supplements"]) == 2
-    # The generated expectation is a proposal for a human to confirm, not an answer.
-    assert entry["expect"]["supplementary_status"] == "fetched"
+    # The generated expectation is a proposal for a human to confirm, not an
+    # answer -- bootstrap cannot know which tier will reach the paper, and that is
+    # what decides between `fetched` and `fetched_unverified`. It guesses the
+    # latter because a paper worth fetching by hand is one the open-access tiers
+    # missed, so it arrives via a page scrape.
+    assert entry["expect"]["supplementary_status"] == "fetched_unverified"
 
 
 def test_bootstrap_records_a_hinted_version(tmp_path):

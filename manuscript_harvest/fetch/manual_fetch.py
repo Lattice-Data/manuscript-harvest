@@ -482,8 +482,15 @@ def _bootstrap(args) -> int:
         except FileNotFoundError as error:
             print(str(error), file=sys.stderr)
             return 2
+        # A draft, as the whole spec is: bootstrap cannot know which tier will
+        # reach the paper, and that is what decides between `fetched` and
+        # `fetched_unverified`. `fetched_unverified` is the better guess here --
+        # papers worth fetching by hand are the ones the open-access tiers miss,
+        # so they arrive via a page scrape, and plain `fetched` is earned only by
+        # unpacking Europe PMC's ZIP or the PMC OA tarball. Confirm it by eye.
         entry["expect"] = {
-            "supplementary_status": "fetched" if entry["supplements"] else "none_listed",
+            "supplementary_status": ("fetched_unverified" if entry["supplements"]
+                                     else "none_listed"),
         }
         articles.append(entry)
         main = entry["main_pdf"]

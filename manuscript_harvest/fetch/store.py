@@ -152,6 +152,16 @@ def new_record(ids, corpus_dir) -> dict:
     }
 
 
+#: Supplement statuses that need no further fetching. `fetched_unverified` is in
+#: here deliberately: the set is unbounded, not incomplete, and re-running would
+#: scrape the same page and reach the same answer. Leaving it out would make
+#: every batch re-download every browser-tier article forever and thrash against
+#: the size budget -- the same trap `evicted` exists to avoid in
+#: `manifest_is_complete`. This is the one definition; `fetcher._SETTLED_SUPPL`
+#: derives from it so the two cannot drift apart.
+SUPPL_SETTLED = {"none_listed", "fetched", "fetched_unverified"}
+
+
 def finalize_status(record: dict) -> dict:
     """Derive the top-level status from the per-artifact statuses.
 
@@ -161,7 +171,7 @@ def finalize_status(record: dict) -> dict:
     failed   -> no usable PDF.
     """
     pdf_ok = (record.get("fulltext") or {}).get("status") in {"ok", "scanned_pdf_suspected"}
-    supplements_settled = record.get("supplementary_status") in {"none_listed", "fetched"}
+    supplements_settled = record.get("supplementary_status") in SUPPL_SETTLED
 
     if pdf_ok and supplements_settled:
         record["status"] = "complete"

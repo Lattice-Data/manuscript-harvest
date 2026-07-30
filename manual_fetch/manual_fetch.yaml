@@ -29,7 +29,7 @@ articles:
     sha256: 7384d7fe1e25000b8c1c8ad948d4156e1615912bfafd65e4d379061eb35f775b
     pages: 1
   expect:
-    supplementary_status: fetched
+    supplementary_status: fetched_unverified
 - doi: 10.1016/j.xgen.2026.101304
   slug: 10.1016_j.xgen.2026.101304
   source_dir: CellGenomics
@@ -79,7 +79,7 @@ articles:
     bytes: 17238
     sha256: a2aaf3bdd62c1b8fc8e0a6d74d2c7c4393b691019d20c3d91e41bfdf2ed66858
   expect:
-    supplementary_status: fetched
+    supplementary_status: fetched_unverified
 - doi: 10.1126/science.adt8307
   slug: 10.1126_science.adt8307
   source_dir: Science
@@ -159,4 +159,4 @@ articles:
     - name: Supplementary_tables/Table_S24.tsv
       sha256: 22b6d6cf5c5c2b72b493b17d4de6fcdf9bddeeec2ee5d277ffa718b4e7672a6e
   expect:
-    supplementary_status: fetched
+    supplementary_status: fetched_unverified
