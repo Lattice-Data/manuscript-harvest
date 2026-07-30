@@ -494,10 +494,18 @@ run on every commit.
   session has cleared NCBI's bot check, later headless runs reuse those cookies
   and succeed; on a cold profile, headless gets a reCAPTCHA and the run says so
   rather than reporting an empty supplement list.
-- ScienceDirect's article page yielded no supplement links in the rendered DOM.
-  For the paper tested that is correct — its supplementary files exist only as PMC
-  deposits, not on ScienceDirect — so the Elsevier supplement selector has never
-  been confirmed against an article that really has them there.
+- ScienceDirect's article page yields no supplement links in the rendered DOM,
+  and for automation it never will: it answers with a stub (`<title>ScienceDirect
+  </title>`, `looks_blocked=True`, zero anchors) even unproxied and even for an
+  open-access article. **Elsevier articles are reached through ClinicalKey
+  instead**, which is where EZproxy sends a `linkinghub.elsevier.com` DOI, and
+  which does render. Confirmed on 10.1016/j.xgen.2026.101304: the correct 37-page
+  article and all twelve supplements. Two things about that page are worth
+  knowing, because both cost files before they were handled — supplements are
+  named `mmc<n>` with captions ("Table S1. Primer sequences…") that never say
+  "supplement", and every one is served from the single path
+  `/ui/service/content/url` with the real filename in a query parameter and no
+  `Content-Disposition`.
 - Supplementary files larger than `fetch.max_file_mb` are recorded but not
   fetched (one Science supplement is a 487.8 MB gzip). Independently of the cap,
   the browser transport cannot return anything near ~512 MB, because Playwright's

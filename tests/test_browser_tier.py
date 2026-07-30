@@ -130,6 +130,17 @@ def test_restore_state_tolerates_a_missing_or_corrupt_snapshot(tmp_path):
      "real name.pdf"),
     ("https://x/a/%20odd%20.csv", {}, " odd .csv"),
     ("https://x/", {}, "supplement"),
+    # ClinicalKey routes every supplement of 10.1016/j.xgen.2026.101304 through
+    # one endpoint and names it in the query, sending no Content-Disposition.
+    # On the path alone all twelve are called `url`: they collide on disk and
+    # lose the extension the extractor picks its parser by.
+    ("https://www-clinicalkey-com.stanford.idm.oclc.org/ui/service/content/url"
+     "?section=static%2fimage&eid=1-s2.0-S2666979X26001667"
+     "&path=2666979X%2FS2666979XXXXXXXXX%2FS2666979X26001667%2Fmmc4.xlsx", {}, "mmc4.xlsx"),
+    # A real path still wins over anything in the query.
+    ("https://x/a/real.xlsx?path=decoy%2Fwrong.pdf", {}, "real.xlsx"),
+    # Nothing filename-shaped anywhere: unchanged behaviour, not a bad guess.
+    ("https://x/ui/service/url?section=static&eid=1-s2.0-X", {}, "url"),
 ])
 def test_filename_for(url, headers, expected):
     assert pb._filename_for(url, headers) == expected

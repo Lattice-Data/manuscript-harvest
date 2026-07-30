@@ -30,10 +30,19 @@ from typing import List, Optional, Tuple
 # section is invisible and `supplementary_status` comes back
 # `unknown_none_found` for an article that has three of them -- exactly the
 # silent false negative the taxonomy exists to expose.
+#
+# `mmc<n>` is Elsevier's, and it is the filename that carries the meaning -- the
+# link text does not. Measured on 10.1016/j.xgen.2026.101304, whose twelve
+# supplements are all listed on the page: eleven read "Table S1. Primer
+# sequences, related to ..." or "Document S1. Figures S1-S18" and contain no
+# word matched above, so only `mmc12` was found, and only by accident -- its
+# text happens to say "Article plus supplemental information". One of twelve
+# retrieved, reported as `fetched`. Anchored on a separator because a bare
+# `mmc\d` could collide with a PII.
 SUPPLEMENT_HINT = re.compile(
     r"(supplement|supporting[\s_-]*information|additional[\s_-]*file|"
     r"media-?\d|MOESM|_ESM|appendix|extended[\s_-]*data|"
-    r"/suppl(?:_file)?/)",
+    r"/suppl(?:_file)?/|(?:^|[/_-]|%2f)mmc\d)",
     re.IGNORECASE,
 )
 

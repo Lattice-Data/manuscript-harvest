@@ -326,6 +326,47 @@ SCIENCE_ARTICLE_LINKS = [
     {"url": f"{_SCIENCE_HOST}/doi/pdf/10.1126/science.adt8307", "text": "Download PDF"},
 ]
 
+#: The twelve supplement anchors on ClinicalKey's page for
+#: 10.1016/j.xgen.2026.101304, as `collect_links` saw them.
+#:
+#: Two things about this shape cost eleven of the twelve files. The filename is
+#: in a *query parameter* -- every anchor shares the path `/ui/service/content/url`
+#: -- so the path names them all `url`, and ClinicalKey sends no
+#: Content-Disposition to correct it. And the link text is a caption rather than
+#: a description of the artifact, so only `mmc12` was ever matched, purely
+#: because its caption happens to contain the word "supplemental". The captions
+#: below are the real ones, truncated; the point is which words they lack.
+_CK_HOST = "https://www-clinicalkey-com.stanford.idm.oclc.org"
+_CK_PATH = "2666979X%2FS2666979XXXXXXXXX%2FS2666979X26001667"
+_CK_CAPTIONS = [
+    "Document S1. Figures S1-S18",
+    "Table S1. Primer sequences, related to Figures 1 and 2",
+    "Table S2. WI-38 data generated for this study",
+    "Table S3. CRISPRa screen gRNA sequences",
+    "Table S4. CRISPRa screen SCEPTRE full results",
+    "Table S5. Validated enhancer regions",
+    "Table S6. RT-qPCR processed data",
+    "Table S7. 9p21 TF motif predictions",
+    "Table S8. Sample barcodes",
+    "Table S9. Sample barcode pooling strategy",
+    "Table S10. Comparison of SCEPTRE and RT-qPCR",
+    "Document S2. Article plus supplemental information",
+]
+CLINICALKEY_SUPPLEMENT_LINKS = [
+    {"url": f"{_CK_HOST}/ui/service/content/url?section=static%2fimage"
+            f"&eid=1-s2.0-S2666979X26001667&path={_CK_PATH}%2F{name}",
+     "text": caption}
+    for name, caption in zip(
+        ["mmc1.pdf"] + [f"mmc{n}.xlsx" for n in range(2, 12)] + ["mmc12.pdf"],
+        _CK_CAPTIONS,
+    )
+]
+
+#: ClinicalKey's article PDF for the same paper -- must never read as a supplement.
+CLINICALKEY_ARTICLE_PDF = (
+    f"{_CK_HOST}/service/content/pdf/watermarked/1-s2.0-S2666979X26001667.pdf"
+)
+
 
 # -- API payloads ------------------------------------------------------------
 

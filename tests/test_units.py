@@ -31,6 +31,8 @@ from manuscript_harvest.fetch.identifiers import (
 from manuscript_harvest.fetch.sources.pmc_oa import _classify, _unpack_tgz, ftp_to_https
 from manuscript_harvest.fetch.validate import classify_denial, looks_like_pdf, validate_pdf
 from tests.fakes import (
+    CLINICALKEY_ARTICLE_PDF,
+    CLINICALKEY_SUPPLEMENT_LINKS,
     DOI,
     DUO_PROMPT_HTML,
     DUO_PROMPT_URL,
@@ -357,8 +359,25 @@ def test_aaas_abbreviates_supplement_to_suppl():
         {"url": f"{base}/suppl_file/science.adt8307_tables_s1_to_s28.zip", "text": "Download"})
 
 
+def test_elsevier_names_supplements_mmc_not_supplement():
+    """10.1016/j.xgen.2026.101304. All twelve supplements are listed on the page,
+    but eleven are captioned "Table S1. ..." or "Document S1. ..." -- no word the
+    hint knew. Only `mmc12` matched, and only because its caption happens to read
+    "Article plus supplemental information". One of twelve, reported `fetched`."""
+    found = [link for link in CLINICALKEY_SUPPLEMENT_LINKS if looks_like_supplement(link)]
+    assert len(found) == 12, "every mmc<n> is a supplement, caption or no caption"
+    # The one that used to work must not have regressed.
+    assert looks_like_supplement(CLINICALKEY_SUPPLEMENT_LINKS[-1])
+    # Elsevier's other form, served straight off the CDN with no caption at all.
+    assert looks_like_supplement({
+        "url": "https://ars.els-cdn.com/content/image/1-s2.0-S2666979X26001667-mmc1.pdf",
+        "text": ""})
+
+
 @pytest.mark.parametrize("url", [
     # The article's own PDF, which the fallback in `find_pdf_url` must still reach.
+    CLINICALKEY_ARTICLE_PDF,
+    "https://www.sciencedirect.com/science/article/pii/S2666979X26001667/pdfft?download=true",
     "https://www-science-org.stanford.idm.oclc.org/doi/pdf/10.1126/science.adt8307",
     "https://www-science-org.stanford.idm.oclc.org/doi/10.1126/science.adt8307",
     # `suppl` is a prefix of ordinary words, which is why the path segment is

@@ -29,10 +29,11 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import List, Optional, Tuple
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qsl, unquote, urlparse
 
 from ..validate import classify_denial, validate_pdf
 from ..adapters import adapter_for
+from ..adapters.base import FILE_EXTENSION
 from .base import (
     ROLE_LANDING,
     ROLE_PDF,
@@ -825,7 +826,7 @@ class ProxyBrowserSource(Source):
 
 
 def _filename_for(url: str, headers) -> str:
-    """Best available filename: Content-Disposition, then the URL path."""
+    """Best available filename: Content-Disposition, the query, then the path."""
     disposition = ""
     try:
         disposition = headers.get("content-disposition") or ""
@@ -834,5 +835,18 @@ def _filename_for(url: str, headers) -> str:
     match = re.search(r"filename\*?=(?:UTF-8'')?\"?([^\";]+)\"?", disposition, re.IGNORECASE)
     if match:
         return unquote(match.group(1).strip())
-    base = urlparse(url).path.rsplit("/", 1)[-1]
-    return unquote(base) if base else "supplement"
+
+    parts = urlparse(url)
+    base = unquote(parts.path.rsplit("/", 1)[-1])
+    if not FILE_EXTENSION.search(base):
+        # Some hosts route every file through one endpoint and name it in the
+        # query. ClinicalKey serves all twelve supplements of
+        # 10.1016/j.xgen.2026.101304 from `/ui/service/content/url` with
+        # `path=...%2Fmmc1.pdf`, and it sends no Content-Disposition -- so the
+        # path alone names every one of them `url`, colliding on disk and
+        # losing the extension the extractor picks its parser by.
+        for _key, value in parse_qsl(parts.query):
+            candidate = value.rsplit("/", 1)[-1]
+            if FILE_EXTENSION.search(candidate):
+                return candidate
+    return base or "supplement"
