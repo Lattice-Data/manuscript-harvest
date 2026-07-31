@@ -14,6 +14,7 @@ import hashlib
 import zipfile
 
 import pytest
+import yaml
 
 from manuscript_harvest.fetch import manual_fetch, store
 
@@ -480,3 +481,44 @@ def test_missing_manual_files_skip_rather_than_fail(tmp_path):
     checks = manual_fetch.compare(article, _record(), _article_dir(tmp_path), root=tmp_path)
     assert [c["check"] for c in checks] == ["manual_files_present"]
     assert not manual_fetch.failures(checks)
+
+
+# -- the verify command ------------------------------------------------------
+
+def _verify_force(monkeypatch, tmp_path, extra=()):
+    """Run `verify` with the network stubbed out; return the `force` it asked for."""
+    spec = tmp_path / "spec.yaml"
+    spec.write_text(yaml.safe_dump({"articles": [
+        {"doi": DOI, "source_dir": "Science", "main_pdf": None, "supplements": []},
+    ]}))
+    seen = {}
+
+    def fake_fetch(doi, config, force=False, **_kwargs):
+        seen["force"] = force
+        return {"doi": doi, "status": "complete", "supplementary": [],
+                "fulltext": {"status": "ok", "path": None}, "attempts": []}
+
+    monkeypatch.setattr("manuscript_harvest.fetch.fetcher.fetch_publication", fake_fetch)
+    manual_fetch.main(["verify", "--spec", str(spec), "--root", str(tmp_path),
+                       "--corpus-dir", str(tmp_path / "scratch"), *extra])
+    return seen["force"]
+
+
+def test_verify_refetches_by_default(monkeypatch, tmp_path):
+    """Ground truth is only ground truth against a *fresh* fetch. Comparing through
+    a cached corpus validates whatever the last run happened to leave on disk."""
+    assert _verify_force(monkeypatch, tmp_path) is True
+
+
+def test_cached_is_a_working_flag_not_an_inert_one(monkeypatch, tmp_path):
+    """Regression: this was `--force` declared as `store_true` with `default=True`,
+    so `args.force` was True whether or not the flag was passed. A flag that cannot
+    change anything is worse than no flag -- it documents a choice you do not have.
+    """
+    assert _verify_force(monkeypatch, tmp_path, ["--cached"]) is False
+
+
+def test_verify_with_an_empty_spec_exits_two(tmp_path):
+    spec = tmp_path / "spec.yaml"
+    spec.write_text(yaml.safe_dump({"articles": []}))
+    assert manual_fetch.main(["verify", "--spec", str(spec)]) == 2

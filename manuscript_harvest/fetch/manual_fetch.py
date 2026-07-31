@@ -598,7 +598,7 @@ def _verify(args) -> int:
 
     bad = 0
     for article in articles:
-        record = fetch_publication(article["doi"], config, force=args.force)
+        record = fetch_publication(article["doi"], config, force=not args.cached)
         directory = record.get("_directory") or store.article_dir(args.corpus_dir, article["doi"])
         checks = compare(article, record, directory, root=args.root)
         print(format_checks(f"\n{article['doi']}  ({article['source_dir']})", checks))
@@ -633,7 +633,14 @@ def main(argv=None) -> int:
     check.add_argument("--corpus-dir", default="manual-fetch-run",
                       help="scratch corpus, kept away from the real one")
     check.add_argument("--tiers", default=None)
-    check.add_argument("--force", action="store_true", default=True)
+    # Was `--force` with `action="store_true", default=True`, which made the flag
+    # inert: `args.force` was True whether or not it was passed. Forcing is the
+    # right default -- comparing the fetcher against ground truth through a cached
+    # corpus validates stale bytes rather than current behaviour -- so the working
+    # flag is the inverse, for iterating on `compare` without re-downloading.
+    check.add_argument("--cached", action="store_true",
+                      help="reuse an already-fetched scratch corpus instead of "
+                           "re-fetching; for working on the comparison itself")
     check.set_defaults(func=_verify)
 
     args = parser.parse_args(argv)

@@ -504,10 +504,26 @@ publisher's page and saving everything by hand.
 
 `manual_fetch/manual_fetch.yaml` is checked in; the bytes it describes are not, for the same reason
 `corpus/` is ignored. Point `MANUSCRIPT_HARVEST_MANUAL_DIR` at wherever they live —
-there is no need to copy them into the repo. To add papers, drop a folder per DOI
-and regenerate:
+there is no need to copy them into the repo.
 
-    python -m manuscript_harvest.fetch.manual_fetch bootstrap 10.1126/science.adt8307=Science
+To add a paper, drop a folder of its downloads next to the others and re-run
+`bootstrap`. **It writes the whole spec from its arguments, replacing whatever was
+there — it does not merge.** So every existing paper has to be listed too, or the
+ones you omit are silently dropped:
+
+    MANUSCRIPT_HARVEST_MANUAL_DIR=~/manual-fetch-papers \
+    python -m manuscript_harvest.fetch.manual_fetch bootstrap \
+      10.1038/s41588-025-02433-6=NatGenet \
+      10.1016/j.xgen.2026.101304=CellGenomics \
+      10.1126/science.adt8307=Science \
+      10.1016/j.cell.2021.04.038=j.cell.2021.04.038 \
+      10.1016/j.ccell.2021.03.007=j.ccell.2021.03.007 \
+      10.1126/sciimmunol.aba4163=sciimmunol.aba4163 \
+      10.1126/science.aat5031=science.aat5031 \
+      YOUR.NEW/doi=YourFolder
+
+To draft one paper's entry without touching the checked-in spec, send it somewhere
+else with `--out /tmp/draft.yaml` and copy the entry across by hand.
 
 The spec it writes is a draft for a human to confirm, not an answer. Two things it
 gets right that are worth knowing about, because both were found on the first three
