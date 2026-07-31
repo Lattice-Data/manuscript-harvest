@@ -109,13 +109,62 @@ def test_sentences_that_merely_start_with_a_keyword_are_not_split(text):
     assert sections.split_leading_heading(text) is None
 
 
-def test_spans_and_section_at_locate_headings_in_flowed_text():
-    text = "Intro text\nMethods\nWe isolated nuclei\nResults\nWe found cells\n"
-    spans = sections.spans(text)
-    assert [name for _, name in spans] == ["methods", "results"]
-    assert sections.section_at(text.index("We isolated"), spans) == "methods"
-    assert sections.section_at(text.index("We found"), spans) == "results"
-    assert sections.section_at(0, spans) is None
+def test_a_heading_carries_its_section_over_what_follows():
+    tracker = sections.SectionTracker()
+    assert tracker.carry("text before any heading") is None
+    assert tracker.heading(sections.METHODS) == sections.METHODS
+    assert tracker.carry("We isolated nuclei") == sections.METHODS
+    assert tracker.heading(sections.RESULTS) == sections.RESULTS
+    assert tracker.carry("We found cells") == sections.RESULTS
+    assert tracker.seen == [sections.METHODS, sections.RESULTS]
+    assert tracker.abandoned == [] and tracker.reason() is None
+
+
+def test_an_unbounded_section_flows_as_far_as_the_paper_does():
+    """Methods legitimately runs for pages through its own unrecognised
+    subsection headings, and that is the behaviour that makes it attributable."""
+    tracker = sections.SectionTracker()
+    tracker.heading(sections.METHODS)
+    for _ in range(40):
+        assert tracker.carry("x" * 1000) == sections.METHODS
+    assert tracker.abandoned == []
+
+
+def test_a_statement_section_is_abandoned_rather_than_carried_over_a_paper():
+    """10.1126/science.adt8307: the standalone `CONCLUSION` line in Science's
+    front-page structured summary was never followed by another heading this module
+    recognises, so 996 of 1,184 main-text blocks came back labelled `conclusions`
+    and the paper's real Results reported 5. A wrong section is worse than none --
+    it makes a filter drop the text it was looking for and call it an answer."""
+    tracker = sections.SectionTracker()
+    tracker.heading(sections.CONCLUSIONS)
+    labelled = [tracker.carry("x" * 1000) for _ in range(20)]
+    assert labelled[0] == sections.CONCLUSIONS, "the conclusion itself is still labelled"
+    assert labelled[-1] is None, "the rest of the paper is not"
+    assert tracker.abandoned == [sections.CONCLUSIONS]
+    assert "conclusions" in tracker.reason()
+    # And a real heading later on still reopens labelling.
+    assert tracker.heading(sections.METHODS) == sections.METHODS
+    assert tracker.carry("Nuclei were isolated") == sections.METHODS
+
+
+def test_a_long_abstract_is_kept_up_to_the_measured_budget():
+    """The longest legitimate run measured is a 4,653-character Cell Press abstract
+    with its highlights and eTOC blurb, so the budget must not cut that."""
+    tracker = sections.SectionTracker()
+    tracker.heading(sections.ABSTRACT)
+    assert tracker.carry("x" * 4653) == sections.ABSTRACT
+    assert tracker.carry("the next paragraph") == sections.ABSTRACT
+    assert tracker.abandoned == []
+
+
+@pytest.mark.parametrize("name", sorted(sections.BOUNDED_SECTIONS))
+def test_every_bounded_section_is_actually_bounded(name):
+    tracker = sections.SectionTracker()
+    tracker.heading(name)
+    for _ in range(20):
+        tracker.carry("x" * 1000)
+    assert tracker.abandoned == [name]
 
 
 # -- table cards -------------------------------------------------------------

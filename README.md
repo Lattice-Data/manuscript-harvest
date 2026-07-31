@@ -620,6 +620,19 @@ run on every commit.
   glued to the front of a paragraph. It found Methods in 47 of 53 PDFs here and
   is exact for JATS, which declares its sections. Where it misses, `section` is
   `null` and the block is still extracted.
+- **A heading carries its section only as far as it can be believed.** In a flowed
+  PDF a heading owns everything up to the next heading, which fails when the next
+  one is never recognised: the standalone `CONCLUSION` line in Science's
+  front-page summary box put 996 of 1,184 blocks of `10.1126/science.adt8307`
+  under `conclusions`, and the paper's real Results reported 5. Sections that are
+  a *statement* — abstract, conclusions, data availability — are therefore
+  abandoned once more than 6,000 characters have run under them, and the blocks
+  after that are left `null` with `sections_abandoned` in the extraction record
+  saying so. Methods and Results are not bounded: they legitimately run for pages
+  through their own unrecognised subsection headings. This trims the wrong labels
+  on that paper from 68,268 characters to 6,035 — the front matter and
+  introduction — so it bounds the error rather than eliminating it. Closing the
+  rest needs a measure of section accuracy, which does not exist yet.
 
 ## License
 
