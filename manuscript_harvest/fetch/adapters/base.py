@@ -20,9 +20,29 @@ import re
 from typing import List, Optional, Tuple
 
 # Anchor text or href fragments that indicate supplementary material.
+#
+# `/suppl/` and `/suppl_file/` are AAAS's abbreviation, and they are matched as
+# whole path segments rather than as a bare `suppl` substring: `suppl` is also a
+# prefix of `supplier`, `supply` and `supplant`, so the loose form would start
+# claiming ordinary hrefs as supplementary material. Measured on
+# 10.1126/science.adt8307, whose three supplements are all served from
+# `/doi/suppl/<doi>/suppl_file/<name>`: without this the page's supplement
+# section is invisible and `supplementary_status` comes back
+# `unknown_none_found` for an article that has three of them -- exactly the
+# silent false negative the taxonomy exists to expose.
+#
+# `mmc<n>` is Elsevier's, and it is the filename that carries the meaning -- the
+# link text does not. Measured on 10.1016/j.xgen.2026.101304, whose twelve
+# supplements are all listed on the page: eleven read "Table S1. Primer
+# sequences, related to ..." or "Document S1. Figures S1-S18" and contain no
+# word matched above, so only `mmc12` was found, and only by accident -- its
+# text happens to say "Article plus supplemental information". One of twelve
+# retrieved, reported as `fetched`. Anchored on a separator because a bare
+# `mmc\d` could collide with a PII.
 SUPPLEMENT_HINT = re.compile(
     r"(supplement|supporting[\s_-]*information|additional[\s_-]*file|"
-    r"media-?\d|MOESM|_ESM|appendix|extended[\s_-]*data)",
+    r"media-?\d|MOESM|_ESM|appendix|extended[\s_-]*data|"
+    r"/suppl(?:_file)?/|(?:^|[/_-]|%2f)mmc\d)",
     re.IGNORECASE,
 )
 
@@ -100,6 +120,25 @@ def is_file_url(url: str) -> bool:
     check existed.
     """
     return bool(FILE_EXTENSION.search(url_without_fragment(url)))
+
+
+def is_supplement_url(url: str) -> bool:
+    """True when the URL *path itself* says the target is supplementary.
+
+    Different question from `looks_like_supplement`, so it reads different
+    evidence: the link text is ignored and no file extension is required,
+    because this answers "could this be the article?" rather than "is this a
+    supplementary file worth downloading?". Link text is dropped deliberately --
+    a "Download PDF" button next to a supplement says nothing about the target.
+
+    Used to keep a supplement out of the article-PDF slot. Both errors cost
+    something, but not equally: a false negative writes the wrong document to
+    `fulltext.pdf` and reports `ok`, which is an unaccountable success, while a
+    false positive loses the fallback and reports `not_found`, which is visible
+    in the taxonomy. The fallback is also only reached when `citation_pdf_url`
+    is absent, so the blast radius of the strict answer is small.
+    """
+    return bool(SUPPLEMENT_HINT.search(url_without_fragment(url or "")))
 
 
 def looks_like_supplement(link: dict) -> bool:

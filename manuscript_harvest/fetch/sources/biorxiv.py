@@ -197,7 +197,12 @@ class BiorxivSource(Source):
             fetched += 1
 
         if fetched and fetched == len(attempted):
-            result.suppl_status = "fetched"
+            # Not `fetched`, even though bioRxiv owns its preprints. It is the
+            # authority on whether any exist -- that is why the empty case above
+            # is `none_listed` -- but this list is `_media_links` over rendered
+            # HTML, and owning the content does not make a regex over it an
+            # enumeration. See `store.SUPPL_SETTLED`.
+            result.suppl_status = "fetched_unverified"
         elif fetched:
             result.suppl_status = "partial_failure"
         else:

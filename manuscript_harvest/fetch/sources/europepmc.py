@@ -179,6 +179,9 @@ class EuropePmcSource(Source):
                     label="Europe PMC supplementary archive",
                 )
             )
+        # Plain `fetched`, one of only two places that earns it: the archive IS
+        # the deposit, so its member list bounds the set rather than guessing at
+        # it. Nothing here pattern-matches a page. See `store.SUPPL_SETTLED`.
         result.suppl_status = "fetched"
         result.note("supplements", url=url, status="fetched", count=len(members))
 

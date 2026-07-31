@@ -262,8 +262,120 @@ POW_HTML = (
 
 SSO_HTML = b"<html><body><h1>Stanford Login</h1><p>Enter your SUNet ID</p></body></html>"
 
+# Duo's universal prompt, where an expired proxy session actually lands. Served
+# from `api-<id>.duosecurity.com/prompt/...`, and note what is *not* on it: no
+# SUNet ID, no "Stanford Login", no "two-step authentication". Matching only
+# Stanford's own wording left this classified as no denial at all.
+DUO_PROMPT_HTML = (
+    b"<html><head><title>Duo Security</title></head><body>"
+    b"<h1>Select an option to log in</h1>"
+    b"<button>Duo Push</button><button>Send to Mobile Phone</button>"
+    b"<footer>Secured by Duo</footer></body></html>"
+)
+DUO_PROMPT_URL = "https://api-1b2c3d4e.duosecurity.com/prompt/?sid=frameless-xyz"
+
+# What an expired session actually looks like at the moment it wedges. Stanford's
+# SSO hop is a self-submitting SAML2 POST form, so the document never stops
+# navigating: `page.content()` and `page.evaluate()` both hang indefinitely while
+# `page.title()` answers instantly. Measured 2026-07-30 -- these two strings are
+# verbatim. Note where the IdP appears: in the title, never in the URL, which is
+# still EZproxy's own.
+SAML_REDIRECT_URL = ("https://stanford.idm.oclc.org/login?url="
+                     "https://www.nature.com/articles/s41586-026-10510-x")
+SAML_REDIRECT_TITLE = "Loading https://login.stanford.edu/idp/profile/SAML2/POST/SSO"
+
+# ClinicalKey's answer for an article it does not carry: an XML error document,
+# HTTP 200, 2562 bytes live. Rendered through Chrome's XML viewer, which is why
+# the markup appears twice -- once as the hidden source and once escaped in the
+# pretty-print tree. Observed on 10.1016/j.xgen.2026.101304, where the proxy
+# routed an Elsevier DOI to a clinical-content platform that has no Cell
+# Genomics. The Chromium viewer's ~2 KB of stylesheet is dropped here; nothing
+# in it is load-bearing.
+RESOURCE_NOT_FOUND_XML = (
+    b'<html xmlns="http://www.w3.org/1999/xhtml"><head></head><body>'
+    b'<div id="webkit-xml-viewer-source-xml"><ServiceErrorResponse xmlns="">'
+    b"<status>RESOURCE_NOT_FOUND</status><message>Could not find EID for link "
+    b"resolver with params: field: pii; value: S2666979X26001667</message>"
+    b"</ServiceErrorResponse></div>"
+    b'<div class="header"><span>This XML file does not appear to have any style '
+    b"information associated with it. The document tree is shown below.</span></div>"
+    b'<div class="pretty-print"><div class="line">'
+    b'<span class="html-tag">&lt;ServiceErrorResponse&gt;</span></div>'
+    b'<div class="line"><span class="html-tag">&lt;status&gt;</span>'
+    b"<span>RESOURCE_NOT_FOUND</span></div></div></body></html>"
+)
+
 # NCBI's reCAPTCHA gate, served to headless Chrome while plain HTTP got the page.
 RECAPTCHA_HTML = b"<html><head><title>Checking your browser - reCAPTCHA</title></head></html>"
+
+
+# -- rendered anchor sets ----------------------------------------------------
+
+#: The AAAS article page for 10.1126/science.adt8307, reduced to the anchors that
+#: matter, in the order `collect_links` really saw them (absolute, as `e.href`
+#: yields them, and proxied, because that is the only way the page is reachable).
+#:
+#: Two bugs live in this ordering. The page carries no `citation_pdf_url` at all,
+#: and every supplement anchor precedes both article-PDF anchors -- so the naive
+#: "first link ending in .pdf" fallback stored the 29-page Supplementary
+#: Materials PDF as `fulltext.pdf` and never fetched the 19-page article. The
+#: three real supplements were invisible at the same time, because `suppl_file`
+#: is not the word `supplement`.
+_SCIENCE_HOST = "https://www-science-org.stanford.idm.oclc.org"
+SCIENCE_ARTICLE_LINKS = [
+    {"url": f"{_SCIENCE_HOST}/doi/10.1126/science.adt8307#supplementary-materials",
+     "text": "Supplementary Materials"},
+    {"url": f"{_SCIENCE_HOST}/doi/suppl/10.1126/science.adt8307/suppl_file/"
+            "science.adt8307_sm.pdf", "text": "Download"},
+    {"url": f"{_SCIENCE_HOST}/doi/suppl/10.1126/science.adt8307/suppl_file/"
+            "science.adt8307_tables_s1_to_s28.zip", "text": "Download"},
+    {"url": f"{_SCIENCE_HOST}/doi/suppl/10.1126/science.adt8307/suppl_file/"
+            "science.adt8307_mdar_reproducibility_checklist.pdf", "text": "Download"},
+    {"url": f"{_SCIENCE_HOST}/doi/pdf/10.1126/science.adt8307?download=true",
+     "text": "Download PDF"},
+    {"url": f"{_SCIENCE_HOST}/doi/pdf/10.1126/science.adt8307", "text": "Download PDF"},
+]
+
+#: The twelve supplement anchors on ClinicalKey's page for
+#: 10.1016/j.xgen.2026.101304, as `collect_links` saw them.
+#:
+#: Two things about this shape cost eleven of the twelve files. The filename is
+#: in a *query parameter* -- every anchor shares the path `/ui/service/content/url`
+#: -- so the path names them all `url`, and ClinicalKey sends no
+#: Content-Disposition to correct it. And the link text is a caption rather than
+#: a description of the artifact, so only `mmc12` was ever matched, purely
+#: because its caption happens to contain the word "supplemental". The captions
+#: below are the real ones, truncated; the point is which words they lack.
+_CK_HOST = "https://www-clinicalkey-com.stanford.idm.oclc.org"
+_CK_PATH = "2666979X%2FS2666979XXXXXXXXX%2FS2666979X26001667"
+_CK_CAPTIONS = [
+    "Document S1. Figures S1-S18",
+    "Table S1. Primer sequences, related to Figures 1 and 2",
+    "Table S2. WI-38 data generated for this study",
+    "Table S3. CRISPRa screen gRNA sequences",
+    "Table S4. CRISPRa screen SCEPTRE full results",
+    "Table S5. Validated enhancer regions",
+    "Table S6. RT-qPCR processed data",
+    "Table S7. 9p21 TF motif predictions",
+    "Table S8. Sample barcodes",
+    "Table S9. Sample barcode pooling strategy",
+    "Table S10. Comparison of SCEPTRE and RT-qPCR",
+    "Document S2. Article plus supplemental information",
+]
+CLINICALKEY_SUPPLEMENT_LINKS = [
+    {"url": f"{_CK_HOST}/ui/service/content/url?section=static%2fimage"
+            f"&eid=1-s2.0-S2666979X26001667&path={_CK_PATH}%2F{name}",
+     "text": caption}
+    for name, caption in zip(
+        ["mmc1.pdf"] + [f"mmc{n}.xlsx" for n in range(2, 12)] + ["mmc12.pdf"],
+        _CK_CAPTIONS,
+    )
+]
+
+#: ClinicalKey's article PDF for the same paper -- must never read as a supplement.
+CLINICALKEY_ARTICLE_PDF = (
+    f"{_CK_HOST}/service/content/pdf/watermarked/1-s2.0-S2666979X26001667.pdf"
+)
 
 
 # -- API payloads ------------------------------------------------------------
@@ -419,13 +531,18 @@ class FakePage:
     """The slice of Playwright's Page that adapters and the browser tier use."""
 
     def __init__(self, url="https://www.nature.com/articles/x", metas=None, links=None,
-                 title="An article", content=b"<html></html>", goto_error=None):
+                 title="An article", content=b"<html></html>", goto_error=None,
+                 load_state_error=None):
         self.url = url
         self.metas = metas or {}
         self.links = links or []
         self._title = title
         self._content = content
         self.goto_error = goto_error
+        # A perpetually navigating document never reaches `load`, so the retry
+        # helper's own wait raises too -- without this a fake page settles
+        # instantly and cannot reproduce the wedge that motivated the deadline.
+        self.load_state_error = load_state_error
         self.closed = False
         self.visited: List[str] = []
 
@@ -437,6 +554,8 @@ class FakePage:
         self.url = url
 
     def wait_for_load_state(self, state=None, timeout=None):
+        if isinstance(self.load_state_error, Exception):
+            raise self.load_state_error
         return None
 
     def title(self):

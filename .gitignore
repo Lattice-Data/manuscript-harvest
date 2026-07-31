@@ -17,3 +17,13 @@ htmlcov/
 # DOI; corpus/*/extracted/ is derived data, rebuilt by
 # `python -m manuscript_harvest.extract.cli all`.
 corpus/
+
+# Papers fetched by hand from the publisher's site, to check the fetcher against.
+# Ignored for the
+# same reason corpus/ is -- the bytes are the publisher's. manual_fetch/manual_fetch.yaml is the
+# exception and is checked in, because the claims it makes about those bytes are
+# the part that gets reviewed. manual-fetch-run/ is the scratch corpus `verify` fetches
+# into, kept away from the real one.
+manual_fetch/*
+!manual_fetch/manual_fetch.yaml
+manual-fetch-run/

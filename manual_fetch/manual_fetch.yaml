@@ -1,0 +1,162 @@
+articles:
+- doi: 10.1038/s41588-025-02433-6
+  slug: 10.1038_s41588-025-02433-6
+  source_dir: NatGenet
+  main_pdf:
+    file: s41588-025-02433-6.pdf
+    bytes: 9902118
+    sha256: f48d7278dff09d3d3a3f3df64576f16bfc817818060b4ae826800c79f9ad1e2c
+    pages: 32
+    version: published
+  supplements:
+  - file: 41588_2025_2433_MOESM1_ESM.pdf
+    bytes: 7552777
+    sha256: d4373c0de2e447887e6ad6f597e2ad7c7d655169282b772247c2797e8e6a786b
+    pages: 33
+  - file: 41588_2025_2433_MOESM2_ESM.pdf
+    bytes: 526333
+    sha256: 517e0d48e43b4de99b4f24b7c69ee10a0b4ad033a01782b6217b59d977fd22cd
+    pages: 4
+  - file: 41588_2025_2433_MOESM3_ESM.pdf
+    bytes: 6000167
+    sha256: b7ed408e851e9d50c22c29842498c7fedca6f8fb6653cb49d09ba5ccbed600be
+    pages: 88
+  - file: 41588_2025_2433_MOESM4_ESM.xlsx
+    bytes: 145131
+    sha256: ce121650f3402d6528174a8c00f5976e536850a4d86c1d6030edcb414ef0a7af
+  - file: 41588_2025_2433_MOESM5_ESM.pdf
+    bytes: 107728
+    sha256: 7384d7fe1e25000b8c1c8ad948d4156e1615912bfafd65e4d379061eb35f775b
+    pages: 1
+  expect:
+    supplementary_status: fetched_unverified
+- doi: 10.1016/j.xgen.2026.101304
+  slug: 10.1016_j.xgen.2026.101304
+  source_dir: CellGenomics
+  main_pdf:
+    file: 1-s2.0-S2666979X26001667-main.pdf
+    bytes: 18352551
+    sha256: 744eee2a4588489d5fdd2a96e472e74d6a21b5507cf9de73029c08c4e761d27d
+    pages: 37
+    version: published
+  supplements:
+  - file: mmc1.pdf
+    bytes: 10857473
+    sha256: a0049bcea8f76b693d4157bf358585858a7dda43e3860c326510d447d67023cb
+    pages: 22
+  - file: mmc10.xlsx
+    bytes: 13217
+    sha256: 3a8ffa60febd2d536bf508c241e991bfe5e1f12bf43c51d1d397a6425b8b4262
+  - file: mmc11.xlsx
+    bytes: 128637
+    sha256: 91f2eac1983e17fe057f360774b2fd52b5e884a1a3cd91d64942ad4b5dc22e90
+  - file: mmc12.pdf
+    bytes: 45058057
+    sha256: f929807081689fac21e1f7072e1570272db26da53063da3e450bc8e16c278947
+    pages: 59
+  - file: mmc2.xlsx
+    bytes: 25747
+    sha256: 91ac201015b9e0ff3d26a0a3b73631eb1d1fed4a740c6819fdec4f085ab25f83
+  - file: mmc3.xlsx
+    bytes: 25475
+    sha256: 090eacd64cbe32ccf1c66bcf693b5eb5a21809727acc8b177ab722e91ca6ed67
+  - file: mmc4.xlsx
+    bytes: 81579
+    sha256: 4e548b440c26b46250d69fd7e281f21b5b4be9cca3a1a00fd29eb99a46afa13f
+  - file: mmc5.xlsx
+    bytes: 296665
+    sha256: 106532dd8baeacfdce41b0172b11d5461a33899c642d58fd3bd4f3addb52c36c
+  - file: mmc6.xlsx
+    bytes: 27145
+    sha256: b9b0ff5307cc6c1179ebd5d612ceab15560b74a8e578f46967ca8f9b3358ba5b
+  - file: mmc7.xlsx
+    bytes: 36309
+    sha256: adc1febc8ec0348b8d3759de50e6249f64f3ce53187e34117f86284ede46f635
+  - file: mmc8.xlsx
+    bytes: 60045
+    sha256: 4df300fcc327a1972c2f73526969f8d897e0343e1d0c3b6d0c5be5c885db0f0d
+  - file: mmc9.xlsx
+    bytes: 17238
+    sha256: a2aaf3bdd62c1b8fc8e0a6d74d2c7c4393b691019d20c3d91e41bfdf2ed66858
+  expect:
+    supplementary_status: fetched_unverified
+- doi: 10.1126/science.adt8307
+  slug: 10.1126_science.adt8307
+  source_dir: Science
+  main_pdf:
+    file: science.adt8307.pdf
+    bytes: 10135952
+    sha256: 26e9857bac0785499326bbb5798db0066689fa92882b140dbf723c801d31bf37
+    pages: 19
+    version: published
+  supplements:
+  - file: science.adt8307_mdar_reproducibility_checklist.pdf
+    bytes: 457236
+    sha256: f6de6a559b1c9c8e5789c636557c74d555cb66a620727ad72f659085152a3148
+    pages: 5
+  - file: science.adt8307_sm.pdf
+    bytes: 5242891
+    sha256: 617c08324d04c02368172eddec2938ebcbe0467f70623630ea516ae784c9a834
+    pages: 29
+  - file: science.adt8307_tables_s1_to_s28.zip
+    bytes: 18388078
+    sha256: 1217ed79d4db8a82492fb60b336f6d13430743a9d8a843866764dc5d31db25f0
+    members:
+    - name: Supplementary_tables/Table_S15.tsv
+      sha256: d1d66ef664262797e6757a173da4e2a33dc5c473d2aacf3044e07cd285a90dc1
+    - name: Supplementary_tables/Table_S14.tsv
+      sha256: a611fce51eb07a76311ccd61356dcbefa4968ec3e4dd6e089a9fda85788a3ec0
+    - name: Supplementary_tables/Table_S28.tsv
+      sha256: c3bc75b580c982a4b3f4f31df36821d99fb2620d155e83ed929ee13845ba6ddd
+    - name: Supplementary_tables/Table_S16.tsv
+      sha256: a48178c1302b481367c0d6b0abb9c05631e0473538f252d525cc248ca002e6f6
+    - name: Supplementary_tables/Table_S17.tsv
+      sha256: 01a92935aaf8648a0c39b2184a2f7dbd13f31dae5ae57fcd0f172ecf06a744e1
+    - name: Supplementary_tables/Table_S13.tsv
+      sha256: 7c01a2251c1725946bfe207a24fcf5d610b6e0892845dcc17c6d9e20f4693d05
+    - name: Supplementary_tables/Table_S12.tsv
+      sha256: dc232f883d09f7085f23c14ac97dd6444be3bc24a312b3581bf55734ba03ff67
+    - name: Supplementary_tables/Table_S10.tsv
+      sha256: 9b502a60d4b48d3786a516ce4f8b6e27abe34d248ac5aec4bfd24bda687473b0
+    - name: Supplementary_tables/Table_S11.tsv
+      sha256: 37040c7d9ebd37ceaa45e363e8e6698176fb96ca7893653c2dcf928e4cdc9b3b
+    - name: Supplementary_tables/Table_S5.tsv
+      sha256: c021aae8c4cbc6ef9b33effc20b08ac31666634c0f0c429ef305604b493101e1
+    - name: Supplementary_tables/Table_S4.tsv
+      sha256: 0da6a52a6c28861c248efd792f20208ebad133d044761227983150514bea138d
+    - name: Supplementary_tables/Table_S6.tsv
+      sha256: a837b893337b49a6f30fdf0604be4d98d667cc9e199899fa20bac0ebbb456b59
+    - name: Supplementary_tables/Table_S7.tsv
+      sha256: 7eda75472cb67ad8b13cbbf20945331ba5ab581c378b85e3def3d8789a64f702
+    - name: Supplementary_tables/Table_S3.tsv
+      sha256: c72220bdbaf9e55dc7f0ed77f6734ff9ca5d68d81ea3be1e9d937ae7ead42159
+    - name: Supplementary_tables/Table_S2.tsv
+      sha256: fbbb7f56f6612e274f54908470f33024d576cf8ec71de5c663bda7d6f8f8125d
+    - name: Supplementary_tables/Table_S1.tsv
+      sha256: c5c7c7c5d358402c7a76958371aecb3e443a356f45a16677b15ecac7328a9850
+    - name: Supplementary_tables/Table_S9.tsv
+      sha256: 2a17a00cfb525f73adacb8d48ac360ee65b35954f5d9720cbf5e7f5fe02225c0
+    - name: Supplementary_tables/Table_S8.tsv
+      sha256: 1d4d8e0e8c76afead34089c9b3784923b14455827d251427777a99ceb6ec9a8e
+    - name: Supplementary_tables/Table_S20.tsv
+      sha256: 43e0ec31aca4652b59ef50c59f0f56a5a19398d6f781f512ccc0df800e2fdeb0
+    - name: Supplementary_tables/Table_S21.tsv
+      sha256: 8ecaadd78a13de2df71c0856d58edc41d5e56b864b0d2a09a8b55c02b2b79252
+    - name: Supplementary_tables/Table_S23.tsv
+      sha256: 513e3c96aa3f42d4987504db5a002316a09ba12882bf4919a8cab3f7b27e553f
+    - name: Supplementary_tables/Table_S22.tsv
+      sha256: 95e7e1c683d620c114ffb3eb34df730d8e46b87bf0e9a471a4b03df5c4f40493
+    - name: Supplementary_tables/Table_S26.tsv
+      sha256: ff6e412f6b449b5b6bb3b25e2a0aff8b580cd5d7a75fa292f16ad3bea4c7e4f0
+    - name: Supplementary_tables/Table_S27.tsv
+      sha256: 7def11960403dcbcb2c73bd80b7410595c0ed10dd780fe5309df8d834c10fe2c
+    - name: Supplementary_tables/Table_S25.tsv
+      sha256: 1fed9a13ecf87f0adf9d456ee982cefe665fd00a9dfb936e192620d0dced611d
+    - name: Supplementary_tables/Table_S19.tsv
+      sha256: 1919943983cbcc826374d2d92a53aa37f339aa870df7be21cfd5cba992be39fb
+    - name: Supplementary_tables/Table_S18.tsv
+      sha256: 3e1c14149a03af1b3fd7f7a83c2263d16ece198f1441d28d53a4cddf094168f7
+    - name: Supplementary_tables/Table_S24.tsv
+      sha256: 22b6d6cf5c5c2b72b493b17d4de6fcdf9bddeeec2ee5d277ffa718b4e7672a6e
+  expect:
+    supplementary_status: fetched_unverified

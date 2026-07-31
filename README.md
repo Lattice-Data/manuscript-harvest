@@ -150,6 +150,36 @@ EZproxy sessions are short-lived, so expect to re-run `login` periodically;
 `check` tells you when. A dead session reports `session_expired`, not a silent
 failure.
 
+That promise had a hole in front of it until the page could be read at all.
+Stanford's SSO hop is a self-submitting SAML2 POST form, so on an expired session
+the document never stops navigating and `page.content()` keeps raising. Measured:
+`goto` returned in 0.4s, settling gave up after 31s, and the retry loop then spent
+minutes returning nothing — four attempts, each able to block for the full
+navigation timeout. `classify_denial` is only reached *after* those bytes arrive,
+so the most actionable status in the taxonomy could not be reported for the case
+that most needs it, and `check` prints its one line only at the end, so the log
+stayed empty throughout and it read as a hang rather than a dead session.
+
+The obvious fix does not work, and it is worth knowing why before trying it
+again. `page.content()` takes no timeout argument, and `page.set_default_timeout`
+does not govern it either — measured, with a 4s page default and a 12s deadline
+the call still had not returned after 88s. On a document that never stops
+navigating, `content()` is uninterruptible from the sync API, so no deadline
+around it can help.
+
+What works is not reading the page at all. `page.url` and `page.title()` answer
+instantly on exactly the pages where `content()` will not return, and a navigating
+document is titled for where it is going:
+`Loading https://login.stanford.edu/idp/profile/SAML2/POST/SSO`. So every read is
+now preceded by a classification from those two alone, and a page that already
+names itself is never asked for its body. Note where the IdP appears: only in the
+title. The URL is still EZproxy's own, so matching on the URL alone sees nothing.
+
+`settle_page` gets a real deadline too (`browser.settle_deadline_seconds`,
+default 20), since it was 31s of the wait and nothing bounded it. Measured end to
+end against a genuinely expired session: **21s, reporting `session_expired`**,
+against 7.5 minutes of silence before.
+
 ### What the statuses mean
 
 The point of this vocabulary is that "no supplements" and "we failed to get the
@@ -158,18 +188,42 @@ an empty list and gets logged as a clean success.
 
 `fulltext.status`: `ok` · `scanned_pdf_suspected` (saved, but has no extractable
 text — needs OCR) · `paywalled` · `not_in_oa_subset` · `proxy_not_configured` ·
-`session_expired` · `not_a_pdf` · `download_failed` · `not_found`
+`session_expired` · `link_resolver_error` (a resolver answered "no such article
+here", so this is not a page we failed to parse) · `not_a_pdf` ·
+`download_failed` · `not_found`
 
 `supplementary_status`:
 
 | Status | Meaning |
 |---|---|
 | `none_listed` | the publisher says there are none (`hasSuppl: N`) |
-| `fetched` | they exist and we have them |
+| `fetched` | an archive that *is* the deposit was unpacked whole — they exist and we have them |
+| `fetched_unverified` | every file we identified arrived, but nothing bounds the set |
 | `partial_failure` | some arrived; at least one failed |
 | `expected_but_missing` | `hasSuppl: Y` and we came away with nothing — **the bug case** |
 | `page_not_parsed` | a page loaded but no file list could be read from it |
 | `unknown_none_found` | nobody said whether any exist, and none were found |
+
+**Why `fetched` splits in two.** The taxonomy told its own version of the lie it
+exists to prevent. For `10.1016/j.xgen.2026.101304` the adapter matched 1 of 12
+supplementary links, downloaded that one, and the article was recorded `fetched`
+while eleven files were missing. Nothing had broken — the tier really did get
+everything it found. The claim was just larger than the evidence, because a regex
+over page anchors cannot know what it failed to match. Worse, the ground-truth
+harness's own `supplementary_status` check *passed*; only comparing hashes against
+hand-downloaded files caught it.
+
+So the two are split by what bounded the set, the only thing the code can actually
+know. Europe PMC's supplementary ZIP and the PMC OA tarball are self-delimiting: a
+member list is not a guess. Every other route pattern-matches a rendered page —
+`pmc_supplements` regexes PMC's HTML for `/bin/` paths, the browser tier scrapes
+anchors, bioRxiv regexes its supplement page — and gets `fetched_unverified` even
+when it is in fact complete, as all three ground-truth papers are. That is not an
+alarm: it is the difference between "we counted" and "we looked, and this is what
+we saw". Only the first licenses "they exist and we have them".
+
+Both count as settled, so an article still finishes `complete` and is never
+re-fetched. An unbounded set is not a failed one.
 
 A refusal is never written to disk as `fulltext.pdf`: acceptance requires PDF
 magic bytes (not the `Content-Type` header, which lies), a successful parse, and
@@ -399,6 +453,8 @@ The tests live in `tests/` and run under pytest:
 | `tests/test_extract_units.py` | sections, table cards, and each parser: JATS, PDF, xlsx, docx, HTML, zip |
 | `tests/test_extract_article.py` | source choice, per-file statuses, the extraction record, the CLI |
 | `tests/test_extract_corpus.py` | the real files that taught the extractor its rules — skipped without `corpus/` |
+| `tests/test_manual_fetch_units.py` | the comparison rules: publisher filename conventions, archives, article versions |
+| `tests/test_manual_fetch_live.py` | fetches those same DOIs for real and compares — off unless asked for twice |
 
 They lean on failure cases rather than happy paths, because every bug found so far
 was a *plausible-looking success*: a paywall page served as `application/pdf`,
@@ -416,6 +472,48 @@ regression in it surfaced only after a real run against a real publisher.
 is gitignored, so it skips in a clean checkout and runs on a machine that has
 fetched the papers; the synthetic equivalents of every shape it checks are pinned
 in `tests/test_extract_units.py`.
+
+### Checking the fetcher against papers fetched by hand
+
+`corpus/` tests what the extractor does with files that were already fetched. It
+cannot tell you whether the *fetch* was right — whether a paper with twelve
+supplements came back with twelve. That needs ground truth: a human opening the
+publisher's page and saving everything by hand.
+
+    MANUSCRIPT_HARVEST_MANUAL_DIR=~/manual-fetch-papers \
+    MANUSCRIPT_HARVEST_MANUAL_NETWORK=1 \
+    python -m pytest tests/test_manual_fetch_live.py -v
+
+`manual_fetch/manual_fetch.yaml` is checked in; the bytes it describes are not, for the same reason
+`corpus/` is ignored. Point `MANUSCRIPT_HARVEST_MANUAL_DIR` at wherever they live —
+there is no need to copy them into the repo. To add papers, drop a folder per DOI
+and regenerate:
+
+    python -m manuscript_harvest.fetch.manual_fetch bootstrap 10.1126/science.adt8307=Science
+
+The spec it writes is a draft for a human to confirm, not an answer. Two things it
+gets right that are worth knowing about, because both were found on the first three
+papers:
+
+- **The article PDF is compared on page count and identity, never on bytes.**
+  Publishers stamp per-download watermarks and embed timestamps, so two correct
+  fetches of one paper differ. And only the *published* rendition is held to a page
+  count: Cell Genomics ships an extended version as `mmc12.pdf` running 59 pages
+  against a 37-page typeset article, and both are the same paper.
+- **Supplements are compared as a set of content hashes, with archives normalised
+  both ways.** Filenames never line up — browsers rename downloads and
+  `store.supplement_filename` prefixes retrieval order. Science ships 28 tables as
+  one zip, so a tier that unpacks it and a human who saved it whole have to count as
+  the same thing.
+
+The check that justifies the exercise is `supplementary_status`. No synthetic
+fixture can catch a *silent* false negative — a paper that really has supplements,
+that fetch comes away from with none, reported as `none_listed` rather than
+`expected_but_missing`. Only ground truth knows the difference.
+
+This cannot run in CI: no network, no browser, no proxy credentials. So it is a
+diagnostic, and what it finds belongs in `tests/fakes.py` afterwards, where it will
+run on every commit.
 
 ## Known limitations
 
@@ -448,10 +546,18 @@ in `tests/test_extract_units.py`.
   session has cleared NCBI's bot check, later headless runs reuse those cookies
   and succeed; on a cold profile, headless gets a reCAPTCHA and the run says so
   rather than reporting an empty supplement list.
-- ScienceDirect's article page yielded no supplement links in the rendered DOM.
-  For the paper tested that is correct — its supplementary files exist only as PMC
-  deposits, not on ScienceDirect — so the Elsevier supplement selector has never
-  been confirmed against an article that really has them there.
+- ScienceDirect's article page yields no supplement links in the rendered DOM,
+  and for automation it never will: it answers with a stub (`<title>ScienceDirect
+  </title>`, `looks_blocked=True`, zero anchors) even unproxied and even for an
+  open-access article. **Elsevier articles are reached through ClinicalKey
+  instead**, which is where EZproxy sends a `linkinghub.elsevier.com` DOI, and
+  which does render. Confirmed on 10.1016/j.xgen.2026.101304: the correct 37-page
+  article and all twelve supplements. Two things about that page are worth
+  knowing, because both cost files before they were handled — supplements are
+  named `mmc<n>` with captions ("Table S1. Primer sequences…") that never say
+  "supplement", and every one is served from the single path
+  `/ui/service/content/url` with the real filename in a query parameter and no
+  `Content-Disposition`.
 - Supplementary files larger than `fetch.max_file_mb` are recorded but not
   fetched (one Science supplement is a 487.8 MB gzip). Independently of the cap,
   the browser transport cannot return anything near ~512 MB, because Playwright's

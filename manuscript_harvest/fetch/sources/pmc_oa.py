@@ -232,6 +232,8 @@ class PmcOaSource(Source):
             )
 
         if supplements:
+            # Plain `fetched`: the OA package is the deposit, so unpacking it
+            # bounds the set. See `store.SUPPL_SETTLED`.
             result.suppl_status = "fetched"
         result.note(
             "package",

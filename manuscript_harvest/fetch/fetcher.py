@@ -8,7 +8,8 @@ result look identical downstream unless something names them apart, and the trap
 here is an empty `supplementary/` directory:
 
     none_listed          the publisher says this article has no supplements
-    fetched              it has them and we have them
+    fetched              an archive that IS the deposit was unpacked whole
+    fetched_unverified   every file we identified arrived, but nothing bounds the set
     partial_failure      we got some; at least one download or archive failed
     expected_but_missing hasSuppl=Y, and we came away with nothing  <-- the bug case
     page_not_parsed      a page loaded but we could not read a file list from it
@@ -16,6 +17,26 @@ here is an empty `supplementary/` directory:
     not_requested        --no-supplements
 
 `expected_but_missing` is the state the whole taxonomy exists to expose.
+
+`fetched_unverified` exists because the taxonomy told its own version of that lie.
+For 10.1016/j.xgen.2026.101304 the adapter matched 1 of 12 supplementary links,
+downloaded that one, and the article was recorded `fetched` -- "they exist and we
+have them" -- while eleven files were missing. Nothing was broken: the tier really
+did get everything it found. The claim being made was simply larger than the
+evidence, because a regex over page anchors cannot know what it failed to match.
+
+So the two are split by *what bounded the set*, which is the only thing the code
+can actually know. Europe PMC's supplementary ZIP and the PMC OA tarball are
+self-delimiting -- unpacking the archive yields the deposit, and a member list is
+not a guess. Every other route pattern-matches a rendered page: `pmc_supplements`
+regexes PMC's HTML for `/bin/` paths, the browser tier scrapes anchors, bioRxiv
+regexes its supplement page. Those get `fetched_unverified` even when they are in
+fact complete -- as all three ground-truth papers now are. That is not an alarm.
+It is the difference between "we counted" and "we looked and this is what we saw",
+and only the first licenses "they exist and we have them".
+
+Both are settled: see `store.SUPPL_SETTLED`. An unbounded set is not a failed one,
+and re-running would scrape the same page and get the same answer.
 """
 
 from typing import Dict, List, Optional
@@ -38,9 +59,9 @@ _PDF_SUCCESS = {"ok", "scanned_pdf_suspected"}
 # Diagnoses that name a cause the user can act on. These win wherever they appear,
 # because "your session expired" beats "the last thing we tried returned HTML".
 _PDF_DIAGNOSES = ["paywalled", "session_expired", "proxy_not_configured",
-                  "publisher_stub_page"]
+                  "publisher_stub_page", "link_resolver_error"]
 
-_SETTLED_SUPPL = {"none_listed", "fetched", "not_requested"}
+_SETTLED_SUPPL = store.SUPPL_SETTLED | {"not_requested"}
 
 
 def _best_pdf_status(reported: List[str]) -> str:
@@ -99,10 +120,17 @@ def _supplement_status(
     if collected:
         # Judge on the outcome, not on the journey. An earlier tier failing and a
         # later tier succeeding is a complete result -- the failed attempts are
-        # still in `attempts` and `problems`. Only a tier that got everything it
-        # attempted reports "fetched", so seeing it means the set is whole.
+        # still in `attempts` and `problems`.
+        #
+        # `fetched` beats `fetched_unverified` because it is the stronger
+        # evidence, not merely the better news: if any tier unpacked the deposit
+        # archive, the set is bounded no matter what a scrape elsewhere saw. And
+        # both beat `partial_failure` for the reason above -- a later tier
+        # succeeding settles what an earlier one could not.
         if "fetched" in reported:
             return "fetched"
+        if "fetched_unverified" in reported:
+            return "fetched_unverified"
         return "partial_failure"
     # A source that owns the content (bioRxiv for its own preprints) can state
     # authoritatively that there are none, even when the index disagrees.
