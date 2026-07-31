@@ -206,7 +206,8 @@ class FileResult:
         for key in ("reason", "sheets", "sheets_skipped", "strict_ooxml", "pages",
                     "members_total", "members_read", "member_extensions", "errors",
                     "blocks_capped", "delimiter", "read_as", "text_runs",
-                    "glued_headings_split", "truncated_paragraphs"):
+                    "glued_headings_split", "truncated_paragraphs",
+                    "sections", "sections_abandoned"):
             if key in self.meta:
                 record[key] = self.meta[key]
         return record

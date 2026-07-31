@@ -21,7 +21,7 @@ That is a real gap; JATS and spreadsheets are where the tables come from.
 
 import re
 from collections import Counter
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 import fitz  # PyMuPDF
 
@@ -95,8 +95,7 @@ def blocks_from_pdf(
     meta["running_lines_dropped"] = 0
 
     blocks: List[Block] = []
-    section: Optional[str] = None
-    section_names: List[str] = []
+    tracker = sections_mod.SectionTracker()
     for page_index, texts in enumerate(per_page, start=1):
         for text in texts:
             if text in furniture or _PAGE_NUMBER.match(text):
@@ -108,30 +107,32 @@ def blocks_from_pdf(
             locator = f"p.{page_index}"
             named = sections_mod.normalize(text)
             if named:
-                section = named
-                if named not in section_names:
-                    section_names.append(named)
                 blocks.append(Block(kind=HEADING, text=text, source_file=source_file,
-                                    origin=origin, locator=locator, section=section))
+                                    origin=origin, locator=locator,
+                                    section=tracker.heading(named)))
                 continue
             glued = sections_mod.split_leading_heading(text)
             if glued:
-                section, heading, text = glued
-                if section not in section_names:
-                    section_names.append(section)
+                named, heading, text = glued
                 blocks.append(Block(kind=HEADING, text=heading, source_file=source_file,
-                                    origin=origin, locator=locator, section=section))
+                                    origin=origin, locator=locator,
+                                    section=tracker.heading(named)))
                 meta["glued_headings_split"] = meta.get("glued_headings_split", 0) + 1
             elif sections_mod.looks_like_heading(text):
                 blocks.append(Block(kind=HEADING, text=text, source_file=source_file,
-                                    origin=origin, locator=locator, section=section))
+                                    origin=origin, locator=locator,
+                                    section=tracker.carry(text)))
                 continue
             if len(text) < limits.min_paragraph_chars:
                 continue
             blocks.append(Block(kind=PARAGRAPH, text=text, source_file=source_file,
-                                origin=origin, locator=locator, section=section))
+                                origin=origin, locator=locator,
+                                section=tracker.carry(text)))
 
-    meta["sections"] = section_names
+    meta["sections"] = tracker.seen
+    if tracker.abandoned:
+        meta["sections_abandoned"] = tracker.abandoned
+        meta["reason"] = tracker.reason()
     body_chars = sum(len(b.text) for b in blocks)
     meta["chars"] = body_chars
     if body_chars < limits.min_pdf_text_chars:

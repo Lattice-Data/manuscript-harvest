@@ -5,12 +5,18 @@ Methods, sample counts live in Results, and Introduction is mostly other
 people's work -- text most likely to make a model attribute someone else's
 perturbation to this paper.
 
-Two independent things happen here:
+Three things happen here:
 
 - `normalize` maps a heading string a parser already found (JATS `<title>`, a
   docx Heading style) onto a canonical name.
-- `spans` recovers headings from flowed PDF text, where the only signal left is
-  that the heading sits alone on its line.
+- `split_leading_heading` recovers a heading glued to the front of a paragraph,
+  which is how Nature's PDFs lay them out.
+- `SectionTracker` carries a heading's section forward over the text that follows
+  it -- and stops when carrying it further would be a guess.
+
+The section a block is *not* given matters as much as the one it is. A wrong
+section is worse than none, because it makes a downstream filter drop the text it
+was looking for while reporting a confident answer.
 """
 
 import re
@@ -176,27 +182,94 @@ def split_leading_heading(text: str) -> Optional[Tuple[str, str, str]]:
     return None
 
 
-def spans(text: str) -> List[Tuple[int, str]]:
-    """Locate canonical section headings in flowed text.
+# Sections that are a *statement* rather than a body of the paper. Wherever they
+# appear they run a paragraph or two: an abstract, a closing conclusion, a data
+# availability sentence naming an accession. Everything else here -- methods,
+# results, discussion, introduction, references, back matter -- legitimately runs
+# for pages, and back matter in particular is long in Nature journals (author
+# lists, affiliations, contributions, competing interests: 15,600 characters in
+# 10.1038/s41588-025-02433-6), so it is deliberately not in this set.
+BOUNDED_SECTIONS = frozenset({ABSTRACT, CONCLUSIONS, DATA_AVAILABILITY})
 
-    Returns `[(character_offset, section_name), ...]` in document order, one entry
-    per heading found on a line of its own. The caller assigns each paragraph the
-    section of the nearest preceding entry, which is what makes a PDF paragraph
-    attributable without the PDF having any structure.
+MAX_BOUNDED_SECTION_CHARS = 6000
+"""How far a `BOUNDED_SECTIONS` heading may carry before it is abandoned.
+
+Chosen against measurement rather than taste. The longest *legitimate* run seen
+over the ground-truth papers is 4,653 characters -- a Cell Press abstract plus its
+highlights and eTOC blurb, in 10.1016/j.xgen.2026.101304 -- and the shortest
+pathological one is 6,294. This sits between them.
+"""
+
+
+class SectionTracker:
+    """Carry a heading's section over the text that follows it, and know when to stop.
+
+    A heading assigns its section to everything up to the next heading, because in
+    a flowed PDF that is the only structure left. The failure this class exists for
+    is what happens when the next heading is never *recognised*.
+
+    Measured on the ground-truth papers, all three from a heading that was never
+    followed by another one this module knows:
+
+        10.1126/science.adt8307   996 of 1,184 main-text blocks labelled
+                                  `conclusions`, from the standalone `CONCLUSION`
+                                  line in Science's front-page structured summary.
+                                  The paper's real Results reported 5 blocks.
+        10.1126/science.aat5031   47 blocks labelled `abstract`, including Results
+                                  prose four pages later.
+        10.1038/s41588-025-02433-6  9,419 characters under `data_availability`.
+
+    Nothing was broken: the carry-forward did exactly what it was written to do.
+    The claim was simply larger than the evidence, and `section` is a filter, so a
+    confident wrong label costs more than no label -- a search for `results` on the
+    first paper above would find five blocks out of a thousand and report success.
+
+    So a bounded section is abandoned once it has carried more text than that kind
+    of section ever contains, and the blocks after it are left unlabelled with the
+    abandonment recorded. `abandoned` is what the caller reports. An unbounded
+    section still flows through its own unrecognised subsection headings, which is
+    the behaviour that makes Methods attributable at all.
     """
-    found: List[Tuple[int, str]] = []
-    for match in re.finditer(r"^[^\n]{1,%d}$" % _MAX_HEADING_CHARS, text, re.MULTILINE):
-        name = normalize(match.group(0))
-        if name:
-            found.append((match.start(), name))
-    return found
 
+    def __init__(self, max_bounded_chars: int = MAX_BOUNDED_SECTION_CHARS):
+        self.max_bounded_chars = max_bounded_chars
+        self.current: Optional[str] = None
+        self.seen: List[str] = []
+        """Canonical names met, in document order, deduplicated."""
+        self.abandoned: List[str] = []
+        """Bounded sections that ran too long to keep claiming."""
+        self._carried = 0
 
-def section_at(offset: int, ordered_spans: List[Tuple[int, str]]) -> Optional[str]:
-    """The section covering `offset`, given the output of `spans`."""
-    current = None
-    for start, name in ordered_spans:
-        if start > offset:
-            break
-        current = name
-    return current
+    def heading(self, name: str) -> Optional[str]:
+        """Open `name` as the current section, and return it for the heading block."""
+        self.current = name
+        self._carried = 0
+        if name not in self.seen:
+            self.seen.append(name)
+        return name
+
+    def carry(self, text: str) -> Optional[str]:
+        """The section to label `text` with. Call once per block, in document order.
+
+        The block that crosses the budget keeps its label and the one after it does
+        not: an abstract a few hundred characters over is still an abstract, and
+        cutting mid-run would be a third answer that is right about neither.
+        """
+        if self.current is None or self.current not in BOUNDED_SECTIONS:
+            return self.current
+        if self._carried > self.max_bounded_chars:
+            if self.current not in self.abandoned:
+                self.abandoned.append(self.current)
+            self.current = None
+            return None
+        self._carried += len(text)
+        return self.current
+
+    def reason(self) -> Optional[str]:
+        """One line for the extraction record, or None if nothing was abandoned."""
+        if not self.abandoned:
+            return None
+        return (f"section labelling stopped inside {', '.join(self.abandoned)}: more than "
+                f"{self.max_bounded_chars} characters ran under a heading that names a "
+                f"statement, so the blocks after it are left unlabelled rather than "
+                f"attributed to it")

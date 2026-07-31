@@ -19,7 +19,7 @@ import io
 import re
 import xml.etree.ElementTree as ET
 import zipfile
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 from . import sections as sections_mod
 from . import tables
@@ -101,8 +101,7 @@ def blocks_from_docx(
 
     blocks: List[Block] = []
     meta: dict = {"tables": 0, "paragraphs": 0}
-    section: Optional[str] = None
-    section_names: List[str] = []
+    tracker = sections_mod.SectionTracker()
     paragraph_index = 0
     table_index = 0
 
@@ -120,16 +119,14 @@ def blocks_from_docx(
             locator = f"para {paragraph_index}"
             named = sections_mod.normalize(text)
             heading = _is_heading_style(_style(element)) or bool(named)
-            if named:
-                section = named
-                if named not in section_names:
-                    section_names.append(named)
-            if heading:
-                blocks.append(Block(kind=HEADING, text=text, source_file=source_file,
-                                    origin="docx", locator=locator, section=section))
-            elif len(text) >= limits.min_paragraph_chars:
-                blocks.append(Block(kind=PARAGRAPH, text=text, source_file=source_file,
-                                    origin="docx", locator=locator, section=section))
+            if not heading and len(text) < limits.min_paragraph_chars:
+                continue
+            # `carry` accounts for the text it labels, so it is called once per
+            # block that is actually kept.
+            section = tracker.heading(named) if named else tracker.carry(text)
+            blocks.append(Block(kind=HEADING if heading else PARAGRAPH, text=text,
+                                source_file=source_file, origin="docx",
+                                locator=locator, section=section))
 
         elif element.tag == W + "tbl":
             table_index += 1
@@ -149,12 +146,18 @@ def blocks_from_docx(
             if card is None:
                 continue
             meta["tables"] += 1
+            # `current` rather than `carry`: a rendered card is thousands of
+            # characters of profile, not prose the section budget should be spent
+            # on. It is already bounded by whatever the prose around it claimed.
             blocks.append(Block(kind=TABLE, text=tables.render(card, limits),
                                 source_file=source_file, origin="docx",
-                                locator=f"table {table_index}", section=section,
+                                locator=f"table {table_index}", section=tracker.current,
                                 table=card.to_dict()))
 
-    meta["sections"] = section_names
+    meta["sections"] = tracker.seen
+    if tracker.abandoned:
+        meta["sections_abandoned"] = tracker.abandoned
+        meta["reason"] = tracker.reason()
     if not blocks:
         return [], NO_TEXT, meta
     return blocks, OK, meta
