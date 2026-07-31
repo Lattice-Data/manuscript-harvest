@@ -453,6 +453,7 @@ The tests live in `tests/` and run under pytest:
 | `tests/test_extract_units.py` | sections, table cards, and each parser: JATS, PDF, xlsx, docx, HTML, zip |
 | `tests/test_extract_article.py` | source choice, per-file statuses, the extraction record, the CLI |
 | `tests/test_extract_corpus.py` | the real files that taught the extractor its rules — skipped without `corpus/` |
+| `tests/test_section_audit.py` | the section audit: alignment, scoring, and what must *not* count as an error |
 | `tests/test_manual_fetch_units.py` | the comparison rules: publisher filename conventions, archives, article versions |
 | `tests/test_manual_fetch_live.py` | fetches those same DOIs for real and compares — off unless asked for twice |
 
@@ -631,8 +632,24 @@ run on every commit.
   saying so. Methods and Results are not bounded: they legitimately run for pages
   through their own unrecognised subsection headings. This trims the wrong labels
   on that paper from 68,268 characters to 6,035 — the front matter and
-  introduction — so it bounds the error rather than eliminating it. Closing the
-  rest needs a measure of section accuracy, which does not exist yet.
+  introduction — so it bounds the error rather than eliminating it.
+- **How accurate the PDF labeller is, measured rather than asserted.** JATS
+  declares its sections, so an article the fetch stage saved both renditions of
+  scores the heuristic for free — that is what
+  `manuscript_harvest/extract/section_audit.py` does, aligning the two by shared
+  eight-word shingle and comparing labels paragraph by paragraph:
+
+      python -m manuscript_harvest.extract.section_audit --corpus-dir corpus
+
+  Over the two open-access papers in this corpus, **179 of 198 alignable
+  paragraphs agree (90.4%)**. The two fail in different directions, which is the
+  useful part. On `10.1038/s41467-023-40505-5` Methods scores precision 1.00 and
+  recall 0.98 and nearly every error is an *omission* — six Introduction
+  paragraphs left `null` — which is the safe failure. On
+  `10.1016/j.cell.2021.01.053` Methods scores precision 0.50 on 10 labelled
+  paragraphs: the heuristic over-applies it, which is the unsafe failure. Both
+  samples are small (125 and 73 aligned paragraphs), so treat them as a baseline
+  to improve against rather than a published figure.
 
 ## License
 
