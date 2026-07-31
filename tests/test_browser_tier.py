@@ -604,6 +604,33 @@ def test_duo_landing_is_an_expired_session_not_a_missing_pdf():
     assert any("session_expired" in p for p in result.problems)
 
 
+def test_session_expired_carries_the_command_that_fixes_it():
+    """Naming a cause is half an answer. Until the remedy travelled with it, a
+    batch printed `session_expired` once per DOI and never said which command
+    fixes it -- and the user reached for `--headed`, which shows the browser but
+    never waits for a login."""
+    duo = ProxyRedirectPage(DUO_PROMPT_URL, title="Duo Security", links=[],
+                            content=DUO_PROMPT_HTML)
+    source = _source(proxy=PROXY)
+    result = SourceResult(tier="proxy_browser")
+
+    class Ids:
+        doi = "10.1126/science.adt8307"
+        landing_url = "https://www.science.org/doi/10.1126/science.adt8307"
+
+    source._publisher_page(FakeContext(pages=[duo]), Ids(), result,
+                           need_pdf=True, need_supplements=True)
+    assert any("manuscript-fetch login" in p for p in result.problems)
+
+
+def test_only_a_dead_session_gets_the_login_advice():
+    """A paywalled or misrouted page is not fixed by logging in again, so the
+    remedy must not be stapled to every refusal."""
+    assert pb.denial_problem("session_expired", "https://x/") .endswith(pb.SESSION_REMEDY)
+    for denial in ("paywalled", "proxy_not_configured", "link_resolver_error"):
+        assert pb.denial_problem(denial, "https://x/") == f"{denial} at https://x/"
+
+
 def test_unconfigured_proxy_retries_the_publisher_directly():
     """EZproxy having no stanza often means the host needs no proxy: Frontiers is
     fully open access yet failed outright as proxy_not_configured."""
