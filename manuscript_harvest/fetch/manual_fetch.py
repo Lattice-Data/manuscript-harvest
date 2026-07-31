@@ -12,7 +12,9 @@ not equally stable:
     article PDF   compared on page count and identity, never on bytes. Publishers
                   stamp per-download watermarks and embed creation timestamps and
                   document IDs, so two correct fetches of one paper differ. Byte
-                  equality here would fail constantly while meaning nothing.
+                  equality here would fail constantly while meaning nothing. Page
+                  count is asserted only when both copies are the same rendition:
+                  see `fetched_rendition`.
 
     supplements   compared on content hash, because these are static assets served
                   identically to everyone. Matched as a *set*: browsers rename
@@ -66,6 +68,20 @@ _ELSEVIER_SUPPLEMENT = re.compile(r"^mmc\d+$", re.IGNORECASE)
 # Elsevier paper carry a hand-written override.
 _ELSEVIER_ARTICLE = re.compile(r"^1-s2\.0-\S+-main$", re.IGNORECASE)
 
+# Cell Press, downloading from cell.com rather than ScienceDirect, names it
+# `PII<PII>.pdf`: 10.1016/j.cell.2021.04.038 arrives as PIIS0092867421005730.pdf
+# and 10.1016/j.ccell.2021.03.007 as PIIS1535610821001653.pdf. Both are the
+# correct typeset article (35 and 23 pages), and neither the DOI rule nor the
+# `1-s2.0-` form matches them.
+#
+# Left unmatched this gap is *silent*, which is why it is worth a rule of its own:
+# a folder with no recognised article PDF gets `main_pdf: null`, and `compare`
+# then collapses pdf_present, pdf_pages and pdf_identity into one unasserted note
+# -- the article PDF simply stops being checked. Anchored on `PIIS` and the
+# characters a PII can contain (cell.com uses both S0092867421005730 and the
+# punctuated S0092-8674(21)00573-0) so it cannot claim an ordinary filename.
+_CELLPRESS_ARTICLE = re.compile(r"^PIIS[0-9X()\-]{10,}$", re.IGNORECASE)
+
 # Only *container* archives are expanded -- a bundle a tier might legitimately
 # unpack into separate supplements. An .xlsx is a zip too, as is every Office and
 # OpenDocument format, so trusting `is_zipfile` alone recorded spreadsheet
@@ -88,6 +104,31 @@ _IDENTITY_PAGES = 2
 # renditions still assert identity -- right paper, readable text.
 PUBLISHED = "published"
 _COUNTABLE_VERSIONS = {PUBLISHED}
+
+# `version` above describes the *manual* copy. What fetch returns can be a
+# different rendition of the same paper, and then a page count asserted across the
+# two fails on a correct fetch: for 10.1126/science.aat5031 Europe PMC serves the
+# author manuscript at 19 pages where the publisher's reprint runs 7. Nothing in
+# the spec can express that, because it is not a property of the manual copy.
+#
+# It does not have to. A PMC rendition says what it is on its first page, so the
+# fetched file is asked directly. `author manuscript` alone would be too loose --
+# a paper *about* manuscripts could say it -- so each marker is a phrase only the
+# PMC/Europe PMC cover sheet uses.
+AUTHOR_MANUSCRIPT = "author manuscript"
+_AUTHOR_MANUSCRIPT_MARKERS = (
+    "published in final edited form as",
+    "hhs public access",
+    "europe pmc funders author manuscripts",
+)
+
+
+def fetched_rendition(head_text: str) -> Optional[str]:
+    """`AUTHOR_MANUSCRIPT` when the fetched PDF is a PMC deposit, else None."""
+    lowered = head_text.lower()
+    if any(marker in lowered for marker in _AUTHOR_MANUSCRIPT_MARKERS):
+        return AUTHOR_MANUSCRIPT
+    return None
 
 
 # -- reading files -----------------------------------------------------------
@@ -148,17 +189,40 @@ def pdf_pages(path) -> Optional[int]:
         return None
 
 
-def pdf_head_text(path, pages: int = _IDENTITY_PAGES) -> str:
+def _page_text(path, indices) -> str:
     try:
         import fitz
     except ImportError:  # pragma: no cover - pymupdf is a hard dependency
         return ""
     try:
         with fitz.open(path) as document:
-            chunks = [document[i].get_text() or "" for i in range(min(pages, document.page_count))]
+            # Deduplicated, because head and tail overlap in a short document and
+            # reading a page twice would double its text for no gain.
+            wanted = sorted(set(indices(document.page_count)))
+            chunks = [document[i].get_text() or "" for i in wanted]
     except Exception:
         return ""
     return " ".join(" ".join(chunks).split())
+
+
+def pdf_head_text(path, pages: int = _IDENTITY_PAGES) -> str:
+    return _page_text(path, lambda count: range(min(pages, count)))
+
+
+def pdf_tail_text(path, pages: int = _IDENTITY_PAGES) -> str:
+    """The closing pages, which is where AAAS prints the DOI.
+
+    Reading only the front misses Science and Science Immunology entirely. Measured
+    on the hand-fetched copies: the DOI is on pages 6-7 of 7 for
+    10.1126/science.aat5031 and 15-16 of 16 for 10.1126/sciimmunol.aba4163, and
+    page 1 carries only the running citation ("Sci. Immunol. 5, eaba4163"), which
+    normalises apart from the DOI. So `pdf_identity` was reporting "wrong paper, or
+    a stub" for the hand-fetched files that define correctness.
+
+    Both ends are needed rather than the other one: PMC's author-manuscript
+    rendition puts the DOI on page 1 and nowhere near the end.
+    """
+    return _page_text(path, lambda count: range(max(0, count - pages), count))
 
 
 def fingerprint(path) -> dict:
@@ -238,7 +302,8 @@ def classify(directory, doi: str, main_hint: Optional[str] = None) -> Tuple[Opti
     for path in files:
         if _ELSEVIER_SUPPLEMENT.match(path.stem):
             continue
-        if _ELSEVIER_ARTICLE.match(path.stem) or _stem_key(path) == tail:
+        if (_ELSEVIER_ARTICLE.match(path.stem) or _CELLPRESS_ARTICLE.match(path.stem)
+                or _stem_key(path) == tail):
             main = path
             break
 
@@ -349,22 +414,32 @@ def compare(article: dict, record: dict, directory, root=None) -> List[dict]:
         checks.append(_check("pdf_present", got_pdf, f"fetch reported {pdf_status}"))
         fetched_pdf = directory / (fulltext.get("path") or store.FULLTEXT_PDF)
         if got_pdf and fetched_pdf.is_file():
+            head = pdf_head_text(fetched_pdf)
+            rendition = fetched_rendition(head)
             want = manual_pdf.get("pages")
             have = pdf_pages(fetched_pdf)
             version = manual_pdf.get("version", PUBLISHED)
             if want is not None and have is not None:
-                countable = version in _COUNTABLE_VERSIONS
+                countable = version in _COUNTABLE_VERSIONS and rendition is None
+                if version not in _COUNTABLE_VERSIONS:
+                    why = f" -- not asserted, the manual copy is the {version} version"
+                elif rendition is not None:
+                    why = f" -- not asserted, fetch returned the {rendition} of the same paper"
+                else:
+                    why = ""
                 checks.append(_check(
                     "pdf_pages", (want == have) if countable else None,
-                    f"manual {want}pp, fetched {have}pp"
-                    + ("" if countable else f" -- not asserted, the manual copy is the {version} version"),
+                    f"manual {want}pp, fetched {have}pp" + why,
                 ))
+            # Both ends of the document: the DOI is on page 1 of a PMC rendition and
+            # in the closing citation block of an AAAS reprint. See `pdf_tail_text`.
             tail = doi_tail(article["doi"])
-            text = re.sub(r"[^a-z0-9]", "", pdf_head_text(fetched_pdf).lower())
+            text = re.sub(r"[^a-z0-9]", "",
+                          (head + " " + pdf_tail_text(fetched_pdf)).lower())
             checks.append(_check(
                 "pdf_identity", tail in text,
-                "DOI found in the first pages" if tail in text
-                else "DOI absent from the first pages -- wrong paper, or a stub",
+                "DOI found in the opening or closing pages" if tail in text
+                else "DOI absent from the opening and closing pages -- wrong paper, or a stub",
             ))
 
     # -- the supplement question --------------------------------------------

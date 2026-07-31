@@ -17,7 +17,7 @@ import pytest
 
 from manuscript_harvest.fetch import manual_fetch, store
 
-from .fakes import make_pdf
+from .fakes import make_pdf, make_pdf_pages
 
 DOI = "10.1126/science.adt8307"
 
@@ -122,6 +122,31 @@ def test_elsevier_article_is_found_by_house_style_not_by_doi(tmp_path):
     main, supplements = manual_fetch.classify(tmp_path, "10.1016/j.xgen.2026.101304")
     assert main.name == "1-s2.0-S2666979X26001667-main.pdf"
     assert len(supplements) == 3
+
+
+def test_cell_press_article_is_found_by_its_pii_filename(tmp_path):
+    """cell.com names the article `PII<PII>.pdf`, which no other rule matches.
+
+    Measured on 10.1016/j.cell.2021.04.038 and 10.1016/j.ccell.2021.03.007, whose
+    hand-fetched folders both reported `main=NONE` before this rule existed -- and a
+    null main_pdf is silent, because `compare` then stops asserting the PDF checks
+    instead of failing them.
+    """
+    for name in ("PIIS0092867421005730.pdf", "mmc1.pdf", "mmc2.xls", "mmc6.pdf"):
+        (tmp_path / name).write_bytes(b"x")
+    main, supplements = manual_fetch.classify(tmp_path, "10.1016/j.cell.2021.04.038")
+    assert main.name == "PIIS0092867421005730.pdf"
+    assert len(supplements) == 3
+
+
+def test_the_pii_rule_does_not_claim_an_ordinary_filename(tmp_path):
+    """`PIIS` has to be followed by something PII-shaped, or the rule would promote
+    any file whose name happens to start with those letters."""
+    (tmp_path / "piispneumoniae-review.pdf").write_bytes(b"x")
+    (tmp_path / "mmc1.pdf").write_bytes(b"x")
+    main, supplements = manual_fetch.classify(tmp_path, "10.1016/j.cell.2021.04.038")
+    assert main is None
+    assert len(supplements) == 2
 
 
 def test_an_mmc_file_is_never_promoted_to_the_article(tmp_path):
@@ -264,6 +289,81 @@ def test_the_right_paper_passes_identity(tmp_path):
     directory = _article_dir(tmp_path, pdf=make_pdf(pages=2, text=f"Research article {DOI} aging"))
     checks = manual_fetch.compare(article, _record(), directory, root=_manual_root(tmp_path))
     assert next(c for c in checks if c["check"] == "pdf_identity")["ok"] is True
+
+
+def test_identity_reads_the_closing_pages_too(tmp_path):
+    """AAAS prints the DOI in the citation block at the end, not the front.
+
+    Measured on the hand-fetched copies: pages 6-7 of 7 for 10.1126/science.aat5031
+    and 15-16 of 16 for 10.1126/sciimmunol.aba4163. Reading only the first pages
+    reported "wrong paper, or a stub" for the files that define correctness.
+    """
+    article = {
+        "doi": DOI, "source_dir": "Science",
+        "main_pdf": {"file": "a.pdf", "pages": 3, "version": manual_fetch.PUBLISHED},
+        "supplements": [],
+    }
+    pdf = make_pdf_pages([
+        ["Spatiotemporal immune zonation of the human kidney"],
+        ["Fig. 3. Zonation of the immune compartment."],
+        [f"Cite this article as B. J. Stewart et al., Science 365 (2019). DOI: {DOI}"],
+    ])
+    directory = _article_dir(tmp_path, pdf=pdf)
+    checks = manual_fetch.compare(article, _record(), directory, root=_manual_root(tmp_path))
+    assert next(c for c in checks if c["check"] == "pdf_identity")["ok"] is True
+
+
+def test_identity_still_fails_when_the_doi_is_nowhere_near_either_end(tmp_path):
+    """Widening the window must not turn the check into a pass-everything."""
+    article = {
+        "doi": DOI, "source_dir": "Science",
+        "main_pdf": {"file": "a.pdf", "pages": 6, "version": manual_fetch.PUBLISHED},
+        "supplements": [],
+    }
+    # Six pages, so pages 3-4 sit outside both windows -- a mention there must not
+    # count, or the widened check would pass on any document containing the DOI.
+    pdf = make_pdf_pages([["a different paper entirely"], ["no citation block here"],
+                          [f"a buried reference to {DOI}"], ["still the middle"],
+                          ["nothing identifying"], ["end matter without a citation"]])
+    directory = _article_dir(tmp_path, pdf=pdf)
+    checks = manual_fetch.compare(article, _record(), directory, root=_manual_root(tmp_path))
+    assert next(c for c in checks if c["check"] == "pdf_identity")["ok"] is False
+
+
+def test_page_count_is_not_asserted_across_renditions(tmp_path):
+    """10.1126/science.aat5031: Europe PMC serves the author manuscript at 19 pages,
+    the publisher's reprint runs 7. Same paper, so the difference is not an error --
+    and the spec cannot say so, because what differs is what *fetch* returned."""
+    article = {
+        "doi": DOI, "source_dir": "Science",
+        "main_pdf": {"file": "a.pdf", "pages": 7, "version": manual_fetch.PUBLISHED},
+        "supplements": [],
+    }
+    pdf = make_pdf_pages([
+        [f"Europe PMC Funders Group Author Manuscript Published in final edited form as: "
+         f"Science. 2019 October 11; 365(6460). doi:{DOI}"],
+        ["Abstract Understanding the anatomical distribution of immune cells"],
+    ])
+    directory = _article_dir(tmp_path, pdf=pdf)
+    checks = manual_fetch.compare(article, _record(), directory, root=_manual_root(tmp_path))
+    pages = next(c for c in checks if c["check"] == "pdf_pages")
+    assert pages["ok"] is None
+    assert manual_fetch.AUTHOR_MANUSCRIPT in pages["detail"]
+    # Identity is still asserted: a rendition difference is not a licence to stop
+    # checking that the file is the right paper.
+    assert next(c for c in checks if c["check"] == "pdf_identity")["ok"] is True
+
+
+def test_page_count_is_still_asserted_for_the_publisher_rendition(tmp_path):
+    """The rendition escape must not swallow a genuine mismatch."""
+    article = {
+        "doi": DOI, "source_dir": "Science",
+        "main_pdf": {"file": "a.pdf", "pages": 7, "version": manual_fetch.PUBLISHED},
+        "supplements": [],
+    }
+    directory = _article_dir(tmp_path, pdf=make_pdf(pages=2, text=f"Research article {DOI}"))
+    checks = manual_fetch.compare(article, _record(), directory, root=_manual_root(tmp_path))
+    assert next(c for c in checks if c["check"] == "pdf_pages")["ok"] is False
 
 
 def test_extra_fetched_files_are_reported_never_failed(tmp_path):

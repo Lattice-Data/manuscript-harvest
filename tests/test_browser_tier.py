@@ -17,6 +17,13 @@ from manuscript_harvest.fetch.sources import proxy_browser as pb
 from manuscript_harvest.fetch.sources.base import SourceResult
 from manuscript_harvest.fetch.validate import classify_denial
 from tests.fakes import (
+    CELL_PRESS_ARTICLE_LINKS,
+    CELL_PRESS_ARTICLE_PDF,
+    CELL_PRESS_ARTICLE_URL,
+    CELL_PRESS_SUPPLEMENTS,
+    CELL_PRESS_TITLE,
+    CLOUDFLARE_HTML,
+    CLOUDFLARE_LINKS,
     DUO_PROMPT_HTML,
     DUO_PROMPT_URL,
     POW_HTML,
@@ -404,6 +411,131 @@ def test_publisher_stub_page_is_reported():
     assert result.pdf_status == "publisher_stub_page"
     assert result.suppl_status == "page_not_parsed"
     assert any("stub page" in p for p in result.problems)
+
+
+_SD_STUB_URL = ("https://www-sciencedirect-com.stanford.idm.oclc.org"
+                "/science/article/pii/S0092867421005730?via%3Dihub")
+
+
+class CellPressRetryPage(FakePage):
+    """ScienceDirect's stub first, then whatever cell.com answers on the retry.
+
+    One page object across both navigations, because that is what the tier does:
+    it reuses the page it already has rather than opening a second one.
+    """
+
+    def __init__(self, retry_url=CELL_PRESS_ARTICLE_URL, retry_title=CELL_PRESS_TITLE,
+                 retry_links=None, retry_content=b"<html>the article</html>",
+                 retry_metas=None):
+        super().__init__(url=_SD_STUB_URL, title="ScienceDirect", links=[],
+                         content=b"<html></html>")
+        self.retry = {
+            "url": retry_url, "title": retry_title,
+            "links": retry_links if retry_links is not None else CELL_PRESS_ARTICLE_LINKS,
+            "content": retry_content,
+            "metas": retry_metas if retry_metas is not None
+            else {"citation_pdf_url": CELL_PRESS_ARTICLE_PDF},
+        }
+
+    def goto(self, url, wait_until=None, timeout=None):
+        self.visited.append(url)
+        if "cell.com" in url:
+            self.url = self.retry["url"]
+            self._title = self.retry["title"]
+            self.links = self.retry["links"]
+            self._content = self.retry["content"]
+            self.metas = self.retry["metas"]
+        else:
+            self.url = _SD_STUB_URL
+
+
+class _ElsevierIds:
+    doi = "10.1016/j.cell.2021.04.038"
+    landing_url = "https://linkinghub.elsevier.com/retrieve/pii/S0092867421005730"
+
+
+def test_a_stubbed_elsevier_page_is_retried_at_cell_press():
+    """10.1016/j.cell.2021.04.038 and 10.1016/j.ccell.2021.03.007 both came back
+    empty against the hand-fetched copies: EZproxy sends the linkinghub DOI to
+    ScienceDirect, which serves automation a shell page, and the papers ended as
+    `failed` with 0 of 6 supplements. cell.com -- where the human downloaded them --
+    renders the same article and the existing adapter finds all six there."""
+    page = CellPressRetryPage()
+    source = _source(proxy=PROXY)
+    result = SourceResult(tier="proxy_browser")
+    request = FakeRequest({
+        "/cell/pdf/": FakeResponse(200, make_pdf(pages=35),
+                                   {"content-type": "application/pdf"}),
+        ".pdf": FakeResponse(200, make_pdf(pages=2), {"content-type": "application/pdf"}),
+        ".xls": FakeResponse(200, b"\xd0\xcf\x11\xe0a workbook",
+                             {"content-type": "application/vnd.ms-excel"}),
+    })
+
+    source._publisher_page(FakeContext(pages=[page], request=request), _ElsevierIds(),
+                           result, need_pdf=True, need_supplements=True)
+
+    assert result.pdf_status == "ok"
+    names = sorted(f.name for f in result.files if f.role == "supplement")
+    assert names == [name for name, _ in CELL_PRESS_SUPPLEMENTS]
+    assert result.suppl_status == "fetched_unverified"
+    # The fallback is visible in the record, and the page kept for debugging is the
+    # one that was actually parsed rather than the stub it replaced.
+    retry = next(a for a in result.attempts if a["action"] == "landing_retry")
+    assert retry["status"] == "loaded" and "cell.com" in retry["url"]
+    # And the stub is still recorded, in front of it. A recovery that erases what it
+    # recovered from reads as though the DOI resolved to cell.com to begin with, and
+    # the route that is actually broken disappears from the record.
+    assert [a["status"] for a in result.attempts if a["action"] == "landing"] == [
+        "publisher_stub_page", "loaded"]
+    landing = next(f for f in result.files if f.role == "landing_html")
+    assert landing.url == CELL_PRESS_ARTICLE_URL
+
+
+def test_the_cell_press_retry_never_invents_an_article_page():
+    """cell.com carries Cell Press, not all of Elsevier. For
+    10.1016/j.jhep.2019.01.003 it redirects to the journal's own host --
+    journal-of-hepatology.eu, which is outside the proxy and so answers with
+    Cloudflare's interstitial. That must leave the stub diagnosis standing rather
+    than report a page we read."""
+    page = CellPressRetryPage(
+        retry_url="https://www.journal-of-hepatology.eu/article/S0168-8278(19)30012-1/fulltext",
+        retry_title="Just a moment...", retry_links=CLOUDFLARE_LINKS,
+        retry_content=CLOUDFLARE_HTML, retry_metas={})
+    source = _source(proxy=PROXY)
+    result = SourceResult(tier="proxy_browser")
+
+    source._publisher_page(FakeContext(pages=[page]), _ElsevierIds(), result,
+                           need_pdf=True, need_supplements=True)
+
+    assert result.pdf_status == "publisher_stub_page"
+    assert result.suppl_status == "page_not_parsed"
+    retry = next(a for a in result.attempts if a["action"] == "landing_retry")
+    assert retry["status"] == "javascript_challenge"
+    # The stub is what we looked at, so the stub is what gets kept.
+    assert next(f for f in result.files if f.role == "landing_html").url == _SD_STUB_URL
+
+
+def test_a_challenge_page_never_reads_as_no_supplements():
+    """Cloudflare's interstitial parses perfectly and lists nothing, so
+    `find_supplements` returns `(parsed=True, [])` -- indistinguishable from an
+    article that really has none, and `looks_blocked` is False because the title is
+    not the publisher's own shell. `hasSuppl: Y` hides this for anything Europe PMC
+    indexes; 10.1126/sciimmunol.aba4163 has no PMCID and is reached by this tier
+    alone, so for that shape the fetcher would have settled on
+    `unknown_none_found` for a page nobody ever read."""
+    page = ProxyRedirectPage("https://www.cell.com/cell/fulltext/S0092867421005730",
+                             title="Just a moment...", links=CLOUDFLARE_LINKS,
+                             content=CLOUDFLARE_HTML)
+    source = _source(proxy=PROXY)
+    result = SourceResult(tier="proxy_browser")
+
+    source._publisher_page(FakeContext(pages=[page]), _ElsevierIds(), result,
+                           need_pdf=True, need_supplements=True)
+
+    assert result.suppl_status == "page_not_parsed"
+    assert result.pdf_status == "javascript_challenge"
+    supplements = next(a for a in result.attempts if a["action"] == "supplements")
+    assert supplements["status"] == "page_not_parsed"
 
 
 def test_pmc_bot_check_says_use_headed():

@@ -34,6 +34,7 @@ from urllib.parse import parse_qsl, unquote, urlparse
 from ..validate import classify_denial, validate_pdf
 from ..adapters import adapter_for
 from ..adapters.base import FILE_EXTENSION
+from ..adapters.publishers import PII_RX
 from .base import (
     ROLE_LANDING,
     ROLE_PDF,
@@ -50,6 +51,27 @@ _IMPORT_HINT = (
 )
 
 PMC_ARTICLE_URL = "https://pmc.ncbi.nlm.nih.gov/articles/{pmcid}/"
+
+# Where a Cell Press paper actually lives. The DOI does not resolve here: EZproxy
+# sends `linkinghub.elsevier.com/retrieve/pii/<PII>` to ScienceDirect, which serves
+# automation a shell page -- and cell.com, the host a human downloads from, renders
+# the same paper in full. Measured 2026-07-30 against the hand-fetched copies of
+# 10.1016/j.cell.2021.04.038, 10.1016/j.ccell.2021.03.007 and
+# 10.1016/j.xgen.2026.101304: the *existing* Elsevier adapter finds 6, 6 and 12
+# supplement links there, which are exactly the sets saved by hand, and the article
+# PDFs match the hand-fetched ones byte for byte in size.
+#
+# `/retrieve/pii/<PII>` is used rather than a journal URL because it redirects to
+# the canonical `/<journal-slug>/fulltext/<PII>` on its own, so no map from journal
+# title to slug has to be maintained. It goes through the proxy like everything
+# else: unproxied cell.com answers with Cloudflare's interstitial.
+CELL_PRESS_URL = "https://www.cell.com/retrieve/pii/{pii}"
+
+
+def pii_from(url: str) -> Optional[str]:
+    """The Elsevier PII in a URL, or None."""
+    found = PII_RX.search(url or "")
+    return found.group(1) if found else None
 
 
 def _import_playwright():
@@ -666,23 +688,33 @@ class ProxyBrowserSource(Source):
         # the article. Without this check it reads as "no PDF, no supplements".
         if adapter.looks_blocked(page):
             headless = bool((self.config.get("browser") or {}).get("headless", True))
-            hint = ("try --headed, though ScienceDirect stubs headed runs too" if headless
-                    else "the page rendered but exposed no article content")
-            result.problems.append(
-                f"{adapter.name} served a stub page to this browser at {final_url}; {hint}"
-            )
+            # Recorded before the retry, and whether or not the retry rescues the
+            # paper. A successful recovery that leaves no trace of the stub reads as
+            # though the DOI resolved to cell.com in the first place, which is not
+            # what happened and hides the route that is actually broken.
             result.note("landing", url=target, final_url=final_url,
                         status="publisher_stub_page", adapter=adapter.name,
                         headless=headless)
-            if need_pdf:
-                result.pdf_status = "publisher_stub_page"
-            if need_supplements:
-                result.suppl_status = "page_not_parsed"
-            try:
-                page.close()
-            except Exception:
-                pass
-            return
+            recovered = self._cell_press_retry(page, adapter, ids, result)
+            if recovered is None:
+                hint = ("try --headed, though ScienceDirect stubs headed runs too" if headless
+                        else "the page rendered but exposed no article content")
+                result.problems.append(
+                    f"{adapter.name} served a stub page to this browser at {final_url}; {hint}"
+                )
+                if need_pdf:
+                    result.pdf_status = "publisher_stub_page"
+                if need_supplements:
+                    result.suppl_status = "page_not_parsed"
+                try:
+                    page.close()
+                except Exception:
+                    pass
+                return
+            # From here on the page under the adapter is the one cell.com served.
+            final_url, body = recovered
+            denial = classify_denial(final_url, body)
+            adapter = adapter_for(final_url)
 
         result.note("landing", url=target, final_url=final_url, status="loaded",
                     adapter=adapter.name, denial=denial)
@@ -694,6 +726,21 @@ class ProxyBrowserSource(Source):
             if not parsed:
                 result.suppl_status = "page_not_parsed"
                 result.note("supplements", status="page_not_parsed", adapter=adapter.name)
+            elif not links and denial:
+                # A challenge page parses perfectly and lists nothing, so an empty
+                # list only means "this article has none" when the page was the
+                # article. Cloudflare's interstitial (`<title>Just a moment...`)
+                # returns parsed=True with zero anchors and `looks_blocked` False --
+                # measured on unproxied cell.com and on journal-of-hepatology.eu.
+                #
+                # `hasSuppl: Y` rescues this for anything Europe PMC indexes, which
+                # is why it went unnoticed. An article it does not hold has no such
+                # backstop and the fetcher would settle on `unknown_none_found` for a
+                # page nobody ever read. 10.1126/sciimmunol.aba4163 is that shape: no
+                # PMCID, reached by this tier alone.
+                result.suppl_status = "page_not_parsed"
+                result.note("supplements", status="page_not_parsed",
+                            adapter=adapter.name, denial=denial)
             elif not links:
                 result.note("supplements", status="none_listed_on_page", adapter=adapter.name)
             else:
@@ -716,6 +763,59 @@ class ProxyBrowserSource(Source):
             page.close()
         except Exception:
             pass
+
+    def _cell_press_retry(self, page, adapter, ids, result: SourceResult):
+        """Reload a stubbed Elsevier page at cell.com. Returns (final_url, body) or None.
+
+        ScienceDirect is not a route to an Elsevier paper for automation, and the
+        README says so; cell.com is. See `CELL_PRESS_URL` for what was measured.
+
+        Only offered as a recovery from the stub, not as the first choice, so a
+        publisher route that does work keeps working and the fallback is visible in
+        `attempts` when it fires.
+        """
+        if adapter.name != "elsevier":
+            return None
+        pii = pii_from(ids.landing_url or "") or pii_from(page.url or "")
+        if not pii:
+            result.note("landing_retry", status="no_pii",
+                        detail="no Elsevier PII in the landing or final URL")
+            return None
+
+        target = proxied_url(CELL_PRESS_URL.format(pii=pii), self.config)
+        try:
+            page.goto(target, wait_until="domcontentloaded")
+            landed = settle_page(page, deadline_seconds=self._settle_deadline)
+            body = stable_content(page, deadline_seconds=self._content_deadline)
+        except Exception as e:
+            result.note("landing_retry", url=target, status="navigation_failed",
+                        error=f"{type(e).__name__}: {e}")
+            return None
+
+        denial = classify_denial(landed, body)
+        landed_adapter = adapter_for(landed)
+        # An article page on cell.com links its own PDF. An Elsevier paper that is
+        # *not* Cell Press redirects off cell.com to the journal's own host, which
+        # leaves the proxy behind and so answers with Cloudflare's interstitial:
+        # measured on 10.1016/j.jhep.2019.01.003, which lands on
+        # journal-of-hepatology.eu with denial `javascript_challenge`, no PDF link
+        # and zero supplement anchors. Requiring the PDF link is what keeps that
+        # from being handed on as a page we successfully read.
+        unreadable = (denial or landed_adapter.looks_blocked(page)
+                      or not landed_adapter.find_pdf_url(page, ids.doi))
+        if unreadable:
+            result.note("landing_retry", url=target, final_url=landed,
+                        status=denial or "not_an_article_page", adapter=landed_adapter.name)
+            return None
+
+        result.note("landing_retry", url=target, final_url=landed, status="loaded",
+                    adapter=landed_adapter.name, pii=pii)
+        # Keep the page that was actually parsed, not the stub it replaced --
+        # landing.html is the only way to debug an adapter after the fact.
+        for item in result.files:
+            if item.role == ROLE_LANDING:
+                item.content, item.url = body, landed
+        return landed, body
 
     def _fetch_pdf(self, context, page, adapter, ids, referer, result, denial) -> None:
         pdf_url = adapter.find_pdf_url(page, ids.doi)

@@ -160,3 +160,134 @@ articles:
       sha256: 22b6d6cf5c5c2b72b493b17d4de6fcdf9bddeeec2ee5d277ffa718b4e7672a6e
   expect:
     supplementary_status: fetched_unverified
+- doi: 10.1016/j.cell.2021.04.038
+  slug: 10.1016_j.cell.2021.04.038
+  source_dir: j.cell.2021.04.038
+  main_pdf:
+    file: PIIS0092867421005730.pdf
+    bytes: 14542435
+    sha256: 653b481ec8a0e28f93fbb7e81bca1111903d2abc73284de40a009d8622fb96e7
+    pages: 35
+    version: published
+  supplements:
+  - file: mmc1.pdf
+    bytes: 638625
+    sha256: cedb0703cff9469236bc119eb3a7fc9b9315623ce14bd8a21a5b556294a8f10f
+    pages: 2
+  - file: mmc2.xls
+    bytes: 677376
+    sha256: b6940965d4114dcbc1a86ddc25f5ae4d8198a6f4bee333f9d4030f55c8f64dad
+  - file: mmc3.pdf
+    bytes: 696880
+    sha256: 8ebbb691f24ab55c34164a1b751a9115c7d5a83ef73ed079e3f3316bd8c0443f
+    pages: 1
+  - file: mmc4.xls
+    bytes: 50176
+    sha256: 822ab610645298ae177760a55db8ede0fe091d25f9947a7c19765ad21eb8a0c2
+  - file: mmc5.pdf
+    bytes: 652184
+    sha256: aed4665699788c782a3d6bcf8d9cd4724fcd55f495a592f76c2cc4d2cbbd3736
+    pages: 1
+  - file: mmc6.pdf
+    bytes: 460913
+    sha256: 572376cf2fabe6911d9a7fd64810181e58679caacd8a079f1ee37b772f45f216
+    pages: 1
+  expect:
+    supplementary_status: fetched_unverified
+- doi: 10.1016/j.ccell.2021.03.007
+  slug: 10.1016_j.ccell.2021.03.007
+  source_dir: j.ccell.2021.03.007
+  main_pdf:
+    file: PIIS1535610821001653.pdf
+    bytes: 8707965
+    sha256: eb3f9800548bc922999ab8ebbf968b34fdde9b2e1372019ab88c77bbe83e6fa3
+    pages: 23
+    version: published
+  supplements:
+  - file: mmc1.pdf
+    bytes: 2654765
+    sha256: 1d2be42280a8baf160482b99e16a3a1a35ca62b131db43adc6fd1901f9c2ff3c
+    pages: 21
+  - file: mmc2.xlsx
+    bytes: 1554376
+    sha256: 02b4a4a2f056f4fad168c24718635e372208b40e0f5c61102244b04b48249fbd
+  - file: mmc3.xlsx
+    bytes: 25001
+    sha256: 79ebdc254bd97576748903b9b34a9e82743dc4830120b6fe96ac0466a2629e47
+  - file: mmc4.xlsx
+    bytes: 17155
+    sha256: 955ed46c76dbf1b3634f7542bb79ce9d20fcbdb07d9abb3d2c23f4d93b5da685
+  - file: mmc5.xlsx
+    bytes: 13307
+    sha256: d544bb2c6188b4f016c47ceb87175705e880b8e3eaf2acf41233396bd745b03f
+  - file: mmc6.pdf
+    bytes: 11364489
+    sha256: b9835802ea848d1fa80546b7acae7b0914a396263baa3da5573f3ad842b946c7
+    pages: 44
+  expect:
+    supplementary_status: fetched_unverified
+- doi: 10.1126/sciimmunol.aba4163
+  slug: 10.1126_sciimmunol.aba4163
+  source_dir: sciimmunol.aba4163
+  main_pdf:
+    file: sciimmunol.aba4163.pdf
+    bytes: 6580301
+    sha256: 264f5387cdc5731a0e764c742767b94da6950fedc25619a79e5e636088a371aa
+    pages: 16
+    version: published
+  supplements:
+  - file: aba4163_data_file_s1.xlsx
+    bytes: 53431
+    sha256: 46631bfaca1b1c02e61d97404d66c16eba38054b2ea4b599c894a7fe93c68cd0
+  - file: aba4163_sm.pdf
+    bytes: 4975849
+    sha256: 0a26037563e2e4533ac7c504e31911c698f70d49d45d6febe7e616dde056249d
+    pages: 24
+  expect:
+    supplementary_status: fetched_unverified
+- doi: 10.1126/science.aat5031
+  slug: 10.1126_science.aat5031
+  source_dir: science.aat5031
+  main_pdf:
+    file: science.aat5031.pdf
+    bytes: 1049209
+    sha256: 505bd5bd306b0d8e79e8c117588ae0bf1f619dba415eaec845366e942525bc73
+    pages: 7
+    version: published
+  supplements:
+  - file: aat5031-stewart-sm.pdf
+    bytes: 40990059
+    sha256: f6714476f1b9cd88ebbf086fda3327dfee182f6056389093bd974bda465784bf
+    pages: 89
+  - file: aat5031_data_s1.csv
+    bytes: 5179313
+    sha256: c5182dd4ed509283a31df8c87408ee5f98546142e96b120919577cb1da3e3337
+  - file: aat5031_data_s10.csv
+    bytes: 5522
+    sha256: 2c55eaf5c969d49fe4d1adef8e3e2dc377896c5407884d2076c083f371e51bbd
+  - file: aat5031_data_s2.csv
+    bytes: 3464405
+    sha256: 8928723b778ce88ce45bdd863bd01e4dd75e0612a85ea9ca8138e3ae370b5d9a
+  - file: aat5031_data_s3.csv
+    bytes: 103893
+    sha256: e96f1903b4f6e400fc9f888d1700d81399828797203a3c1bceca68ebed02c2d6
+  - file: aat5031_data_s4.csv
+    bytes: 58369
+    sha256: c6cd85c1b6c3d400746edc442d5b86fc87277be9f17f176ffea4f002b08099c8
+  - file: aat5031_data_s5.csv
+    bytes: 145190
+    sha256: e5372c4a0237506df49bf25948a92b0390041a63c2e907583e6ed9ea7a6d4329
+  - file: aat5031_data_s6.csv
+    bytes: 140906
+    sha256: 72fbcf9ffe332ba9d7f04805b7c3733dc7c2813ac8b7627353e4d285adf92416
+  - file: aat5031_data_s7.csv
+    bytes: 87030
+    sha256: 824cf22302eaee0013bd4f2b9a28dc02a6897bd96f8e50ed6a8902865eb80617
+  - file: aat5031_data_s8.csv
+    bytes: 52733
+    sha256: 89d466b627fdba9bf2cd3d72cff1d37a76240f3990b3180a3eab6f78a7221bc5
+  - file: aat5031_data_s9.csv
+    bytes: 4059
+    sha256: b4f9c528d630853d286fc138b4a6ec551c526db886bdc922baa7415afa4d0258
+  expect:
+    supplementary_status: fetched_unverified
