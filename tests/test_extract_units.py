@@ -120,6 +120,51 @@ def test_a_heading_carries_its_section_over_what_follows():
     assert tracker.abandoned == [] and tracker.reason() is None
 
 
+def test_cell_press_star_methods_is_recognised_with_the_glyph():
+    """Cell Press publishes the heading as STAR★METHODS, with U+2605, in the XML as
+    well as the PDF. The alias allowed an ASCII asterisk, which is how the heading is
+    written *about* -- so the top-level Methods section of both Cell papers here went
+    unrecognised, leaving 69 and 51 main-text blocks unlabelled, the key resources
+    table among them."""
+    for heading in ("STAR★METHODS", "STAR★methods", "STAR ★ Methods",
+                    "STAR Methods", "STAR*Methods", "star methods"):
+        assert sections.normalize(heading) == sections.METHODS, heading
+
+
+def test_a_low_value_heading_only_claims_text_that_looks_like_its_content():
+    """10.1016/j.cell.2025.05.027, a PMC author manuscript: the REFERENCES heading on
+    page 31 carried 227 of 415 blocks to the end of the document, which in that
+    layout is the key resources table -- reagents and catalogue numbers labelled as
+    other people's bibliography. `references` is on LOW_VALUE, so a consumer that
+    skips it does not deprioritise that text, it drops it."""
+    tracker = sections.SectionTracker()
+    tracker.heading(sections.REFERENCES)
+    citation = "1. Wen L, Li G, Huang T, Geng W, Pei H (2022). Single-cell technologies."
+    assert tracker.carry(citation) == sections.REFERENCES
+    for row in ("Punch pliers Total Tools 9070220SB",
+                "micro-Slide 8-well cell culture chamber ibidi 80841",
+                "40 um strainer Cell Strainer PN 43-10040-40"):
+        assert tracker.carry(row) is None, row
+    assert tracker.withheld == 3
+    assert "low-value" in tracker.reason()
+    # The span stays open, so a citation after a stray line is still labelled: a
+    # reference list interrupted by a page artifact must not lose its tail.
+    assert tracker.carry("2. Smith J, Jones K (2020). Another paper. doi:10.1/x") \
+        == sections.REFERENCES
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("1. Wen L, Li G (2022). Single-cell technologies for multiomic analysis.", True),
+    ("12) Author A, Author B, et al. Nature Genetics.", True),
+    ("Smith and Jones (2019) reported similar results in mouse.", True),
+    ("Available at doi:10.1016/j.cell.2025.05.027", True),
+    ("Punch pliers Total Tools 9070220SB", False),
+    ("Chromium Next GEM Single Cell 3' Kit v3.1 10x Genomics PN-1000268", False),
+])
+def test_what_counts_as_a_citation(text, expected):
+    assert sections.looks_like_citation(text) is expected
+
+
 def test_an_unbounded_section_flows_as_far_as_the_paper_does():
     """Methods legitimately runs for pages through its own unrecognised
     subsection headings, and that is the behaviour that makes it attributable."""

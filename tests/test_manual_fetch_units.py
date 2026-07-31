@@ -149,6 +149,19 @@ def test_the_pii_rule_does_not_claim_an_ordinary_filename(tmp_path):
     assert len(supplements) == 2
 
 
+def test_the_pmc_author_manuscript_is_found_by_its_nihms_filename(tmp_path):
+    """A folder downloaded from PMC rather than the publisher: 10.1016/j.cell.2025.05.027
+    arrives as nihms-2117886.pdf with NIHMS2117886-supplement-* beside it. The third
+    naming convention to defeat the DOI rule, and silent in the same way."""
+    for name in ("nihms-2117886.pdf", "NIHMS2117886-supplement-2.pdf",
+                 "NIHMS2117886-supplement-Supp_1.pdf"):
+        (tmp_path / name).write_bytes(b"x")
+    main, supplements = manual_fetch.classify(tmp_path, "10.1016/j.cell.2025.05.027")
+    assert main.name == "nihms-2117886.pdf"
+    assert sorted(p.name for p in supplements) == [
+        "NIHMS2117886-supplement-2.pdf", "NIHMS2117886-supplement-Supp_1.pdf"]
+
+
 def test_an_mmc_file_is_never_promoted_to_the_article(tmp_path):
     """mmc12.pdf is the extended article and opens with the word "Article", but it
     is shipped as a supplementary component and a folder without the real PDF
@@ -352,6 +365,65 @@ def test_page_count_is_not_asserted_across_renditions(tmp_path):
     # Identity is still asserted: a rendition difference is not a licence to stop
     # checking that the file is the right paper.
     assert next(c for c in checks if c["check"] == "pdf_identity")["ok"] is True
+
+
+def test_page_count_is_asserted_when_both_copies_are_author_manuscripts(tmp_path):
+    """10.1016/j.cell.2025.05.027 is a PMC deposit on both sides: the human downloaded
+    nihms-2117886.pdf and fetch returned the same 49-page author manuscript. Two
+    author manuscripts are as comparable as two typeset articles, so declining to
+    assert here threw away a check that was available -- 49pp against 49pp was
+    reported as a note."""
+    article = {
+        "doi": DOI, "source_dir": "Science",
+        "main_pdf": {"file": "a.pdf", "pages": 2, "version": manual_fetch.AUTHOR_MANUSCRIPT},
+        "supplements": [],
+    }
+    pdf = make_pdf_pages([
+        [f"HHS Public Access Author manuscript Published in final edited form as: {DOI}"],
+        ["Abstract Understanding the anatomical distribution of immune cells"],
+    ])
+    directory = _article_dir(tmp_path, pdf=pdf)
+    checks = manual_fetch.compare(article, _record(), directory, root=_manual_root(tmp_path))
+    pages = next(c for c in checks if c["check"] == "pdf_pages")
+    assert pages["ok"] is True
+    assert manual_fetch.AUTHOR_MANUSCRIPT in pages["detail"]
+
+
+def test_a_rendition_mismatch_is_still_only_reported(tmp_path):
+    """The other direction: the human has the publisher's copy, fetch returned the
+    PMC one. Same paper, different pagination, nothing to assert."""
+    article = {
+        "doi": DOI, "source_dir": "Science",
+        "main_pdf": {"file": "a.pdf", "pages": 7, "version": manual_fetch.PUBLISHED},
+        "supplements": [],
+    }
+    pdf = make_pdf_pages([[f"HHS Public Access Published in final edited form as: {DOI}"],
+                          ["Abstract text here"]])
+    directory = _article_dir(tmp_path, pdf=pdf)
+    checks = manual_fetch.compare(article, _record(), directory, root=_manual_root(tmp_path))
+    pages = next(c for c in checks if c["check"] == "pdf_pages")
+    assert pages["ok"] is None
+    assert manual_fetch.PUBLISHED in pages["detail"]
+    assert manual_fetch.AUTHOR_MANUSCRIPT in pages["detail"]
+
+
+def test_bootstrap_reads_the_rendition_off_the_file(tmp_path):
+    """A spec that called a PMC deposit the published version would quietly stop
+    comparing page counts, so the version is detected rather than assumed."""
+    folder = tmp_path / "PMC"
+    folder.mkdir()
+    (folder / "nihms-2117886.pdf").write_bytes(make_pdf_pages([
+        [f"HHS Public Access Author manuscript Published in final edited form as: {DOI}"]]))
+    entry = manual_fetch.build_article(DOI, folder, "PMC")
+    assert entry["main_pdf"]["version"] == manual_fetch.AUTHOR_MANUSCRIPT
+
+    # A typeset article carries no such cover sheet, so it reads as published.
+    other = tmp_path / "Publisher"
+    other.mkdir()
+    (other / "science.adt8307.pdf").write_bytes(
+        make_pdf(pages=2, text=f"Research article {DOI} aging"))
+    assert manual_fetch.build_article(DOI, other, "Publisher")["main_pdf"]["version"] \
+        == manual_fetch.PUBLISHED
 
 
 def test_page_count_is_still_asserted_for_the_publisher_rendition(tmp_path):

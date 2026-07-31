@@ -207,7 +207,8 @@ class FileResult:
                     "members_total", "members_read", "member_extensions", "errors",
                     "blocks_capped", "delimiter", "read_as", "text_runs",
                     "glued_headings_split", "truncated_paragraphs",
-                    "sections", "sections_abandoned"):
+                    "sections", "sections_abandoned",
+                    "low_value_blocks_withheld"):
             if key in self.meta:
                 record[key] = self.meta[key]
         return record

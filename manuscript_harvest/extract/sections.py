@@ -36,20 +36,38 @@ REFERENCES = "references"
 
 # Sections whose text is rarely worth sending to a model: it is either other
 # people's findings or machine-readable bookkeeping.
+#
+# Membership here makes a *wrong* label expensive in a way it is nowhere else: a
+# consumer that skips low-value sections does not merely deprioritise this text, it
+# drops it. So `SectionTracker` will only carry one of these onto a block that
+# looks like the section's own content.
 LOW_VALUE = frozenset({REFERENCES})
+
+# The star in Cell Press's "STAR★METHODS". Written with the glyph rather than an
+# ASCII asterisk in both the XML and the PDF, and the alias below has to match what
+# publishers ship. A small set, because the glyph varies between journals.
+_STAR = r"[*★☆✪✩]"
 
 # Ordered: the first pattern that matches a heading wins, so specific phrases
 # ("results and discussion", "online methods") must precede the generic word.
 _ALIASES: List[Tuple[str, str]] = [
     (ABSTRACT, r"abstract|summary|graphical\s+abstract|one[-\s]sentence\s+summary"),
     (INTRODUCTION, r"introduction|background"),
+    # `_STAR` and not a bare `\*`: Cell Press publishes the heading as
+    # "STAR★METHODS" with U+2605 BLACK STAR, in the XML as well as the PDF, so the
+    # ASCII asterisk this pattern used to allow matched the way the heading is
+    # written about and not the way it is written. Measured on
+    # 10.1016/j.cell.2025.05.027 and 10.1016/j.cell.2021.01.053: the top-level
+    # Methods section of both went unrecognised, leaving 69 and 51 main-text blocks
+    # unlabelled -- and in a STAR Methods paper the key resources table, which is
+    # where the library kit and every antibody are written down, sits under it.
     (METHODS, r"(?:online|extended|supplementar\w+|detailed|expanded)?\s*"
-              r"(?:star\s*\*?\s*)?(?:materials?\s+and\s+)?methods?"
+              r"(?:star\s*" + _STAR + r"?\s*)?(?:materials?\s+and\s+)?methods?"
               r"|methods?\s+and\s+materials?"
               r"|experimental\s+(?:procedures?|methods?|design|model)"
               r"|materials?\s+and\s+methods?"
               r"|method\s+details?"
-              r"|star\s*\*?\s*methods?"),
+              r"|star\s*" + _STAR + r"?\s*methods?"),
     (RESULTS, r"results?\s+and\s+discussion|results?|findings"),
     (DISCUSSION, r"discussion"),
     (CONCLUSIONS, r"conclusions?|concluding\s+remarks"),
@@ -191,6 +209,27 @@ def split_leading_heading(text: str) -> Optional[Tuple[str, str, str]]:
 # 10.1038/s41588-025-02433-6), so it is deliberately not in this set.
 BOUNDED_SECTIONS = frozenset({ABSTRACT, CONCLUSIONS, DATA_AVAILABILITY})
 
+# What a reference-list entry looks like: numbered, or carrying a year in
+# parentheses, or an "et al.", or a DOI. Any one is enough, and none of them
+# appears in a row of a key resources table.
+_CITATION = re.compile(
+    r"^\s*\d{1,4}\s*[.)]\s+\S"
+    r"|\(\d{4}[a-z]?\)"
+    r"|\bet\s+al\b"
+    r"|\bdoi\s*:|doi\.org/",
+    re.IGNORECASE,
+)
+
+
+def looks_like_citation(text: str) -> bool:
+    """Is this block plausibly an entry in a reference list?
+
+    Used only to decide whether a `references` heading is still describing what
+    follows -- see `SectionTracker.carry`.
+    """
+    return bool(_CITATION.search(text))
+
+
 MAX_BOUNDED_SECTION_CHARS = 6000
 """How far a `BOUNDED_SECTIONS` heading may carry before it is abandoned.
 
@@ -229,6 +268,22 @@ class SectionTracker:
     abandonment recorded. `abandoned` is what the caller reports. An unbounded
     section still flows through its own unrecognised subsection headings, which is
     the behaviour that makes Methods attributable at all.
+
+    A `LOW_VALUE` section is handled differently again, because being wrong about
+    one costs more. Measured on 10.1016/j.cell.2025.05.027, a PMC author manuscript:
+    the `REFERENCES` heading on page 31 carried 227 of 415 blocks to the end of the
+    document, which in that layout is the **key resources table** --
+
+        Punch pliers Total Tools 9070220SB
+        micro-Slide 8-well cell culture chamber ibidi 80841
+        40 um strainer Cell Strainer PN 43-10040-40
+
+    -- the reagents, kits and antibodies this pipeline exists to find, labelled as
+    other people's bibliography. A consumer that skips low-value sections does not
+    deprioritise that text, it drops it. A character budget is the wrong instrument
+    (a real reference list is legitimately enormous), so these sections are carried
+    only onto blocks that look like their own content, and the span stays open so a
+    genuine citation after a stray line is still labelled.
     """
 
     def __init__(self, max_bounded_chars: int = MAX_BOUNDED_SECTION_CHARS):
@@ -238,6 +293,8 @@ class SectionTracker:
         """Canonical names met, in document order, deduplicated."""
         self.abandoned: List[str] = []
         """Bounded sections that ran too long to keep claiming."""
+        self.withheld = 0
+        """Blocks under a LOW_VALUE heading that did not look like its content."""
         self._carried = 0
 
     def heading(self, name: str) -> Optional[str]:
@@ -255,7 +312,16 @@ class SectionTracker:
         not: an abstract a few hundred characters over is still an abstract, and
         cutting mid-run would be a third answer that is right about neither.
         """
-        if self.current is None or self.current not in BOUNDED_SECTIONS:
+        if self.current is None:
+            return None
+        if self.current in LOW_VALUE:
+            # Positive evidence per block, not a budget. The span stays open, so a
+            # citation following a stray line is still labelled.
+            if looks_like_citation(text):
+                return self.current
+            self.withheld += 1
+            return None
+        if self.current not in BOUNDED_SECTIONS:
             return self.current
         if self._carried > self.max_bounded_chars:
             if self.current not in self.abandoned:
@@ -266,10 +332,16 @@ class SectionTracker:
         return self.current
 
     def reason(self) -> Optional[str]:
-        """One line for the extraction record, or None if nothing was abandoned."""
-        if not self.abandoned:
-            return None
-        return (f"section labelling stopped inside {', '.join(self.abandoned)}: more than "
+        """One line for the extraction record, or None if there is nothing to report."""
+        parts = []
+        if self.abandoned:
+            parts.append(
+                f"section labelling stopped inside {', '.join(self.abandoned)}: more than "
                 f"{self.max_bounded_chars} characters ran under a heading that names a "
                 f"statement, so the blocks after it are left unlabelled rather than "
                 f"attributed to it")
+        if self.withheld:
+            parts.append(
+                f"{self.withheld} block(s) under a low-value heading did not look like "
+                f"its content and were left unlabelled rather than dropped with it")
+        return "; ".join(parts) or None

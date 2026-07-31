@@ -641,15 +641,37 @@ run on every commit.
 
       python -m manuscript_harvest.extract.section_audit --corpus-dir corpus
 
-  Over the two open-access papers in this corpus, **179 of 198 alignable
-  paragraphs agree (90.4%)**. The two fail in different directions, which is the
-  useful part. On `10.1038/s41467-023-40505-5` Methods scores precision 1.00 and
-  recall 0.98 and nearly every error is an *omission* — six Introduction
-  paragraphs left `null` — which is the safe failure. On
-  `10.1016/j.cell.2021.01.053` Methods scores precision 0.50 on 10 labelled
-  paragraphs: the heuristic over-applies it, which is the unsafe failure. Both
-  samples are small (125 and 73 aligned paragraphs), so treat them as a baseline
-  to improve against rather than a published figure.
+  Over the three open-access papers here, **309 of 337 alignable paragraphs agree
+  (91.7%)**, and Methods — the label worth most — scores precision 1.00, 1.00 and
+  0.88. On `10.1016/j.cell.2025.05.027` every remaining error is an *omission*, a
+  paragraph left `null`, which is the safe failure; the samples are small (125, 114
+  and 98 aligned paragraphs), so treat them as a baseline to improve against rather
+  than a published figure.
+
+  The audit paid for itself twice on its first run. It found `references` labelled
+  over five paragraphs of Methods and Results, which led to the low-value rule
+  above; and `methods` at precision 0.50 on a Cell paper, which led to the
+  `STAR★METHODS` glyph. Fixing those moved the same two papers from 90.0% and 87.7%
+  to 93.0% and 89.8%, and Methods on the Cell paper from 0.50 to 0.88.
+- **A Cell Press heading is published with a star glyph, not an asterisk.**
+  `STAR★METHODS` (U+2605) is what appears in both the XML and the PDF, and the
+  alias matched only the ASCII `STAR*Methods` that people type when writing *about*
+  it. Both Cell papers here had their whole top-level Methods section go
+  unrecognised, leaving 69 and 51 main-text blocks unlabelled — and in a STAR
+  Methods paper the key resources table, where the library kit and every antibody
+  are written down, sits under that heading. Recognising the glyph took Methods
+  from 29 to 91 blocks on `10.1016/j.cell.2025.05.027` and from 9 to 52 on
+  `10.1016/j.cell.2021.01.053`.
+- **A low-value heading only claims text that looks like its own content.** Being
+  in `sections.LOW_VALUE` makes a wrong label expensive in a way it is nowhere
+  else: a consumer that skips those sections does not deprioritise the text, it
+  drops it. On `10.1016/j.cell.2025.05.027`, a PMC author manuscript, the
+  `REFERENCES` heading on page 31 carried 227 of 415 blocks to the end of the
+  document — which in that layout is the key resources table, so `Punch pliers
+  Total Tools 9070220SB` was filed as somebody's bibliography. A character budget
+  is the wrong instrument, since a real reference list is legitimately enormous, so
+  `references` is now carried only onto blocks that look like citations, with the
+  count of withheld blocks in the extraction record.
 
 ## License
 
