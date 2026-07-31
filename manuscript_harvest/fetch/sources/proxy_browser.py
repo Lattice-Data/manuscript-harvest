@@ -84,6 +84,17 @@ def denial_problem(denial: str, url: str) -> str:
     return line
 
 
+def _pdf_rejected(url: str, status: str, meta: dict) -> str:
+    """Why a downloaded PDF was not kept, in one line.
+
+    The byte count is the useful part: `paywalled` at 4 KB is a stub page, the same
+    status at 900 KB means the heuristics matched an article they should not have.
+    """
+    size = meta.get("bytes")
+    measured = f", {size} bytes" if size is not None else ""
+    return f"PDF at {url} rejected as '{status}'{measured}"
+
+
 def pii_from(url: str) -> Optional[str]:
     """The Elsevier PII in a URL, or None."""
     found = PII_RX.search(url or "")
@@ -846,10 +857,24 @@ class ProxyBrowserSource(Source):
         return landed, body
 
     def _fetch_pdf(self, context, page, adapter, ids, referer, result, denial) -> None:
+        """Fetch the article PDF.
+
+        Every failure here appends to `result.problems`, not only to `attempts`.
+        `attempts` reaches `manifest.json`; `problems` is what `cli._report` prints,
+        and a batch summary line of `pdf=download_failed` with nothing after it sent a
+        user to open manifests by hand to find out that ScienceDirect answered 403.
+        The three hard denials (`proxy_not_configured`, `session_expired`,
+        `link_resolver_error`) are reported by `_publisher_page` and return before
+        reaching this method, so nothing below double-reports them.
+        """
         pdf_url = adapter.find_pdf_url(page, ids.doi)
         if not pdf_url:
             result.pdf_status = denial or "not_found"
             result.note("pdf", status="no_pdf_link", adapter=adapter.name, denial=denial)
+            result.problems.append(
+                denial_problem(denial, referer) if denial else
+                f"no PDF link found on {referer} (adapter={adapter.name})"
+            )
             return
 
         try:
@@ -860,6 +885,9 @@ class ProxyBrowserSource(Source):
             result.pdf_status = "download_failed"
             result.note("pdf", url=pdf_url, status="download_failed",
                         error=f"{type(e).__name__}: {e}")
+            result.problems.append(
+                f"PDF download failed at {pdf_url}: {type(e).__name__}: {e}"
+            )
             return
 
         if status_code >= 400:
@@ -872,6 +900,10 @@ class ProxyBrowserSource(Source):
                 result.pdf_status = "download_failed"
                 result.note("pdf", url=pdf_url, status="download_failed",
                             http_status=status_code, fallback=why)
+                result.problems.append(
+                    f"PDF download failed at {pdf_url}: HTTP {status_code}, and a page "
+                    f"navigation did not help either ({why})"
+                )
                 return
             content_type = ""
             accepted, status, meta = validate_pdf(content, url=pdf_url)
@@ -882,6 +914,8 @@ class ProxyBrowserSource(Source):
                     FetchedFile(role=ROLE_PDF, name="fulltext.pdf", content=content,
                                 url=pdf_url, content_type=content_type)
                 )
+            else:
+                result.problems.append(_pdf_rejected(pdf_url, status, meta))
             return
 
         content_type = (headers.get("content-type") or "").split(";")[0].strip().lower()
@@ -893,6 +927,8 @@ class ProxyBrowserSource(Source):
                 FetchedFile(role=ROLE_PDF, name="fulltext.pdf", content=content,
                             url=pdf_url, content_type=content_type)
             )
+        else:
+            result.problems.append(_pdf_rejected(pdf_url, status, meta))
 
     # -- shared download helpers -------------------------------------------
 
