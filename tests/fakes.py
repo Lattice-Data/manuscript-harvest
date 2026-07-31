@@ -129,6 +129,28 @@ def make_strict_xlsx(sheets) -> bytes:
     return buffer.getvalue()
 
 
+def make_zero_sheet_xlsx() -> bytes:
+    """A workbook whose ordinary-namespace `workbook.xml` lists no sheets.
+
+    openpyxl cannot *save* a sheetless workbook ("At least one sheet must be
+    visible"), so this rewrites a normal one. The point is the pairing: openpyxl
+    reads zero worksheets, exactly as it does for a strict ISO-29500 file, but
+    `ooxml.relax_strict` returns None because the namespaces were never strict. That
+    is the one case where zero sheets is the file's own answer rather than an
+    openpyxl limitation.
+    """
+    source = zipfile.ZipFile(io.BytesIO(make_xlsx({"S": [["a"]]})))
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as target:
+        for info in source.infolist():
+            content = source.read(info)
+            if info.filename == "xl/workbook.xml":
+                content = re.sub(rb"<sheets>.*?</sheets>", b"<sheets/>", content, flags=re.S)
+            target.writestr(info.filename, content)
+    source.close()
+    return buffer.getvalue()
+
+
 def make_dimensionless_xlsx(sheets) -> bytes:
     """A workbook whose sheets declare no dimensions.
 
@@ -539,11 +561,52 @@ class FakeHttp:
                                 content_type=content_type)
         return Response(url=url, status=404, content=b"", content_type="")
 
-    def resolve_redirect(self, url):
-        return url
-
     def called_matching(self, fragment: str) -> int:
         return sum(1 for url in self.calls if fragment in url)
+
+
+# -- fake requests.Session ---------------------------------------------------
+#
+# `FakeHttp` above replaces `Http` wholesale, which is what the sources want. These
+# two go one level lower and replace only the `requests.Session` inside a real
+# `Http`, so the retry loop, the byte cap and the header handling are the code
+# under test rather than assumptions baked into a stand-in.
+
+class FakeRequestsResponse:
+    """The slice of `requests.Response` that `Http.get` reads."""
+
+    def __init__(self, status_code: int = 200, content: bytes = b"", headers=None,
+                 url: str = "https://example.org/final"):
+        self.status_code = status_code
+        self.content = content
+        self.headers = headers or {}
+        self.url = url
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
+class FakeSession:
+    """Replays a queued sequence of responses; a queued Exception is raised.
+
+    Running out of queued responses is deliberately an error rather than a default
+    200: a retry test that stops retrying early would otherwise pass silently.
+    """
+
+    def __init__(self, *responses):
+        self.headers: Dict[str, str] = {}
+        self.queue = list(responses)
+        self.calls: List[dict] = []
+
+    def get(self, url, **kwargs):
+        if not self.queue:
+            raise AssertionError(f"unexpected request to {url}: no responses left")
+        self.calls.append({"url": url, **kwargs})
+        item = self.queue.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
 
 
 # -- fake browser ------------------------------------------------------------
@@ -598,9 +661,13 @@ class FakePage:
 
     def __init__(self, url="https://www.nature.com/articles/x", metas=None, links=None,
                  title="An article", content=b"<html></html>", goto_error=None,
-                 load_state_error=None):
+                 load_state_error=None, attributes=None):
         self.url = url
         self.metas = metas or {}
+        #: Non-meta selectors, matched by substring: `{"download pdf": "https://..."}`.
+        #: Adapters fall back to CSS selectors when no `citation_pdf_url` exists, and
+        #: without this the fake could only ever exercise the raising path.
+        self.attributes = attributes or {}
         self.links = links or []
         self._title = title
         self._content = content
@@ -640,6 +707,12 @@ class FakePage:
         for name, value in self.metas.items():
             if f'name="{name}"' in selector:
                 return value
+        for fragment, value in self.attributes.items():
+            if fragment in selector:
+                return value
+        # Playwright raises on a selector that matches nothing; every adapter wraps
+        # these calls in try/except, and a fake returning None instead would let a
+        # missing `except` through.
         raise RuntimeError(f"no element for {selector}")
 
     def eval_on_selector_all(self, selector, script):

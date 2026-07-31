@@ -132,7 +132,7 @@ def save_file(directory, relative_path: str, content: bytes) -> dict:
     }
 
 
-def new_record(ids, corpus_dir) -> dict:
+def new_record(ids) -> dict:
     """Start a manifest for one article."""
     return {
         "doi": ids.doi,
@@ -157,8 +157,8 @@ def new_record(ids, corpus_dir) -> dict:
 #: scrape the same page and reach the same answer. Leaving it out would make
 #: every batch re-download every browser-tier article forever and thrash against
 #: the size budget -- the same trap `evicted` exists to avoid in
-#: `manifest_is_complete`. This is the one definition; `fetcher._SETTLED_SUPPL`
-#: derives from it so the two cannot drift apart.
+#: `manifest_is_complete`. This is the only definition; read it from here rather
+#: than restating the set, so the two cannot drift apart.
 SUPPL_SETTLED = {"none_listed", "fetched", "fetched_unverified"}
 
 

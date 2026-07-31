@@ -53,17 +53,6 @@ _NAMESPACES = [
 _XML_SUFFIXES = (".xml", ".rels")
 
 
-def looks_strict(data: bytes) -> bool:
-    """Cheap pre-check: does the package mention the strict namespace at all?
-
-    A zip stores member names uncompressed in its central directory but not
-    member content, so this only catches the marker if it happens to sit in an
-    uncompressed region. It is used as a hint, never as the decision -- the real
-    test is whether relaxing the namespaces produces sheets.
-    """
-    return STRICT_MARKER in data[:4096] or STRICT_MARKER in data[-4096:]
-
-
 def relax_strict(data: bytes) -> Optional[bytes]:
     """Return the package with transitional namespaces, or None if not applicable.
 

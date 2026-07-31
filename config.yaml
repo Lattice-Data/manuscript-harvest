@@ -53,7 +53,11 @@ fetch:
     headless: true
     channel: "chrome"                     # real Chrome clears bot checks bundled Chromium does not
     nav_timeout_seconds: 60
-    download_timeout_seconds: 20
+    # How long a page may keep navigating before the tier gives up on it. Both
+    # exist because an expired session never stops navigating: unbounded, one
+    # dead-session fetch took 7.5 minutes to say so.
+    settle_deadline_seconds: 20
+    content_deadline_seconds: 12
     check_url: "https://www.nature.com/articles/s41586-026-10510-x"
 
 # Extraction stage: corpus files -> blocks of text with provenance.

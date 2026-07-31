@@ -61,8 +61,6 @@ _PDF_SUCCESS = {"ok", "scanned_pdf_suspected"}
 _PDF_DIAGNOSES = ["paywalled", "session_expired", "proxy_not_configured",
                   "publisher_stub_page", "link_resolver_error"]
 
-_SETTLED_SUPPL = store.SUPPL_SETTLED | {"not_requested"}
-
 
 def _best_pdf_status(reported: List[str]) -> str:
     """Pick the most useful explanation from the statuses each tier reported.
@@ -184,7 +182,7 @@ def fetch_publication(
     needs_landing = "proxy_browser" in tier_names
     ids = resolve_identifiers(normalized, http, need_landing_url=needs_landing)
 
-    record = store.new_record(ids, corpus_dir)
+    record = store.new_record(ids)
     record["_directory"] = str(directory)
     record["tiers_configured"] = tier_names
 
@@ -323,11 +321,3 @@ def _write_group(directory, subdir: str, files: List) -> List[dict]:
         })
         entries.append(entry)
     return entries
-
-
-def is_settled(record: dict) -> bool:
-    """True when a record needs no further tiers."""
-    return (
-        (record.get("fulltext") or {}).get("status") in _PDF_SUCCESS
-        and record.get("supplementary_status") in _SETTLED_SUPPL
-    )

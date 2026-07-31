@@ -109,7 +109,7 @@ def looks_like_pdf(content: bytes) -> bool:
     return content.lstrip()[:8].startswith(_PDF_MAGIC)
 
 
-def classify_denial(url: str, content: bytes, content_type: str = "") -> Optional[str]:
+def classify_denial(url: str, content: bytes) -> Optional[str]:
     """Name the refusal if these bytes are an access-denied page, else None.
 
     Returns one of `proxy_not_configured`, `session_expired`, `paywalled`,
@@ -157,7 +157,7 @@ def validate_pdf(
     if not looks_like_pdf(content):
         # Not a PDF at all. If it is a recognisable refusal, say which one --
         # "paywalled" is far more actionable than "not_a_pdf".
-        denial = classify_denial(url, content, content_type)
+        denial = classify_denial(url, content)
         return False, denial or "not_a_pdf", meta
 
     try:

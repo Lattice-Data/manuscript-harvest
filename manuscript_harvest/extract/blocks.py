@@ -34,8 +34,6 @@ CAPTION = "caption"
 TABLE = "table"
 METADATA = "metadata"
 
-KINDS = (HEADING, PARAGRAPH, CAPTION, TABLE, METADATA)
-
 # -- roles -------------------------------------------------------------------
 MAIN_TEXT = "main_text"
 SUPPLEMENT = "supplement"
@@ -115,10 +113,6 @@ def read_blocks(path) -> Iterator[dict]:
                 yield json.loads(line)
             except ValueError:
                 continue
-
-
-def total_chars(blocks: List[Block]) -> int:
-    return sum(len(b.text) for b in blocks)
 
 
 def render_markdown(blocks: List[Block]) -> str:

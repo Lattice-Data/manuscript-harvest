@@ -1,4 +1,9 @@
-"""The fetch CLI's handling of a missing proxy login.
+"""The fetch CLI: the missing-proxy-login story, and what each command writes.
+
+The first half of this file is about one incident (below). The second half covers
+the plumbing every command shares -- input parsing, the stdout/stderr split, exit
+codes, and the `usage`/`prune`/`check`/`login` commands -- which had no coverage at
+all and is the layer a script wraps.
 
 Every test here pins a behaviour that was absent when a user ran
 
@@ -11,10 +16,12 @@ close -- once per DOI, for fifty-three DOIs, while the flag they had reached for
 broken; nothing said what to do either.
 """
 
+import json
+
 import pytest
 import yaml
 
-from manuscript_harvest.fetch import cli
+from manuscript_harvest.fetch import cli, store
 
 
 def _config_file(tmp_path, **fetch_overrides):
@@ -198,3 +205,332 @@ def test_both_fetch_commands_carry_the_warning(command, tmp_path, monkeypatch, c
     else:
         _run_batch(monkeypatch, _args(tmp_path, 1, config=config), [(True, True)])
     assert "manuscript-fetch login" in capsys.readouterr().err
+
+
+# -- input parsing -----------------------------------------------------------
+
+def test_a_dois_file_may_carry_comments_and_blank_lines(tmp_path, monkeypatch, capsys):
+    """The format nothing documents but everyone assumes: `#` starts a comment, and
+    an unreadable line is reported and skipped rather than aborting the batch."""
+    path = tmp_path / "papers.txt"
+    path.write_text(
+        "# a batch of papers\n"
+        "10.1038/s41586-020-00001-1\n"
+        "\n"
+        "   https://doi.org/10.1038/s41586-020-00002-1   # with a trailing note\n"
+        "not a doi at all\n"
+    )
+    args = cli.build_parser().parse_args(
+        ["--config", str(_config_file(tmp_path)), "batch", str(path), "--oa-only"])
+
+    fetched = []
+
+    def fake_fetch(doi, *_a, **_k):
+        fetched.append(doi)
+        return _record(doi, proxy_tried=False, expired=False)
+
+    monkeypatch.setattr(cli, "fetch_publication", fake_fetch)
+    assert cli.cmd_batch(args) == 0
+    assert fetched == ["10.1038/s41586-020-00001-1", "10.1038/s41586-020-00002-1"]
+    assert "skipping unparseable line: 'not a doi at all'" in capsys.readouterr().err
+
+
+def test_a_file_with_no_usable_dois_exits_two_without_fetching(tmp_path, monkeypatch, capsys):
+    path = tmp_path / "papers.txt"
+    path.write_text("# nothing but comments\n\n")
+    args = cli.build_parser().parse_args(
+        ["--config", str(_config_file(tmp_path)), "batch", str(path), "--oa-only"])
+
+    monkeypatch.setattr(cli, "fetch_publication",
+                        lambda *a, **k: pytest.fail("must not fetch"))
+    assert cli.cmd_batch(args) == 2
+    assert "no DOIs found in input" in capsys.readouterr().err
+
+
+# -- what the commands write -------------------------------------------------
+
+def test_get_prints_the_directory_on_stdout_and_the_summary_on_stderr(tmp_path, monkeypatch,
+                                                                     capsys):
+    """The split that makes `DIR=$(manuscript-fetch get ...)` work: the path is the
+    only thing on stdout, so a shell can capture it without parsing prose."""
+    args = cli.build_parser().parse_args(
+        ["--config", str(_config_file(tmp_path)), "get", "10.1038/s41586-020-00001-1",
+         "--oa-only"])
+    record = _record("10.1038/s41586-020-00001-1", proxy_tried=False, expired=False)
+    record["_directory"] = str(tmp_path / "corpus" / "10.1038_s41586-020-00001-1")
+    monkeypatch.setattr(cli, "fetch_publication", lambda *a, **k: record)
+
+    assert cli.cmd_get(args) == 0
+    captured = capsys.readouterr()
+    assert captured.out.strip() == record["_directory"]
+    assert "10.1038/s41586-020-00001-1" in captured.err
+
+
+def test_get_json_omits_the_private_directory_key(tmp_path, monkeypatch):
+    """`_directory` is how the CLI finds the article on disk; it is not part of the
+    manifest and must not leak into a file another tool reads."""
+    out = tmp_path / "record.json"
+    args = cli.build_parser().parse_args(
+        ["--config", str(_config_file(tmp_path)), "get", "10.1038/s41586-020-00001-1",
+         "--oa-only", "--json", str(out)])
+    record = _record("10.1038/s41586-020-00001-1", proxy_tried=False, expired=False)
+    record["_directory"] = str(tmp_path / "somewhere")
+    monkeypatch.setattr(cli, "fetch_publication", lambda *a, **k: record)
+    cli.cmd_get(args)
+
+    written = json.loads(out.read_text())
+    assert "_directory" not in written
+    assert written["doi"] == "10.1038/s41586-020-00001-1"
+
+
+def test_a_cached_result_says_which_flag_re_fetches_it(tmp_path, monkeypatch, capsys):
+    args = cli.build_parser().parse_args(
+        ["--config", str(_config_file(tmp_path)), "get", "10.1038/s41586-020-00001-1",
+         "--oa-only"])
+    record = _record("10.1038/s41586-020-00001-1", proxy_tried=False, expired=False)
+    record["cached"] = True
+    record["problems"] = ["supplement 3 was truncated"]
+    monkeypatch.setattr(cli, "fetch_publication", lambda *a, **k: record)
+    cli.cmd_get(args)
+
+    err = capsys.readouterr().err
+    assert "! supplement 3 was truncated" in err
+    assert "use --force to re-fetch" in err
+
+
+def test_the_batch_report_is_one_json_object_per_line(tmp_path, monkeypatch):
+    """JSONL, not a JSON array: a 500-DOI run should be streamable and greppable,
+    and a crash mid-batch should still leave a readable file."""
+    report = tmp_path / "run.jsonl"
+    args = _args(tmp_path, 3, extra=["--oa-only", "--report", str(report)])
+    monkeypatch.setattr(cli, "fetch_publication",
+                        lambda doi, *a, **k: _record(doi, proxy_tried=False, expired=False))
+    cli.cmd_batch(args)
+
+    lines = report.read_text().strip().splitlines()
+    assert len(lines) == 3
+    assert all("_directory" not in json.loads(line) for line in lines)
+    assert json.loads(lines[0])["doi"].startswith("10.1038/")
+
+
+def test_batch_exits_nonzero_unless_every_article_is_complete(tmp_path, monkeypatch, capsys):
+    args = _args(tmp_path, 3, extra=["--oa-only"])
+    statuses = iter(["complete", "partial", "complete"])
+    monkeypatch.setattr(cli, "fetch_publication", lambda doi, *a, **k: dict(
+        _record(doi, proxy_tried=False, expired=False), status=next(statuses)))
+
+    assert cli.cmd_batch(args) == 1
+    assert "complete=2  partial=1" in capsys.readouterr().err
+
+
+# -- CLI overrides -----------------------------------------------------------
+
+def test_tiers_and_corpus_dir_override_the_config_file(tmp_path):
+    config = _config_file(tmp_path, corpus_dir="from-config", tiers=["europepmc"])
+    args = cli.build_parser().parse_args(
+        ["--config", str(config), "get", "10.1/x",
+         "--corpus-dir", "from-flag", "--tiers", "pmc_oa, biorxiv ,"])
+    merged = cli._apply_cli_overrides(cli.load_config(config), args)
+
+    assert merged["fetch"]["corpus_dir"] == "from-flag"
+    assert merged["fetch"]["tiers"] == ["pmc_oa", "biorxiv"], "whitespace and blanks dropped"
+
+
+def test_oa_only_replaces_the_tier_list_entirely():
+    """The promise is that no browser opens, so it cannot be an additive filter."""
+    args = cli.build_parser().parse_args(["get", "10.1/x", "--oa-only", "--tiers", "proxy_browser"])
+    merged = cli._apply_cli_overrides(cli.load_config("nonexistent.yaml"), args)
+    assert merged["fetch"]["tiers"] == list(cli.OA_TIERS)
+    assert "proxy_browser" not in merged["fetch"]["tiers"]
+
+
+def test_no_proxy_and_headed_reach_the_nested_config():
+    args = cli.build_parser().parse_args(["get", "10.1/x", "--no-proxy", "--headed"])
+    merged = cli._apply_cli_overrides(cli.load_config("nonexistent.yaml"), args)
+    assert merged["fetch"]["proxy"]["enabled"] is False
+    assert merged["fetch"]["browser"]["headless"] is False
+
+
+# -- usage and prune ---------------------------------------------------------
+
+def _article(corpus, slug, size, *, status="complete", fetched_at="2026-01-01T00:00:00Z"):
+    directory = corpus / slug
+    directory.mkdir(parents=True)
+    (directory / "fulltext.pdf").write_bytes(b"x" * size)
+    store.write_manifest(directory, {"doi": slug.replace("_", "/"), "status": status,
+                                     "fetched_at": fetched_at,
+                                     "fulltext": {"path": "fulltext.pdf"}, "supplementary": []})
+    return directory
+
+
+def _usage_args(tmp_path, corpus, extra=()):
+    return cli.build_parser().parse_args(
+        ["--config", str(_config_file(tmp_path)), "usage", "--corpus-dir", str(corpus), *extra])
+
+
+def test_usage_on_an_empty_corpus_is_not_an_error(tmp_path, capsys):
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    assert cli.cmd_usage(_usage_args(tmp_path, corpus)) == 0
+    assert "empty" in capsys.readouterr().err
+
+
+def test_usage_is_oldest_first_by_default_and_largest_first_with_by_size(tmp_path, capsys):
+    """Oldest-first is the default because that is the order `prune` evicts in, so
+    the listing doubles as a preview of what would go."""
+    corpus = tmp_path / "corpus"
+    _article(corpus, "10.1_small-old", 100, fetched_at="2020-01-01T00:00:00Z")
+    _article(corpus, "10.1_big-new", 9000, fetched_at="2026-01-01T00:00:00Z")
+
+    cli.cmd_usage(_usage_args(tmp_path, corpus))
+    oldest_first = capsys.readouterr().out
+    cli.cmd_usage(_usage_args(tmp_path, corpus, ["--by-size"]))
+    biggest_first = capsys.readouterr().out
+
+    assert oldest_first.index("small-old") < oldest_first.index("big-new")
+    assert biggest_first.index("big-new") < biggest_first.index("small-old")
+
+
+def test_usage_reports_the_budget_percentage_when_one_is_set(tmp_path, capsys):
+    corpus = tmp_path / "corpus"
+    _article(corpus, "10.1_a", 1000)
+    config = _config_file(tmp_path, max_corpus_gb=0.000001)   # ~1074 bytes
+    args = cli.build_parser().parse_args(
+        ["--config", str(config), "usage", "--corpus-dir", str(corpus)])
+
+    cli.cmd_usage(args)
+    err = capsys.readouterr().err
+    assert "1 articles" in err and "budget" in err and "%" in err
+
+
+def test_usage_says_so_when_no_budget_is_set(tmp_path, capsys):
+    corpus = tmp_path / "corpus"
+    _article(corpus, "10.1_a", 1000)
+    cli.cmd_usage(_usage_args(tmp_path, corpus))
+    assert "no budget set; see fetch.max_corpus_gb" in capsys.readouterr().err
+
+
+def test_usage_truncates_to_the_limit_and_says_how_many_it_hid(tmp_path, capsys):
+    """A silent trim would read as "that is the whole corpus"."""
+    corpus = tmp_path / "corpus"
+    for n in range(5):
+        _article(corpus, f"10.1_a{n}", 100)
+    cli.cmd_usage(_usage_args(tmp_path, corpus, ["--limit", "2"]))
+
+    captured = capsys.readouterr()
+    assert captured.out.count("files") == 2
+    assert "... 3 more" in captured.err
+
+
+def test_prune_without_a_budget_refuses_rather_than_guessing(tmp_path, capsys):
+    corpus = tmp_path / "corpus"
+    _article(corpus, "10.1_a", 100)
+    args = cli.build_parser().parse_args(
+        ["--config", str(_config_file(tmp_path)), "prune", "--corpus-dir", str(corpus)])
+
+    assert cli.cmd_prune(args) == 2
+    assert "pass --max-gb or set fetch.max_corpus_gb" in capsys.readouterr().err
+
+
+def test_prune_evicts_oldest_first_and_keeps_the_manifest(tmp_path, capsys):
+    corpus = tmp_path / "corpus"
+    old = _article(corpus, "10.1_older", 5000, fetched_at="2020-01-01T00:00:00Z")
+    new = _article(corpus, "10.1_newer", 5000, fetched_at="2026-01-01T00:00:00Z")
+    args = cli.build_parser().parse_args(
+        ["--config", str(_config_file(tmp_path)), "prune", "--corpus-dir", str(corpus),
+         "--max-gb", "0.000005"])
+
+    assert cli.cmd_prune(args) == 0
+    assert not (old / "fulltext.pdf").exists()
+    assert (new / "fulltext.pdf").exists()
+    assert store.read_manifest(old)["status"] == "evicted"
+
+    captured = capsys.readouterr()
+    assert "evicted 10.1_older" in captured.out
+    assert "Manifests are kept" in captured.err
+
+
+def test_prune_dry_run_frees_nothing_and_says_would(tmp_path, capsys):
+    corpus = tmp_path / "corpus"
+    old = _article(corpus, "10.1_older", 5000, fetched_at="2020-01-01T00:00:00Z")
+    _article(corpus, "10.1_newer", 5000, fetched_at="2026-01-01T00:00:00Z")
+    args = cli.build_parser().parse_args(
+        ["--config", str(_config_file(tmp_path)), "prune", "--corpus-dir", str(corpus),
+         "--max-gb", "0.000005", "--dry-run"])
+
+    assert cli.cmd_prune(args) == 0
+    assert (old / "fulltext.pdf").exists(), "a dry run must not delete"
+    assert "would evict" in capsys.readouterr().out
+
+
+def test_prune_reports_when_it_cannot_reach_the_target(tmp_path, capsys):
+    """The newest article is never evicted, so an impossible budget has to say why
+    rather than reporting success at a size it did not reach."""
+    corpus = tmp_path / "corpus"
+    _article(corpus, "10.1_only", 50000)
+    args = cli.build_parser().parse_args(
+        ["--config", str(_config_file(tmp_path)), "prune", "--corpus-dir", str(corpus),
+         "--max-gb", "0.000001"])
+
+    cli.cmd_prune(args)
+    assert "!" in capsys.readouterr().err
+
+
+# -- session commands --------------------------------------------------------
+
+def test_check_reports_a_live_session_and_exits_zero(tmp_path, monkeypatch, capsys):
+    import manuscript_harvest.fetch.sources.proxy_browser as pb
+    monkeypatch.setattr(pb, "check_session", lambda cfg, probe_url=None: (True, "reached nature.com"))
+    args = cli.build_parser().parse_args(["--config", str(_config_file(tmp_path)), "check"])
+
+    assert cli.cmd_check(args) == 0
+    assert "session: alive -- reached nature.com" in capsys.readouterr().err
+
+
+def test_check_names_the_remedy_only_for_an_expired_session(tmp_path, monkeypatch, capsys):
+    """A proxy that is merely unreachable is not fixed by logging in again, so the
+    remedy line has to be conditional or it becomes advice-shaped noise."""
+    import manuscript_harvest.fetch.sources.proxy_browser as pb
+    args = cli.build_parser().parse_args(["--config", str(_config_file(tmp_path)), "check"])
+
+    monkeypatch.setattr(pb, "check_session", lambda cfg, probe_url=None: (False, "session_expired"))
+    assert cli.cmd_check(args) == 1
+    assert pb.SESSION_REMEDY in capsys.readouterr().err
+
+    monkeypatch.setattr(pb, "check_session", lambda cfg, probe_url=None: (False, "dns failure"))
+    assert cli.cmd_check(args) == 1
+    assert pb.SESSION_REMEDY not in capsys.readouterr().err
+
+
+def test_login_passes_the_probe_url_and_timeout_through(tmp_path, monkeypatch):
+    import manuscript_harvest.fetch.sources.proxy_browser as pb
+    seen = {}
+
+    def fake_login(fetch_cfg, probe_url=None, timeout_seconds=None):
+        seen.update(probe_url=probe_url, timeout_seconds=timeout_seconds)
+        return 0
+
+    monkeypatch.setattr(pb, "interactive_login", fake_login)
+    args = cli.build_parser().parse_args(
+        ["--config", str(_config_file(tmp_path)), "login",
+         "--url", "https://www.nature.com/", "--timeout", "42"])
+
+    assert cli.cmd_login(args) == 0
+    assert seen == {"probe_url": "https://www.nature.com/", "timeout_seconds": 42}
+
+
+# -- main --------------------------------------------------------------------
+
+def test_main_turns_a_bad_doi_into_exit_two_not_a_traceback(capsys):
+    """`normalize_doi` raises ValueError for anything that is not a DOI, and a user
+    typo should not print a stack trace."""
+    assert cli.main(["get", "definitely not a doi"]) == 2
+    assert "error: not a DOI" in capsys.readouterr().err
+
+
+def test_main_dispatches_to_the_named_subcommand(tmp_path, monkeypatch, capsys):
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    assert cli.main(["--config", str(_config_file(tmp_path)), "usage",
+                     "--corpus-dir", str(corpus)]) == 0
+    assert "empty" in capsys.readouterr().err

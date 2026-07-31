@@ -157,19 +157,3 @@ class Http:
             )
 
         raise HttpError(f"GET {url} exhausted retries: {last_error}")
-
-    def resolve_redirect(self, url: str) -> str:
-        """Follow redirects and return the final URL, without keeping the body.
-
-        Used to turn a DOI into a publisher landing URL before the proxy prefix
-        is applied. Falls back to the input URL if resolution fails, so a
-        transient doi.org problem does not abort the whole fetch.
-        """
-        try:
-            self._wait_for_host(url)
-            resp = self._session.get(url, timeout=self.timeout, allow_redirects=True, stream=True)
-            final = resp.url
-            resp.close()
-            return final
-        except requests.RequestException:
-            return url
