@@ -81,6 +81,20 @@ opens.
     manuscript-fetch get 10.1038/s41586-021-03852-1
     manuscript-fetch batch dois.txt --report fetched.jsonl
 
+If any of the papers are paywalled, log in once first — the browser tier is the
+only one that needs it, and it is the last one tried:
+
+    manuscript-fetch login                     # headed browser, sign in by hand
+    manuscript-fetch check                     # confirm the session works
+    manuscript-fetch batch dois.txt            # now the paywalled ones resolve too
+
+**`--headed` is not a way to log in.** It shows the browser during a fetch, for
+debugging, and the fetch never waits for a human: on a dead session it opens on
+the Stanford login page, names the refusal `session_expired`, and closes about a
+second later. `login` is the command that waits. A batch that reports
+`session_expired` three papers in a row drops the browser tier for the rest of
+the run and says so, rather than reproving the point once per DOI.
+
 Writes `corpus/<doi_slug>/` containing `fulltext.pdf`, `supplementary/`, a
 `fulltext.nxml` when the JATS XML comes free, and a `manifest.json` recording
 where every byte came from. Re-running is a no-op unless you pass `--force`.
@@ -148,7 +162,11 @@ Two things learned from getting this wrong:
 
 EZproxy sessions are short-lived, so expect to re-run `login` periodically;
 `check` tells you when. A dead session reports `session_expired`, not a silent
-failure.
+failure — and reports it with the command that fixes it, which it did not always
+do. Naming a cause without naming the cure sent one user to `--headed`, the only
+other flag that mentions a browser, where they watched Chrome open on the login
+page and close before they could type. So `get` and `batch` now also warn before
+the first fetch when the proxy tier is configured and no `login` has ever run.
 
 That promise had a hole in front of it until the page could be read at all.
 Stanford's SSO hop is a self-submitting SAML2 POST form, so on an expired session
