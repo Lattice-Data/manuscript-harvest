@@ -8,6 +8,7 @@ fails.
 
 
 import pytest
+import requests
 
 from manuscript_harvest.fetch import store
 from manuscript_harvest.fetch.adapters import adapter_for
@@ -18,9 +19,14 @@ from manuscript_harvest.fetch.adapters.base import (
     looks_like_supplement,
     url_without_fragment,
 )
-from manuscript_harvest.fetch.adapters.publishers import ElsevierAdapter, WileyAdapter
+from manuscript_harvest.fetch.adapters.publishers import (
+    ElsevierAdapter,
+    NatureAdapter,
+    PmcAdapter,
+    WileyAdapter,
+)
 from manuscript_harvest.fetch.cli import DEFAULT_FETCH_CONFIG, _merge, load_config
-from manuscript_harvest.fetch.http import Http
+from manuscript_harvest.fetch.http import Http, HttpError
 from manuscript_harvest.fetch.identifiers import (
     Identifiers,
     doi_slug,
@@ -43,6 +49,8 @@ from tests.fakes import (
     SCIENCE_ARTICLE_LINKS,
     SSO_HTML,
     FakePage,
+    FakeRequestsResponse,
+    FakeSession,
     make_paywall_pdf,
     make_pdf,
     make_scanned_pdf,
@@ -393,7 +401,7 @@ def test_suppl_is_anchored_to_a_path_segment(url):
 
 def test_dedupe_by_target_collapses_fragments():
     links = [{"url": "https://x/a#1"}, {"url": "https://x/a#2"}, {"url": "https://x/b"}]
-    assert [l["url"] for l in dedupe_by_target(links)] == ["https://x/a", "https://x/b"]
+    assert [link["url"] for link in dedupe_by_target(links)] == ["https://x/a", "https://x/b"]
 
 
 def test_nature_adapter_finds_files_not_anchors():
@@ -410,7 +418,7 @@ def test_nature_adapter_finds_files_not_anchors():
     assert adapter.find_pdf_url(page, DOI).endswith(".pdf")
     links, parsed = adapter.find_supplements(page, DOI)
     assert parsed and len(links) == 2
-    assert all("MediaObjects" in l["url"] for l in links)
+    assert all("MediaObjects" in link["url"] for link in links)
 
 
 def test_empty_page_is_unparsed_not_empty():
@@ -455,6 +463,171 @@ def test_elsevier_stub_detection():
                     links=[{"url": "https://x/a.pdf", "text": "View PDF"}])
     assert ElsevierAdapter().looks_blocked(stub) is True
     assert ElsevierAdapter().looks_blocked(real) is False
+
+
+def test_an_empty_title_is_treated_as_the_stub_shell():
+    """A shell that has not painted its title yet is the same refusal; what settles
+    it is that no anchor on the page mentions a PDF."""
+    assert ElsevierAdapter().looks_blocked(FakePage(title="", links=[])) is True
+    assert ElsevierAdapter().looks_blocked(
+        FakePage(title="   ", links=[{"url": "https://x/a.pdf", "text": ""}])) is False
+
+
+def test_a_page_that_cannot_be_titled_is_not_called_blocked():
+    """`page.title()` raising means the page is wedged, not that the publisher
+    refused us. Claiming `blocked` would send the run down the wrong remedy."""
+    page = FakePage(title="ScienceDirect", links=[])
+    page._title = RuntimeError("navigation in progress")
+
+    def raising_title():
+        raise RuntimeError("navigation in progress")
+
+    page.title = raising_title
+    assert ElsevierAdapter().looks_blocked(page) is False
+
+
+def test_elsevier_falls_back_through_its_pdf_selectors():
+    """No `citation_pdf_url`, but the page does carry a download button. The PII
+    construction below is the last resort, not the second."""
+    page = FakePage(url="https://www-sciencedirect-com.x/science/article/pii/S1934590923004435",
+                    attributes={"pdf-download-btn-link": "https://x/real.pdf"})
+    assert ElsevierAdapter().find_pdf_url(page, "10.1016/x") == "https://x/real.pdf"
+
+
+def test_elsevier_returns_none_when_there_is_no_pii_either():
+    """cell.com's fulltext URLs carry a PII-shaped id in a different position, so a
+    page with neither a link nor a `/pii/` segment has nothing to offer."""
+    page = FakePage(url="https://www-cell-com.x/cell/fulltext/S0092867421005730")
+    assert ElsevierAdapter().find_pdf_url(page, "10.1016/x") is None
+
+
+def test_elsevier_supplements_come_off_the_cdn():
+    page = FakePage(url="https://www-sciencedirect-com.x/science/article/pii/X", links=[
+        {"url": "https://ars.els-cdn.com/content/image/1-s2.0-X-mmc1.xlsx", "text": "Table S1"},
+        {"url": "https://ars.els-cdn.com/content/image/1-s2.0-X-gr1.jpg", "text": "Figure 1"},
+        {"url": "https://www-sciencedirect-com.x/science/article/pii/X#mmc1", "text": "mmc1"},
+    ])
+    links, parsed = ElsevierAdapter().find_supplements(page, DOI)
+
+    assert parsed is True
+    urls = [link["url"] for link in links]
+    assert "https://ars.els-cdn.com/content/image/1-s2.0-X-mmc1.xlsx" in urls
+    assert not any(url.endswith("#mmc1") for url in urls), "fragments are not files"
+
+
+@pytest.mark.parametrize("adapter", [NatureAdapter(), WileyAdapter(), ElsevierAdapter(),
+                                     PmcAdapter()])
+def test_no_adapter_confuses_an_unreadable_page_with_an_empty_one(adapter):
+    """`parsed=False` for every adapter, not just the ones with tests: it is what
+    makes a publisher redesign loud instead of reporting zero supplements."""
+    assert adapter.find_supplements(FakePage(links=[]), DOI) == ([], False)
+
+
+# -- Nature/Springer ---------------------------------------------------------
+
+def test_nature_falls_back_to_the_download_button():
+    """Some Springer journal pages carry no `citation_pdf_url`; the download anchor
+    is tagged with a tracking action that has stayed stable."""
+    page = FakePage(url="https://www.nature.com/articles/x",
+                    attributes={"download pdf": "https://www.nature.com/articles/x.pdf"})
+    assert NatureAdapter().find_pdf_url(page, DOI) == "https://www.nature.com/articles/x.pdf"
+
+
+def test_nature_returns_none_when_neither_the_meta_nor_the_button_exists():
+    assert NatureAdapter().find_pdf_url(FakePage(url="https://www.nature.com/articles/x"),
+                                        DOI) is None
+
+
+def test_nature_recognises_the_second_static_host():
+    """`media.springernature.com` serves the same objects for some journals, and a
+    URL there carries no MOESM token to fall back on."""
+    page = FakePage(url="https://www.nature.com/articles/x", links=[
+        {"url": "https://media.springernature.com/original/springer-static/esm/a/table.xlsx",
+         "text": "Download"},
+    ])
+    links, parsed = NatureAdapter().find_supplements(page, DOI)
+    assert parsed and [link["url"] for link in links] == [
+        "https://media.springernature.com/original/springer-static/esm/a/table.xlsx"]
+
+
+# -- Wiley -------------------------------------------------------------------
+
+def test_wiley_epdf_is_rewritten_too():
+    """`/doi/epdf/` is the same HTML viewer under another name."""
+    page = FakePage(url="https://onlinelibrary.wiley.com/doi/10.1002/x",
+                    metas={"citation_pdf_url":
+                           "https://onlinelibrary.wiley.com/doi/epdf/10.1002/x"})
+    assert WileyAdapter().find_pdf_url(page, "10.1002/x") == \
+        "https://onlinelibrary.wiley.com/doi/pdfdirect/10.1002/x"
+
+
+def test_wiley_has_nothing_to_build_without_a_doi():
+    assert WileyAdapter().find_pdf_url(FakePage(url="https://onlinelibrary.wiley.com/x"),
+                                       "") is None
+
+
+def test_wiley_falls_back_to_its_own_host_for_a_page_with_no_url():
+    """`page.url` is empty before the first navigation completes; the constructed
+    URL still has to be well-formed rather than `://` with no host."""
+    page = FakePage(url="")
+    assert WileyAdapter().find_pdf_url(page, "10.1002/x") == \
+        "https://onlinelibrary.wiley.com/doi/pdfdirect/10.1002/x"
+
+
+def test_wiley_supplements_are_the_downloadsupplement_action():
+    page = FakePage(url="https://onlinelibrary.wiley.com/doi/10.1002/x", links=[
+        {"url": "https://onlinelibrary.wiley.com/action/downloadSupplement"
+                "?doi=10.1002%2Fx&file=path_5751_sm_TableS1.xlsx", "text": "Table S1"},
+        {"url": "https://onlinelibrary.wiley.com/doi/10.1002/x", "text": "Article"},
+    ])
+    links, parsed = WileyAdapter().find_supplements(page, DOI)
+    assert parsed and len(links) == 1
+    assert "downloadSupplement" in links[0]["url"]
+
+
+# -- PMC ---------------------------------------------------------------------
+
+def test_pmc_adapter_is_selected_for_the_pmc_host():
+    assert adapter_for("https://pmc.ncbi.nlm.nih.gov/articles/PMC8426186/").name == "pmc"
+
+
+def test_pmc_finds_the_pdf_by_meta_then_by_anchor():
+    article = "https://pmc.ncbi.nlm.nih.gov/articles/PMC8426186/"
+    with_meta = FakePage(url=article, metas={"citation_pdf_url": article + "pdf/main.pdf"})
+    assert PmcAdapter().find_pdf_url(with_meta, DOI) == article + "pdf/main.pdf"
+
+    without_meta = FakePage(url=article, links=[
+        {"url": article + "bin/table.xlsx", "text": "Table"},
+        {"url": article + "pdf/nihms123.pdf", "text": "PDF"},
+    ])
+    assert PmcAdapter().find_pdf_url(without_meta, DOI) == article + "pdf/nihms123.pdf"
+
+
+def test_pmc_requires_both_a_pdf_path_and_a_pdf_extension():
+    """`/pdf/` alone matches a landing page, and `.pdf` alone matches a supplement.
+    Either on its own once stored a supplement as the article."""
+    article = "https://pmc.ncbi.nlm.nih.gov/articles/PMC8426186/"
+    page = FakePage(url=article, links=[
+        {"url": article + "pdf/", "text": "PDF"},
+        {"url": article + "bin/supplement.pdf", "text": "Supplementary PDF"},
+    ])
+    assert PmcAdapter().find_pdf_url(page, DOI) is None
+
+
+def test_pmc_supplements_are_exactly_the_bin_urls():
+    """PMC's own listing is unambiguous, so this adapter does not guess from link
+    text -- which is what keeps figure and citation links out."""
+    article = "https://pmc.ncbi.nlm.nih.gov/articles/PMC8426186/"
+    page = FakePage(url=article, links=[
+        {"url": article + "bin/MOESM1_ESM.xlsx", "text": "Supplementary Table 1"},
+        {"url": article + "bin/MOESM1_ESM.xlsx#anchor", "text": "same file"},
+        {"url": article + "figure/F1/", "text": "Figure 1"},
+        {"url": "https://doi.org/10.1038/other", "text": "Supplementary reference"},
+    ])
+    links, parsed = PmcAdapter().find_supplements(page, DOI)
+
+    assert parsed is True
+    assert [link["url"] for link in links] == [article + "bin/MOESM1_ESM.xlsx"]
 
 
 def test_generic_adapter_uses_citation_pdf_url():
@@ -534,6 +707,180 @@ def test_per_host_interval_is_enforced(monkeypatch):
     http._wait_for_host("https://b.example/1")   # different host: no wait
     assert slept and slept[0] == pytest.approx(3.0)
     assert len(slept) == 1
+
+
+# -- HTTP transport: retries and caps ----------------------------------------
+#
+# Everything below drives a real `Http` over a fake `requests.Session`, because the
+# retry loop is the one place where "we failed" and "there is nothing there" are
+# decided, and every source's status taxonomy is built on that answer.
+
+@pytest.fixture
+def no_sleep(monkeypatch):
+    """Collects what the retry loop would have slept, so backoff is assertable."""
+    slept = []
+    monkeypatch.setattr("manuscript_harvest.fetch.http.time.sleep", lambda s: slept.append(s))
+    return slept
+
+
+def _http_over(*responses, **kwargs):
+    http = Http(min_interval_seconds=0, **kwargs)
+    http._session = FakeSession(*responses)
+    return http
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 410, 451])
+def test_client_errors_are_returned_not_raised(status, no_sleep):
+    """The contract every source depends on: a 404 on a supplements endpoint means
+    "none there", and only a transport failure is an exception. Raising here would
+    turn every absent artifact into `request_failed`."""
+    http = _http_over(FakeRequestsResponse(status, b"nope"))
+    resp = http.get("https://example.org/x")
+
+    assert resp.status == status and resp.ok is False
+    assert resp.content == b"nope"
+    assert no_sleep == [], "a 4xx is final; retrying it just annoys the server"
+
+
+@pytest.mark.parametrize("status", [429, 500, 502, 503, 504])
+def test_transient_statuses_are_retried_then_succeed(status, no_sleep):
+    http = _http_over(FakeRequestsResponse(status), FakeRequestsResponse(200, b"finally"))
+    resp = http.get("https://example.org/x")
+
+    assert resp.status == 200 and resp.content == b"finally"
+    assert no_sleep == [1], "2 ** attempt, with attempt 0 on the first retry"
+
+
+def test_a_server_that_stays_down_returns_its_last_status(no_sleep):
+    """Not an exception: `max_retries` is exhausted and the 503 is handed back, so
+    the caller records `http_error` with the real status rather than a raise that
+    reads the same as a DNS failure."""
+    http = _http_over(*[FakeRequestsResponse(503) for _ in range(3)])
+    resp = http.get("https://example.org/x")
+
+    assert resp.status == 503
+    assert len(http._session.calls) == 3, "max_retries=2 means three attempts total"
+    assert no_sleep == [1, 2], "exponential, and no sleep after the final attempt"
+
+
+def test_retry_after_is_honoured_over_the_backoff(no_sleep):
+    """Europe PMC and NCBI both send Retry-After when throttling; ignoring it is
+    what gets a client moved into the rate-limited pool."""
+    http = _http_over(FakeRequestsResponse(429, headers={"Retry-After": "7"}),
+                      FakeRequestsResponse(200, b"ok"))
+    assert http.get("https://example.org/x").content == b"ok"
+    assert no_sleep == [7.0]
+
+
+def test_an_absurd_retry_after_is_capped(no_sleep):
+    """A server asking for an hour would stall a whole batch on one DOI."""
+    http = _http_over(FakeRequestsResponse(503, headers={"Retry-After": "3600"}),
+                      FakeRequestsResponse(200, b"ok"))
+    http.get("https://example.org/x")
+    assert no_sleep == [30]
+
+
+def test_a_retry_after_date_falls_back_to_the_backoff(no_sleep):
+    """RFC 7231 allows an HTTP-date there. It is not parsed, and the point is that
+    it does not raise -- a ValueError here would abort a fetch over a header."""
+    http = _http_over(FakeRequestsResponse(503, headers={"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"}),
+                      FakeRequestsResponse(200, b"ok"))
+    http.get("https://example.org/x")
+    assert no_sleep == [1]
+
+
+def test_a_transport_failure_retries_and_then_raises(no_sleep):
+    http = _http_over(requests.ConnectionError("reset"), requests.ConnectionError("reset"),
+                      requests.Timeout("too slow"))
+    with pytest.raises(HttpError, match="Timeout: too slow"):
+        http.get("https://example.org/x")
+
+    assert len(http._session.calls) == 3
+    assert no_sleep == [1, 2]
+
+
+def test_a_transport_failure_that_clears_is_not_an_error(no_sleep):
+    http = _http_over(requests.ConnectionError("reset"), FakeRequestsResponse(200, b"ok"))
+    assert http.get("https://example.org/x").content == b"ok"
+
+
+def test_an_oversized_response_raises_rather_than_being_stored(no_sleep):
+    """The cap exists so one 4 GB supplement cannot fill the corpus disk. It has to
+    raise: returning a truncated body would store a corrupt file that looks fine."""
+    http = _http_over(FakeRequestsResponse(200, b"x" * 5000), max_bytes=1000)
+    with pytest.raises(HttpError, match="5000 bytes, over the 1000-byte cap"):
+        http.get("https://example.org/big")
+
+
+def test_no_cap_means_no_limit(no_sleep):
+    http = _http_over(FakeRequestsResponse(200, b"x" * 5000))
+    assert len(http.get("https://example.org/big").content) == 5000
+
+
+def test_the_response_records_the_final_url_and_a_bare_content_type(no_sleep):
+    """`content_type` is compared against exact strings all over `validate.py`, so
+    the charset parameter and the casing have to be gone by the time it lands."""
+    http = _http_over(FakeRequestsResponse(
+        200, b"<html>", headers={"Content-Type": "TEXT/HTML; charset=UTF-8"},
+        url="https://example.org/after-redirect"))
+    resp = http.get("https://example.org/before")
+
+    assert resp.url == "https://example.org/after-redirect"
+    assert resp.content_type == "text/html"
+    # `Response.headers` is currently write-only -- nothing in the package reads it
+    # back. Pinned anyway because it is the only place the raw header survives, and
+    # Content-Disposition is the obvious next thing a source would want from it.
+    assert resp.headers["Content-Type"] == "TEXT/HTML; charset=UTF-8", "raw header kept"
+
+
+def test_a_missing_content_type_is_empty_not_none(no_sleep):
+    """`.split(";")` on None would be an AttributeError mid-fetch, and every caller
+    treats the type as a string."""
+    assert _http_over(FakeRequestsResponse(200, b"x")).get("https://e.org/x").content_type == ""
+
+
+def test_accept_and_redirect_control_reach_the_session(no_sleep):
+    http = _http_over(FakeRequestsResponse(200, b"{}"))
+    http.get("https://example.org/x", accept="application/json", allow_redirects=False)
+    call = http._session.calls[0]
+
+    assert call["headers"] == {"Accept": "application/json"}
+    assert call["allow_redirects"] is False
+    assert call["timeout"] == 60
+
+
+def test_empty_params_are_dropped_so_urls_stay_clean(no_sleep):
+    """`params or None`: a trailing `?` changes the URL a publisher's cache keys on."""
+    http = _http_over(FakeRequestsResponse(200, b"x"), FakeRequestsResponse(200, b"x"))
+    http.get("https://example.org/x")
+    http.get("https://example.org/x", params={"a": "1"})
+
+    assert http._session.calls[0]["params"] is None
+    assert http._session.calls[1]["params"] == {"a": "1"}
+
+
+def test_resolve_redirect_returns_the_final_url_and_drops_the_body():
+    """Turns a DOI into a landing URL before the proxy prefix is applied, so only
+    the URL matters -- and the streamed response must be closed.
+
+    NOTE: as of this commit `Http.resolve_redirect` has no production caller. The
+    landing URL now comes from Crossref via `identifiers` and is read at
+    `proxy_browser.py:616`. These two tests and the `FakeHttp` stub in `fakes.py`
+    are its only users, so if the method goes, they go with it.
+    """
+    response = FakeRequestsResponse(200, b"whole article", url="https://publisher.example/art")
+    http = _http_over(response)
+    assert http.resolve_redirect("https://doi.org/10.1/x") == "https://publisher.example/art"
+
+    assert http._session.calls[0]["stream"] is True
+    assert response.closed is True
+
+
+def test_resolve_redirect_falls_back_to_its_input():
+    """A transient doi.org problem must not abort the fetch: the browser tier can
+    still try the unresolved URL."""
+    http = _http_over(requests.ConnectionError("reset"))
+    assert http.resolve_redirect("https://doi.org/10.1/x") == "https://doi.org/10.1/x"
 
 
 # -- config ------------------------------------------------------------------
