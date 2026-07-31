@@ -11,8 +11,9 @@ from typing import List, Optional, Tuple
 from urllib.parse import urlparse
 
 # ScienceDirect article URLs carry the Elsevier PII, from which the PDF URL can be
-# constructed when the page exposes no link.
-_PII_RX = re.compile(r"/pii/([A-Z0-9]+)", re.IGNORECASE)
+# constructed when the page exposes no link. Public because the browser tier reads
+# the same PII out of a URL to reach Cell Press -- one shape, defined once.
+PII_RX = re.compile(r"/pii/([A-Z0-9]+)", re.IGNORECASE)
 
 from .base import (
     Adapter,
@@ -157,7 +158,7 @@ class ElsevierAdapter(Adapter):
         # the URL is enough to construct it. Built against the *current* origin so
         # the library-proxy hostname is preserved; a bare sciencedirect.com URL
         # would leave the proxy and lose entitlement.
-        pii = _PII_RX.search(page.url or "")
+        pii = PII_RX.search(page.url or "")
         if pii:
             parts = urlparse(page.url)
             return (f"{parts.scheme}://{parts.netloc}/science/article/pii/"

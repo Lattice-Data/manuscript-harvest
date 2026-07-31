@@ -218,9 +218,9 @@ know. Europe PMC's supplementary ZIP and the PMC OA tarball are self-delimiting:
 member list is not a guess. Every other route pattern-matches a rendered page —
 `pmc_supplements` regexes PMC's HTML for `/bin/` paths, the browser tier scrapes
 anchors, bioRxiv regexes its supplement page — and gets `fetched_unverified` even
-when it is in fact complete, as all three ground-truth papers are. That is not an
-alarm: it is the difference between "we counted" and "we looked, and this is what
-we saw". Only the first licenses "they exist and we have them".
+when it is in fact complete, which is the usual outcome for the ground-truth papers.
+That is not an alarm: it is the difference between "we counted" and "we looked, and
+this is what we saw". Only the first licenses "they exist and we have them".
 
 Both count as settled, so an article still finishes `complete` and is never
 re-fetched. An unbounded set is not a failed one.
@@ -567,15 +567,28 @@ run on every commit.
 - ScienceDirect's article page yields no supplement links in the rendered DOM,
   and for automation it never will: it answers with a stub (`<title>ScienceDirect
   </title>`, `looks_blocked=True`, zero anchors) even unproxied and even for an
-  open-access article. **Elsevier articles are reached through ClinicalKey
-  instead**, which is where EZproxy sends a `linkinghub.elsevier.com` DOI, and
-  which does render. Confirmed on 10.1016/j.xgen.2026.101304: the correct 37-page
-  article and all twelve supplements. Two things about that page are worth
-  knowing, because both cost files before they were handled — supplements are
-  named `mmc<n>` with captions ("Table S1. Primer sequences…") that never say
-  "supplement", and every one is served from the single path
-  `/ui/service/content/url` with the real filename in a query parameter and no
-  `Content-Disposition`.
+  open-access article. Where EZproxy sends a `linkinghub.elsevier.com` DOI is not
+  fixed — ClinicalKey for one paper, proxied ScienceDirect for another — so
+  **a stubbed Elsevier page is retried at cell.com**, which is where a human
+  downloads these files from and which does render. `/retrieve/pii/<PII>` redirects
+  to the canonical article page on its own, so no map from journal title to URL
+  slug is needed. Measured on 10.1016/j.cell.2021.04.038,
+  10.1016/j.ccell.2021.03.007 and 10.1016/j.xgen.2026.101304: 6, 6 and 12
+  supplement links, exactly the sets fetched by hand. Two things about a Cell Press
+  page are worth knowing, because both cost files before they were handled —
+  supplements are named `mmc<n>` with captions ("Table S1. Primer sequences…", "PDF
+  (623.66 KB)") that never say "supplement", and the page also carries one `#mmc<n>`
+  fragment anchor each, which point at the article page rather than at a file.
+  ClinicalKey, where the same route sometimes lands, serves every file from the
+  single path `/ui/service/content/url` with the real filename in a query parameter
+  and no `Content-Disposition`.
+- **cell.com carries Cell Press, not all of Elsevier.** For a non-Cell-Press
+  Elsevier paper the retry above redirects to the journal's own host —
+  10.1016/j.jhep.2019.01.003 lands on `journal-of-hepatology.eu` — which is outside
+  the proxy and so answers with Cloudflare's interstitial. The retry requires the
+  landed page to link its own PDF before it is believed, so that case keeps the
+  `publisher_stub_page` diagnosis instead of reporting a page nobody read.
+  Re-wrapping such a redirect in the proxy prefix is untried.
 - Supplementary files larger than `fetch.max_file_mb` are recorded but not
   fetched (one Science supplement is a 487.8 MB gzip). Independently of the cap,
   the browser transport cannot return anything near ~512 MB, because Playwright's
@@ -593,7 +606,8 @@ run on every commit.
   the PII -- but `/pdfft` answers 403 even unproxied with a real browser
   User-Agent, and a page-navigation retry is refused too. Affects
   `10.1016/j.stem.2023.12.013` and `10.1016/j.cell.2019.08.008`. Cell Press papers
-  that are in the PMC OA subset are unaffected; these two are not.
+  that are in the PMC OA subset are unaffected; these two are not. Both are Cell
+  Press titles, so the cell.com retry above should reach them; not yet measured.
 - **A few PMC supplement sets stay refused.** For `10.1084/jem.20232192` the four
   supplementary tables are listed and `hasSuppl: Y`, but every route returns the
   proof-of-work page or 403. Reported as `expected_but_missing`, which is accurate.

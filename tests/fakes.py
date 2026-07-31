@@ -377,6 +377,72 @@ CLINICALKEY_ARTICLE_PDF = (
     f"{_CK_HOST}/service/content/pdf/watermarked/1-s2.0-S2666979X26001667.pdf"
 )
 
+#: cell.com's article page for 10.1016/j.cell.2021.04.038, seen through the proxy,
+#: reduced to the anchors that matter. Measured 2026-07-30: 561 anchors, of which
+#: the Elsevier adapter matched exactly the six supplements saved by hand.
+#:
+#: This is the page ScienceDirect's stub stands in the way of, so the shape is
+#: worth keeping. Three parts of it are load-bearing:
+#:
+#: - the supplement filename is the *last path segment* of a `/cms/<doi>/attachment/
+#:   <uuid>/` URL, and nothing but `mmc<n>` identifies it -- the link text is
+#:   "PDF (623.66 KB)", which contains no word any supplement pattern looks for;
+#: - the page also carries one `#mmc<n>` fragment anchor per supplement, which must
+#:   not be collected: fragments pointing at the article page are how 26 copies of
+#:   one page were once stored as supplements;
+#: - and `servlet/linkout?...cf=pdf` anchors are *references to other papers*, which
+#:   a "first link containing pdf" rule would happily store as the article.
+#:
+#: The UUIDs are shortened; their content is not load-bearing, their position is.
+_CELL_HOST = "https://www-cell-com.stanford.idm.oclc.org"
+CELL_PRESS_ARTICLE_URL = f"{_CELL_HOST}/cell/fulltext/S0092-8674(21)00573-0"
+CELL_PRESS_TITLE = ("Single-cell protein activity analysis identifies "
+                    "recurrence-associated renal tumor macrophages")
+CELL_PRESS_ARTICLE_PDF = f"{_CELL_HOST}/cell/pdf/S0092-8674(21)00573-0.pdf"
+CELL_PRESS_SUPPLEMENTS = [
+    ("mmc1.pdf", "PDF (623.66 KB)"),
+    ("mmc2.xls", "Spreadsheet (661.50 KB)"),
+    ("mmc3.pdf", "PDF (680.55 KB)"),
+    ("mmc4.xls", "Spreadsheet (49.00 KB)"),
+    ("mmc5.pdf", "PDF (636.90 KB)"),
+    ("mmc6.pdf", "PDF (450.11 KB)"),
+]
+CELL_PRESS_ARTICLE_LINKS = (
+    [{"url": f"{_CELL_HOST}/cms/10.1016/j.cell.2021.04.038/attachment/f056e083-{index}/{name}",
+      "text": text}
+     for index, (name, text) in enumerate(CELL_PRESS_SUPPLEMENTS, start=1)]
+    + [{"url": f"{CELL_PRESS_ARTICLE_URL}#mmc{index}", "text": f"Table S{index}"}
+       for index in range(1, 4)]
+    + [{"url": f"{_CELL_HOST}/action/showPdf?pii=S0092-8674%2821%2900573-0",
+        "text": "Download PDF"},
+       {"url": f"{_CELL_HOST}/servlet/linkout?suffix=e_1_5_1_2_39_2&dbid=4"
+               "&doi=10.1016%2Fj.cell.2021.04.038&key=10.1016%2Fj.ctrv.2017.08.010"
+               "&cf=pdf&site=yctrv-site", "text": "Crossref PubMed Scopus"}]
+)
+
+#: Cloudflare's interstitial, which is what cell.com answers *unproxied* and what a
+#: non-Cell-Press Elsevier journal answers after cell.com redirects off the proxy to
+#: its own host (measured on 10.1016/j.jhep.2019.01.003 -> journal-of-hepatology.eu).
+#:
+#: What makes it dangerous is the pairing below. It carries a couple of anchors --
+#: two, measured, both boilerplate -- so `collect_links` succeeds and
+#: `find_supplements` returns `(parsed=True, [])`, which is the same answer as an
+#: article that genuinely has none. And `looks_blocked` is False, because the title
+#: is Cloudflare's rather than the publisher's own shell. A fixture with *zero*
+#: anchors would take the `parsed=False` path instead and pin nothing.
+#:
+#: The hrefs are stand-ins; the count and the visible wording are what was measured.
+CLOUDFLARE_HTML = (
+    b"<html><head><title>Just a moment...</title></head><body>"
+    b"<div class='cf-browser-verification'>Enable JavaScript and cookies to continue"
+    b"</div><script src='/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1'>"
+    b"</script></body></html>"
+)
+CLOUDFLARE_LINKS = [
+    {"url": "https://www.cloudflare.com/?utm_source=challenge", "text": "Cloudflare"},
+    {"url": "https://www.cloudflare.com/5xx-error-landing", "text": "Need help?"},
+]
+
 
 # -- API payloads ------------------------------------------------------------
 
