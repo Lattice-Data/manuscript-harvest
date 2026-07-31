@@ -28,9 +28,6 @@ class GenericAdapter(Adapter):
     name = "generic"
     hosts = ()  # selected as the fallback, never by hostname
 
-    def matches(self, host: str) -> bool:
-        return True
-
     def find_pdf_url(self, page, doi: str) -> Optional[str]:
         for meta_name in ("citation_pdf_url", "citation_fulltext_html_url"):
             value = meta_content(page, meta_name)

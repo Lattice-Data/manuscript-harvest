@@ -43,7 +43,3 @@ def adapter_for(url: str) -> Adapter:
         if any(adapter.matches(host) for host in hosts):
             return adapter
     return FALLBACK
-
-
-def adapter_names() -> list:
-    return [a.name for a in ADAPTERS] + [FALLBACK.name]

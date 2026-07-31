@@ -40,9 +40,6 @@ _PREDEFINED = {"amp", "lt", "gt", "quot", "apos"}
 _DOCTYPE_RX = re.compile(rb"<!DOCTYPE[^>\[]*(\[[^\]]*\])?[^>]*>", re.DOTALL | re.IGNORECASE)
 _ENTITY_RX = re.compile(r"&([A-Za-z][A-Za-z0-9._-]*);")
 
-# Inline elements whose text is not part of the sentence.
-_DROP_INLINE = {"xref-bibr", "label-in-caption"}
-
 
 def _tag(element) -> str:
     tag = element.tag

@@ -561,9 +561,6 @@ class FakeHttp:
                                 content_type=content_type)
         return Response(url=url, status=404, content=b"", content_type="")
 
-    def resolve_redirect(self, url):
-        return url
-
     def called_matching(self, fragment: str) -> int:
         return sum(1 for url in self.calls if fragment in url)
 

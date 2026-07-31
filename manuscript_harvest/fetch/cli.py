@@ -134,7 +134,7 @@ def _session_expired(record: dict) -> bool:
     )
 
 
-def _report(record: dict, directory=None) -> None:
+def _report(record: dict) -> None:
     doi = record.get("doi", "?")
     print(f"{doi}  {store.summarize(record)}", file=sys.stderr)
     for problem in record.get("problems") or []:

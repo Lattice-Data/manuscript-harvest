@@ -859,30 +859,6 @@ def test_empty_params_are_dropped_so_urls_stay_clean(no_sleep):
     assert http._session.calls[1]["params"] == {"a": "1"}
 
 
-def test_resolve_redirect_returns_the_final_url_and_drops_the_body():
-    """Turns a DOI into a landing URL before the proxy prefix is applied, so only
-    the URL matters -- and the streamed response must be closed.
-
-    NOTE: as of this commit `Http.resolve_redirect` has no production caller. The
-    landing URL now comes from Crossref via `identifiers` and is read at
-    `proxy_browser.py:616`. These two tests and the `FakeHttp` stub in `fakes.py`
-    are its only users, so if the method goes, they go with it.
-    """
-    response = FakeRequestsResponse(200, b"whole article", url="https://publisher.example/art")
-    http = _http_over(response)
-    assert http.resolve_redirect("https://doi.org/10.1/x") == "https://publisher.example/art"
-
-    assert http._session.calls[0]["stream"] is True
-    assert response.closed is True
-
-
-def test_resolve_redirect_falls_back_to_its_input():
-    """A transient doi.org problem must not abort the fetch: the browser tier can
-    still try the unresolved URL."""
-    http = _http_over(requests.ConnectionError("reset"))
-    assert http.resolve_redirect("https://doi.org/10.1/x") == "https://doi.org/10.1/x"
-
-
 # -- config ------------------------------------------------------------------
 
 def test_merge_is_recursive_and_non_destructive():

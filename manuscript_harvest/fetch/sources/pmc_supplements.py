@@ -127,7 +127,7 @@ class PmcSupplementsSource(Source):
             result.note("listing", url=url, status="http_error", http_status=resp.status)
             return None
 
-        denial = classify_denial(resp.url, resp.content, resp.content_type)
+        denial = classify_denial(resp.url, resp.content)
         if denial == "javascript_challenge":
             result.suppl_status = "page_not_parsed"
             result.problems.append("pmc article page returned a proof-of-work challenge")
@@ -167,7 +167,7 @@ class PmcSupplementsSource(Source):
                             status="http_error", http_status=resp.status)
                 continue
 
-            denial = classify_denial(resp.url, resp.content, resp.content_type)
+            denial = classify_denial(resp.url, resp.content)
             if denial:
                 last_reason = denial
                 result.note("supplement_file", file=filename, via=label, status=denial,

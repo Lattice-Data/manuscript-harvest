@@ -323,7 +323,7 @@ def manual_root(explicit=None) -> Path:
     return Path(os.environ.get(MANUAL_DIR_ENV) or DEFAULT_MANUAL_DIR).expanduser()
 
 
-def spec_path(root=None) -> Path:
+def spec_path() -> Path:
     """The spec travels with the repo, not with the bytes."""
     return Path(DEFAULT_MANUAL_DIR) / SPEC_NAME
 
