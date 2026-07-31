@@ -595,9 +595,8 @@ publisher's page and saving everything by hand.
 there is no need to copy them into the repo.
 
 To add a paper, drop a folder of its downloads next to the others and re-run
-`bootstrap`. **It writes the whole spec from its arguments, replacing whatever was
-there — it does not merge.** So every existing paper has to be listed too, or the
-ones you omit are silently dropped:
+`bootstrap`. **It writes the whole spec from its arguments — it does not merge.** So
+every existing paper has to be listed too:
 
     MANUSCRIPT_HARVEST_MANUAL_DIR=~/manual-fetch-papers \
     python -m manuscript_harvest.fetch.manual_fetch bootstrap \
@@ -609,6 +608,12 @@ ones you omit are silently dropped:
       10.1126/sciimmunol.aba4163=sciimmunol.aba4163 \
       10.1126/science.aat5031=science.aat5031 \
       YOUR.NEW/doi=YourFolder
+
+Omitting one is not silent, though: a run that would drop any article the spec
+already holds is **refused**, and the ones that would have gone are named, so the fix
+is to paste them back onto the command line. Compared as DOIs rather than as a count,
+so swapping one paper for another is caught too. `--replace` accepts the loss
+deliberately (and still reports it).
 
 To draft one paper's entry without touching the checked-in spec, send it somewhere
 else with `--out /tmp/draft.yaml` and copy the entry across by hand.
