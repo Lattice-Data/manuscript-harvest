@@ -291,3 +291,23 @@ articles:
     sha256: b4f9c528d630853d286fc138b4a6ec551c526db886bdc922baa7415afa4d0258
   expect:
     supplementary_status: fetched_unverified
+- doi: 10.1016/j.cell.2025.05.027
+  slug: 10.1016_j.cell.2025.05.027
+  source_dir: j.cell.2025.05.027
+  main_pdf:
+    file: nihms-2117886.pdf
+    bytes: 2990757
+    sha256: e45b5821175b1ae9d6d854891ec08af61558ba141037e32d7d027159a9a5dbf3
+    pages: 49
+    version: author manuscript
+  supplements:
+  - file: NIHMS2117886-supplement-2.pdf
+    bytes: 18153645
+    sha256: ca5329ba8601d7822866f6f4d69db6f3b5a7267b33b9bd21dc5022f4561250be
+    pages: 12
+  - file: NIHMS2117886-supplement-Supp_1.pdf
+    bytes: 134494
+    sha256: 690179cb7aedc7b2dcdf8a9250e46176609fa618cf1dabdc586ba24b81e921dc
+    pages: 5
+  expect:
+    supplementary_status: fetched

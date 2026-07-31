@@ -520,10 +520,19 @@ papers), and each existed because the comparison was wrong about a *correct* fet
   define correctness.
 - **Page count is only compared between the same renditions.** For
   `10.1126/science.aat5031` fetch returns Europe PMC's 19-page author manuscript
-  where the human saved the publisher's 7-page reprint. `version` in the spec cannot
-  express that, because what differs is what *fetch* returned, so the fetched PDF is
-  asked directly — a PMC deposit says "Published in final edited form as" on page
-  one. Identity is still asserted; only the page count relaxes.
+  where the human saved the publisher's 7-page reprint. A PMC deposit says
+  "Published in final edited form as" on page one, so both copies are asked what
+  they are rather than described by hand: `bootstrap` reads the manual copy's
+  rendition off the file and `compare` reads the fetched one, and the page count is
+  asserted when they agree. Identity is asserted either way.
+
+The eighth paper, `10.1016/j.cell.2025.05.027`, was downloaded from PMC rather than
+from a publisher, and taught the harness two more things — that
+`nihms-<id>.pdf` is a third article naming convention, and that two *author
+manuscripts* are as comparable as two typeset articles, which is how 49pp against
+49pp stopped being reported and started being asserted. It is also the only entry
+so far whose `expect` is `fetched` rather than `fetched_unverified`: Europe PMC
+served the whole deposit as a ZIP, so the set is bounded rather than scraped.
 
 The check that justifies the exercise is `supplementary_status`. No synthetic
 fixture can catch a *silent* false negative — a paper that really has supplements,
