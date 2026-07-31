@@ -506,6 +506,24 @@ papers:
   one zip, so a tier that unpacks it and a human who saved it whole have to count as
   the same thing.
 
+Three more rules came from the second batch of four (2021 Cell Press and AAAS
+papers), and each existed because the comparison was wrong about a *correct* fetch:
+
+- **The article PDF is recognised by publisher house style, not only by the DOI.**
+  cell.com serves it as `PIIS0092867421005730.pdf`. Unmatched, the folder reports no
+  article PDF, and that is silent rather than loud: the three PDF checks collapse
+  into one unasserted note instead of failing.
+- **The DOI is looked for at both ends of the document.** AAAS prints it in the
+  closing citation block — pages 6–7 of 7 for `10.1126/science.aat5031` — so reading
+  only the front reported "wrong paper, or a stub" for the hand-fetched files that
+  define correctness.
+- **Page count is only compared between the same renditions.** For
+  `10.1126/science.aat5031` fetch returns Europe PMC's 19-page author manuscript
+  where the human saved the publisher's 7-page reprint. `version` in the spec cannot
+  express that, because what differs is what *fetch* returned, so the fetched PDF is
+  asked directly — a PMC deposit says "Published in final edited form as" on page
+  one. Identity is still asserted; only the page count relaxes.
+
 The check that justifies the exercise is `supplementary_status`. No synthetic
 fixture can catch a *silent* false negative — a paper that really has supplements,
 that fetch comes away from with none, reported as `none_listed` rather than
