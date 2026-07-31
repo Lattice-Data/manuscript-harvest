@@ -687,17 +687,21 @@ class ProxyBrowserSource(Source):
         # Some publishers answer automation with a plausible 200-OK shell instead of
         # the article. Without this check it reads as "no PDF, no supplements".
         if adapter.looks_blocked(page):
+            headless = bool((self.config.get("browser") or {}).get("headless", True))
+            # Recorded before the retry, and whether or not the retry rescues the
+            # paper. A successful recovery that leaves no trace of the stub reads as
+            # though the DOI resolved to cell.com in the first place, which is not
+            # what happened and hides the route that is actually broken.
+            result.note("landing", url=target, final_url=final_url,
+                        status="publisher_stub_page", adapter=adapter.name,
+                        headless=headless)
             recovered = self._cell_press_retry(page, adapter, ids, result)
             if recovered is None:
-                headless = bool((self.config.get("browser") or {}).get("headless", True))
                 hint = ("try --headed, though ScienceDirect stubs headed runs too" if headless
                         else "the page rendered but exposed no article content")
                 result.problems.append(
                     f"{adapter.name} served a stub page to this browser at {final_url}; {hint}"
                 )
-                result.note("landing", url=target, final_url=final_url,
-                            status="publisher_stub_page", adapter=adapter.name,
-                            headless=headless)
                 if need_pdf:
                     result.pdf_status = "publisher_stub_page"
                 if need_supplements:
@@ -707,8 +711,7 @@ class ProxyBrowserSource(Source):
                 except Exception:
                     pass
                 return
-            # The stub is still in `attempts`; from here on the page under the
-            # adapter is the one cell.com served.
+            # From here on the page under the adapter is the one cell.com served.
             final_url, body = recovered
             denial = classify_denial(final_url, body)
             adapter = adapter_for(final_url)

@@ -482,6 +482,11 @@ def test_a_stubbed_elsevier_page_is_retried_at_cell_press():
     # one that was actually parsed rather than the stub it replaced.
     retry = next(a for a in result.attempts if a["action"] == "landing_retry")
     assert retry["status"] == "loaded" and "cell.com" in retry["url"]
+    # And the stub is still recorded, in front of it. A recovery that erases what it
+    # recovered from reads as though the DOI resolved to cell.com to begin with, and
+    # the route that is actually broken disappears from the record.
+    assert [a["status"] for a in result.attempts if a["action"] == "landing"] == [
+        "publisher_stub_page", "loaded"]
     landing = next(f for f in result.files if f.role == "landing_html")
     assert landing.url == CELL_PRESS_ARTICLE_URL
 
