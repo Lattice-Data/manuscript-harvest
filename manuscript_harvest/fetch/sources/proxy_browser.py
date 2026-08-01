@@ -84,6 +84,52 @@ def denial_problem(denial: str, url: str) -> str:
     return line
 
 
+def sciencedirect_pdf_url(stub_url: str, pii: str) -> str:
+    """ScienceDirect's PDF endpoint, on the origin the stub was served from.
+
+    The same shape `ElsevierAdapter.find_pdf_url` builds, but constructed from an
+    explicit URL rather than from `page.url`: by the time this is needed the page
+    has navigated away to the cell.com retry, so the live page no longer carries the
+    proxied ScienceDirect origin that keeps the entitlement.
+    """
+    parts = urlparse(stub_url)
+    return (f"{parts.scheme}://{parts.netloc}/science/article/pii/{pii}"
+            f"/pdfft?isDTMRedir=true&download=true")
+
+
+def _stub_problem(adapter_name: str, url: str, why: Optional[str], headless: bool,
+                  got_pdf: bool) -> str:
+    """What to tell a user whose paper was served a stub.
+
+    The advice has to match the obstacle. `--headed` was suggested for every stub,
+    and for a journal cell.com does not carry that is simply the wrong thing to
+    reach for -- the redirect left the proxy, and no amount of showing the browser
+    changes which host holds the article. Measured on 10.1016/j.jhep.2019.01.003 and
+    reported again on 10.1016/j.jhep.2020.05.039.
+    """
+    if (why or "").startswith("off_cell_press:"):
+        host = why.split(":", 1)[1]
+        cause = (f"cell.com carries Cell Press only, so the retry redirected to {host}, "
+                 f"which is outside the proxy")
+        # Only claim there is no route when there turned out not to be one. The PDF
+        # endpoint is reached on the ScienceDirect origin, not on this host, so a
+        # recovery does not contradict the redirect having left the proxy.
+        if not got_pdf:
+            cause += ". There is no proxied route to this journal's own site"
+    elif why == "no_pii":
+        cause = "and carried no Elsevier PII to retry with"
+    elif why == "navigation_failed":
+        cause = "and the cell.com retry could not be loaded"
+    elif headless:
+        cause = "try --headed, though ScienceDirect stubs headed runs too"
+    else:
+        cause = "the page rendered but exposed no article content"
+
+    tail = (". The article PDF was still recovered from the PDF endpoint directly; "
+            "supplements were not" if got_pdf else "")
+    return f"{adapter_name} served a stub page to this browser at {url}; {cause}{tail}"
+
+
 def _pdf_rejected(url: str, status: str, meta: dict) -> str:
     """Why a downloaded PDF was not kept, in one line.
 
@@ -734,14 +780,17 @@ class ProxyBrowserSource(Source):
             result.note("landing", url=target, final_url=final_url,
                         status="publisher_stub_page", adapter=adapter.name,
                         headless=headless)
-            recovered = self._cell_press_retry(page, adapter, ids, result)
+            recovered, why = self._cell_press_retry(page, adapter, ids, result)
             if recovered is None:
-                hint = ("try --headed, though ScienceDirect stubs headed runs too" if headless
-                        else "the page rendered but exposed no article content")
+                # Last resort before giving up. Until this existed the tier made
+                # *zero* download attempts once the retry failed, even though the
+                # PII is sitting in the stub's own URL and `/pdfft` is a different
+                # endpoint from the shell that was stubbed.
+                got_pdf = (need_pdf and adapter.name == "elsevier"
+                           and self._stub_pdf_attempt(context, ids, final_url, result))
                 result.problems.append(
-                    f"{adapter.name} served a stub page to this browser at {final_url}; {hint}"
-                )
-                if need_pdf:
+                    _stub_problem(adapter.name, final_url, why, headless, got_pdf))
+                if need_pdf and not got_pdf:
                     result.pdf_status = "publisher_stub_page"
                 if need_supplements:
                     result.suppl_status = "page_not_parsed"
@@ -804,7 +853,13 @@ class ProxyBrowserSource(Source):
             pass
 
     def _cell_press_retry(self, page, adapter, ids, result: SourceResult):
-        """Reload a stubbed Elsevier page at cell.com. Returns (final_url, body) or None.
+        """Reload a stubbed Elsevier page at cell.com.
+
+        Returns `((final_url, body), None)` on success, or `(None, reason)` where
+        `reason` names why it did not work. The caller needs the reason because the
+        advice differs: a Cell Press paper that stubs is worth another try, while a
+        journal cell.com does not carry has no proxied route at all, and telling that
+        user to reach for `--headed` sends them at the wrong obstacle.
 
         ScienceDirect is not a route to an Elsevier paper for automation, and the
         README says so; cell.com is. See `CELL_PRESS_URL` for what was measured.
@@ -814,12 +869,12 @@ class ProxyBrowserSource(Source):
         `attempts` when it fires.
         """
         if adapter.name != "elsevier":
-            return None
+            return None, "not_elsevier"
         pii = pii_from(ids.landing_url or "") or pii_from(page.url or "")
         if not pii:
             result.note("landing_retry", status="no_pii",
                         detail="no Elsevier PII in the landing or final URL")
-            return None
+            return None, "no_pii"
 
         target = proxied_url(CELL_PRESS_URL.format(pii=pii), self.config)
         try:
@@ -829,7 +884,7 @@ class ProxyBrowserSource(Source):
         except Exception as e:
             result.note("landing_retry", url=target, status="navigation_failed",
                         error=f"{type(e).__name__}: {e}")
-            return None
+            return None, "navigation_failed"
 
         denial = classify_denial(landed, body)
         landed_adapter = adapter_for(landed)
@@ -845,7 +900,14 @@ class ProxyBrowserSource(Source):
         if unreadable:
             result.note("landing_retry", url=target, final_url=landed,
                         status=denial or "not_an_article_page", adapter=landed_adapter.name)
-            return None
+            # Which of the two failures this is decides what the user is told. A
+            # host that is no longer cell.com means the redirect left the proxy
+            # because cell.com does not carry this journal -- nothing about the
+            # browser can change that. Staying on cell.com and still being
+            # unreadable is the ordinary stub, where a retry may yet help.
+            left_cell_press = "cell.com" not in urlparse(landed).netloc.replace("-", ".")
+            return None, ("off_cell_press:" + urlparse(landed).netloc if left_cell_press
+                          else denial or "not_an_article_page")
 
         result.note("landing_retry", url=target, final_url=landed, status="loaded",
                     adapter=landed_adapter.name, pii=pii)
@@ -854,7 +916,47 @@ class ProxyBrowserSource(Source):
         for item in result.files:
             if item.role == ROLE_LANDING:
                 item.content, item.url = body, landed
-        return landed, body
+        return (landed, body), None
+
+    def _stub_pdf_attempt(self, context, ids, stub_url: str, result: SourceResult) -> bool:
+        """Ask ScienceDirect's PDF endpoint directly, after the page came back a stub.
+
+        **Unmeasured, deliberately.** Nothing here establishes that ScienceDirect
+        serves `/pdfft` to a client it just handed a shell page to. What *is*
+        established is that the tier previously gave up having made no download
+        attempt at all -- verified: zero HTTP requests between the failed retry and
+        the `publisher_stub_page` verdict -- so this is one request where there were
+        none, and it is recorded whether it works or not. A live run on a
+        non-Cell-Press Elsevier paper settles whether it is worth keeping.
+
+        Two reasons it is not obviously hopeless: the stub is the article *shell* and
+        `/pdfft` is a different endpoint, and `_download_via_page` navigates first,
+        which is what the 403 branch of `_fetch_pdf` already records ScienceDirect as
+        requiring ("refuses pdfft for anything that is not a real navigation").
+        """
+        pii = pii_from(ids.landing_url or "") or pii_from(stub_url)
+        if not pii:
+            return False
+
+        url = sciencedirect_pdf_url(stub_url, pii)
+        content, _name, why = self._download_via_page(context, url, result, "pdf")
+        if content is None:
+            result.note("pdf", url=url, status="stub_pdf_attempt_failed",
+                        via="stub_pdf_attempt", detail=why)
+            return False
+
+        accepted, status, meta = validate_pdf(content, url=url)
+        result.note("pdf", url=url, status=status, via="stub_pdf_attempt", **meta)
+        if not accepted:
+            result.pdf_status = status
+            result.problems.append(_pdf_rejected(url, status, meta))
+            return False
+
+        result.pdf_status = status
+        result.files.append(
+            FetchedFile(role=ROLE_PDF, name="fulltext.pdf", content=content, url=url)
+        )
+        return True
 
     def _fetch_pdf(self, context, page, adapter, ids, referer, result, denial) -> None:
         """Fetch the article PDF.

@@ -736,8 +736,16 @@ run on every commit.
   10.1016/j.jhep.2019.01.003 lands on `journal-of-hepatology.eu` — which is outside
   the proxy and so answers with Cloudflare's interstitial. The retry requires the
   landed page to link its own PDF before it is believed, so that case keeps the
-  `publisher_stub_page` diagnosis instead of reporting a page nobody read.
-  Re-wrapping such a redirect in the proxy prefix is untried.
+  `publisher_stub_page` diagnosis instead of reporting a page nobody read, and the
+  failure names the host it was redirected to rather than suggesting `--headed`,
+  which cannot help when the obstacle is which host holds the article.
+  Re-wrapping such a redirect in the proxy prefix is untried. What is now tried, as
+  a last resort before giving up, is ScienceDirect's own `/pdfft` endpoint built
+  from the PII in the stub's URL — a different endpoint from the shell that was
+  stubbed, reached on the proxied origin. **Whether ScienceDirect serves it is
+  unmeasured**; the attempt is recorded in `attempts` either way, so the first live
+  run on such a paper settles it. Supplements stay unreachable regardless: only the
+  article page lists them.
 - Supplementary files larger than `fetch.max_file_mb` are recorded but not
   fetched (one Science supplement is a 487.8 MB gzip). Independently of the cap,
   the browser transport cannot return anything near ~512 MB, because Playwright's

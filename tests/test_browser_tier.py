@@ -1149,3 +1149,111 @@ def test_the_manifest_still_carries_what_the_terminal_now_shows():
     pdf_notes = [a for a in result.attempts if a["action"] == "pdf"]
     assert pdf_notes and pdf_notes[-1]["http_status"] == 403
     assert pdf_notes[-1]["status"] == "download_failed"
+
+
+# -- a non-Cell-Press Elsevier paper -----------------------------------------
+#
+# The wall reported on 10.1016/j.jhep.2020.05.039, and on 10.1016/j.jhep.2019.01.003
+# a year before it. cell.com carries Cell Press; for any other Elsevier journal the
+# retry redirects to the journal's own host, which is outside the proxy and answers
+# with Cloudflare. Two things were wrong with how that ended:
+#
+#   - the user was told to "try --headed", which cannot possibly help. The obstacle
+#     is which host holds the article, not whether a browser is visible.
+#   - the tier gave up having made zero download attempts -- verified, no HTTP
+#     requests at all between the failed retry and the verdict -- even though the
+#     PII is in the stub's own URL and `/pdfft` is a different endpoint.
+
+JHEP_HOST = "https://www.journal-of-hepatology.eu"
+JHEP_ARTICLE = f"{JHEP_HOST}/article/S0168-8278(19)30012-1/fulltext"
+SD_PDFFT = ("https://www-sciencedirect-com.stanford.idm.oclc.org"
+            "/science/article/pii/S0092867421005730/pdfft?isDTMRedir=true&download=true")
+
+
+def _off_cell_press_page():
+    """The stub, then a retry that lands off the proxy on the journal's own host."""
+    return CellPressRetryPage(
+        retry_url=JHEP_ARTICLE, retry_title="Just a moment...",
+        retry_links=CLOUDFLARE_LINKS, retry_content=CLOUDFLARE_HTML, retry_metas={})
+
+
+def _run_stub(pdfft_response=None, page=None):
+    page = page or _off_cell_press_page()
+    routes = {"pdfft": pdfft_response} if pdfft_response else {}
+    context = FakeContext(pages=[page], request=FakeRequest(routes))
+    result = SourceResult(tier="proxy_browser")
+    _source(proxy=PROXY)._publisher_page(context, _ElsevierIds(), result,
+                                         need_pdf=True, need_supplements=True)
+    return result, context
+
+
+def test_a_journal_cell_com_does_not_carry_is_not_blamed_on_headless():
+    """`--headed` is the wrong advice here and naming it wastes the user's next run.
+    Say which host the redirect went to instead -- that is the actual fact."""
+    result, _ = _run_stub()
+
+    problem = next(p for p in result.problems if "stub page" in p)
+    assert "--headed" not in problem
+    assert "cell.com carries Cell Press only" in problem
+    assert "journal-of-hepatology.eu" in problem
+    assert "no proxied route to this journal" in problem
+
+
+def test_a_cell_press_paper_that_still_stubs_keeps_the_headed_hint():
+    """The distinction the message turns on: staying on cell.com and being unreadable
+    is the ordinary stub, where showing the browser is at least worth a try."""
+    page = CellPressRetryPage(retry_url=CELL_PRESS_ARTICLE_URL, retry_title="ScienceDirect",
+                              retry_links=[], retry_content=b"<html></html>", retry_metas={})
+    result, _ = _run_stub(page=page)
+
+    problem = next(p for p in result.problems if "stub page" in p)
+    assert "--headed" in problem
+    assert "cell.com carries Cell Press only" not in problem
+
+
+def test_the_pdf_endpoint_is_tried_before_giving_up():
+    """The attempt that did not exist. Whether ScienceDirect serves it is unmeasured;
+    that it is now asked at all is the point, and the manifest records the answer."""
+    result, context = _run_stub(
+        pdfft_response=FakeResponse(200, make_pdf(), {"content-type": "application/pdf"}))
+
+    assert result.pdf_status == "ok"
+    assert result.pdf is not None and result.pdf.name == "fulltext.pdf"
+    assert any("pdfft" in url for url in context.request.gets), "the endpoint was asked"
+
+    note = next(a for a in result.attempts if a.get("via") == "stub_pdf_attempt")
+    assert note["status"] == "ok"
+
+    # Supplements are still lost -- only the article page lists those.
+    assert result.suppl_status == "page_not_parsed"
+    problem = next(p for p in result.problems if "stub page" in p)
+    assert "PDF was still recovered from the PDF endpoint" in problem
+
+
+def test_a_refused_pdf_endpoint_leaves_the_stub_diagnosis_standing():
+    """The likely outcome, and it must not make things worse: the verdict stays
+    `publisher_stub_page` and the failed attempt is recorded rather than hidden."""
+    result, _ = _run_stub(pdfft_response=FakeResponse(403, b""))
+
+    assert result.pdf_status == "publisher_stub_page"
+    assert result.pdf is None
+    assert any(a.get("status") == "stub_pdf_attempt_failed" for a in result.attempts)
+    assert "PDF was still recovered" not in next(p for p in result.problems if "stub page" in p)
+
+
+def test_the_attempt_is_built_on_the_proxied_origin_not_the_journal_host():
+    """By the time this runs the page has navigated to journal-of-hepatology.eu, so
+    reading the origin off the live page would drop the proxy and the entitlement
+    with it. It is constructed from the stub URL for that reason."""
+    result, context = _run_stub(pdfft_response=FakeResponse(404, b""))
+
+    asked = [u for u in context.request.gets if "pdfft" in u]
+    assert asked, "the endpoint should have been asked"
+    assert "stanford.idm.oclc.org" in asked[0]
+    assert "journal-of-hepatology.eu" not in asked[0]
+
+
+def test_sciencedirect_pdf_url_matches_what_the_adapter_builds():
+    """Two places construct this shape. If they drift, the stub attempt asks for a
+    URL the working path never validated."""
+    assert pb.sciencedirect_pdf_url(_SD_STUB_URL, "S0092867421005730") == SD_PDFFT
