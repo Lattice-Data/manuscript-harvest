@@ -151,6 +151,44 @@ def test_supplement_status_precedence(reported, collected, expected):
     assert _supplement_status(ids, True, collected, reported) == expected
 
 
+def test_losing_every_listed_file_is_not_the_same_as_nobody_looking():
+    """Reported on 10.1016/j.oraloncology.2021.105348, whose row read
+    `suppl=unknown_none_found files=0`. A tier that listed supplement links and came
+    away with none of them *looked*; `unknown_none_found` means nobody did. Reporting
+    both the same way is the exact ambiguity this taxonomy exists to prevent.
+
+    Not expressible in `test_supplement_status_precedence` above: that parametrization
+    hardcodes `has_suppl=True, in_pmc=True`, and `expected_but_missing` correctly wins
+    for a paper the publisher says has supplements. This is the case where the index
+    knows nothing.
+    """
+    ids = Identifiers(doi=DOI, doi_raw=DOI)          # has_suppl unknown
+    assert _supplement_status(ids, True, 0, ["partial_failure"]) == "partial_failure"
+    assert _supplement_status(ids, True, 0, []) == "unknown_none_found"
+
+
+def test_a_publisher_that_says_files_exist_still_outranks_partial_failure():
+    """Why the check sits where it does. `expected_but_missing` is the stronger claim
+    -- it says the publisher's own metadata contradicts our empty result -- so a tier
+    reporting `partial_failure` must not demote it."""
+    ids = Identifiers(doi=DOI, doi_raw=DOI, has_suppl=True, in_pmc=True)
+    assert _supplement_status(ids, True, 0, ["partial_failure"]) == "expected_but_missing"
+
+
+def test_a_source_that_owns_the_content_still_outranks_partial_failure():
+    """bioRxiv reporting `none_listed` for its own preprint is authoritative, and a
+    second tier failing to scrape the same paper does not overturn it."""
+    ids = Identifiers(doi="10.1101/2022.01.02.474723", doi_raw="x")
+    assert _supplement_status(
+        ids, True, 0, ["none_listed", "partial_failure"]) == "none_listed"
+
+
+def test_partial_failure_does_not_make_a_record_look_complete():
+    """It must stay outside `SUPPL_SETTLED`, or a paper that lost every supplement
+    would never be re-tried."""
+    assert "partial_failure" not in store.SUPPL_SETTLED
+
+
 def test_unverified_is_settled_so_batches_do_not_thrash(tmp_path):
     """`fetched_unverified` must count as settled, or every batch re-downloads.
 

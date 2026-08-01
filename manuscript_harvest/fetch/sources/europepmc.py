@@ -19,7 +19,7 @@ today, but JATS is what would replace `pdf_loader`'s heuristic section detection
 
 import io
 import zipfile
-from typing import List
+from typing import List, Optional
 
 from ..http import HttpError
 from ..validate import validate_pdf
@@ -27,6 +27,28 @@ from .base import ROLE_PDF, ROLE_SUPPLEMENT, ROLE_XML, FetchedFile, Source, Sour
 
 REST_BASE = "https://www.ebi.ac.uk/europepmc/webservices/rest"
 RENDER_PDF = "https://europepmc.org/articles/{pmcid}?pdf=render"
+
+#: Statuses that name *why* access failed, as opposed to reporting that it did.
+#: Deliberately the same set and order as `fetcher._PDF_DIAGNOSES`, duplicated rather
+#: than imported so this module does not depend on the tier orchestrator -- the tier
+#: has to pick a winner among its own candidates before the orchestrator sees any of
+#: them, and a generic miss from a later candidate must not erase a named diagnosis
+#: from an earlier one.
+_PDF_DIAGNOSES = ("paywalled", "session_expired", "proxy_not_configured",
+                  "publisher_stub_page", "link_resolver_error")
+
+
+def _better_pdf_failure(current: Optional[str], incoming: str) -> str:
+    """Which of two failure statuses to keep for the article PDF."""
+    if current is None:
+        return incoming
+    if incoming in _PDF_DIAGNOSES:
+        # A later diagnosis outranks an earlier one; among diagnoses the last real
+        # attempt is the most relevant, matching `fetcher._best_pdf_status`.
+        return incoming
+    if current in _PDF_DIAGNOSES:
+        return current
+    return incoming
 
 
 class EuropePmcSource(Source):
@@ -89,15 +111,23 @@ class EuropePmcSource(Source):
             result.note("pdf", status="not_found", detail="no open-access PDF URL known")
             return
 
+        # URLs Europe PMC itself advertised as open or free. When one of those fails
+        # the index's own access claim is wrong for this article, which is actionable
+        # in a way that the `?pdf=render` fallback failing is not -- so only the
+        # advertised ones earn a problem line.
+        advertised = set(ids.open_access_pdf_urls())
+
         for url in candidates:
             try:
                 resp = self.http.get(url, accept="application/pdf")
             except HttpError as e:
                 result.note("pdf", url=url, status="download_failed", error=str(e))
+                self._advertised_failed(result, url, advertised, f"request failed: {e}")
                 continue
 
             if not resp.ok:
                 result.note("pdf", url=url, status="download_failed", http_status=resp.status)
+                self._advertised_failed(result, url, advertised, f"HTTP {resp.status}")
                 continue
 
             accepted, status, meta = validate_pdf(
@@ -116,10 +146,22 @@ class EuropePmcSource(Source):
                     )
                 )
                 return
-            result.pdf_status = status  # keep the most informative failure
+            # Keep the most informative failure -- which the old unconditional
+            # assignment did not do. Two advertised URLs answering `paywalled` then
+            # `not_a_pdf` reported `not_a_pdf`, throwing away the diagnosis that says
+            # *why* before `fetcher._best_pdf_status` could ever rank it.
+            result.pdf_status = _better_pdf_failure(result.pdf_status, status)
+            self._advertised_failed(result, url, advertised, f"rejected as '{status}'")
 
         if result.pdf_status is None:
             result.pdf_status = "download_failed"
+
+    @staticmethod
+    def _advertised_failed(result: SourceResult, url: str, advertised: set, why: str) -> None:
+        if url in advertised:
+            result.problems.append(
+                f"europepmc advertised a free PDF at {url} that came back {why}"
+            )
 
     # -- supplements --------------------------------------------------------
 

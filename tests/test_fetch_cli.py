@@ -534,3 +534,70 @@ def test_main_dispatches_to_the_named_subcommand(tmp_path, monkeypatch, capsys):
     assert cli.main(["--config", str(_config_file(tmp_path)), "usage",
                      "--corpus-dir", str(corpus)]) == 0
     assert "empty" in capsys.readouterr().err
+
+
+# -- duplicate DOIs in the input ----------------------------------------------
+
+def test_a_repeated_doi_is_fetched_once(tmp_path, monkeypatch, capsys):
+    """A real 55-line input file listed one DOI three times. Each copy was fetched,
+    counted again in the summary and in `--report`, and -- the reason this matters --
+    counted again by the proxy circuit breaker below."""
+    path = tmp_path / "papers.txt"
+    path.write_text("10.1038/s41586-020-00001-1\n" * 3 + "10.1038/s41586-020-00002-1\n")
+    args = cli.build_parser().parse_args(
+        ["--config", str(_config_file(tmp_path)), "batch", str(path), "--oa-only"])
+
+    fetched = []
+
+    def fake_fetch(doi, *_a, **_k):
+        fetched.append(doi)
+        return _record(doi, proxy_tried=False, expired=False)
+
+    monkeypatch.setattr(cli, "fetch_publication", fake_fetch)
+    cli.cmd_batch(args)
+
+    assert fetched == ["10.1038/s41586-020-00001-1", "10.1038/s41586-020-00002-1"]
+    assert "collapsed 2 duplicate DOI line(s); fetching 2 distinct paper(s)" \
+        in capsys.readouterr().err
+
+
+def test_duplicates_cannot_trip_the_proxy_breaker_on_their_own(tmp_path, monkeypatch, capsys):
+    """The bug this fixes. One paywalled paper listed three times reported "3 papers
+    in a row reported session_expired" and dropped the browser tier for everything
+    after it -- on the evidence of a single paper."""
+    path = tmp_path / "papers.txt"
+    path.write_text("10.1038/s41586-020-00001-1\n" * 3 + "10.1038/s41586-020-00002-1\n")
+    args = cli.build_parser().parse_args(
+        ["--config", str(_config_file(tmp_path)), "batch", str(path)])
+
+    seen = []
+
+    def fake_fetch(doi, config, **_k):
+        seen.append(list(config["fetch"].get("tiers") or []))
+        return _record(doi, proxy_tried=True, expired=True)
+
+    monkeypatch.setattr(cli, "fetch_publication", fake_fetch)
+    cli.cmd_batch(args)
+
+    assert len(seen) == 2, "two distinct papers, two fetches"
+    assert all("proxy_browser" in tiers for tiers in seen), \
+        "two failures is under the limit; the tier must survive"
+    assert "proxy_browser is dropped" not in capsys.readouterr().err
+
+
+def test_the_notice_still_fires_for_three_genuinely_distinct_papers(tmp_path, monkeypatch,
+                                                                   capsys):
+    """The breaker is still wanted -- it just has to count papers, not lines."""
+    args = _args(tmp_path, 5)
+    seen = _run_batch(monkeypatch, args, [(True, True)] * 5)
+
+    assert all("proxy_browser" in t for t in seen[:cli.SESSION_FAILURE_LIMIT])
+    assert "proxy_browser is dropped" in capsys.readouterr().err
+
+
+def test_no_notice_when_there_are_no_duplicates(tmp_path, monkeypatch, capsys):
+    args = _args(tmp_path, 3, extra=["--oa-only"])
+    monkeypatch.setattr(cli, "fetch_publication",
+                        lambda doi, *a, **k: _record(doi, proxy_tried=False, expired=False))
+    cli.cmd_batch(args)
+    assert "collapsed" not in capsys.readouterr().err

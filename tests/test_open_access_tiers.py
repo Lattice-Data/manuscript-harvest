@@ -1211,3 +1211,83 @@ def test_the_xml_is_not_requested_without_a_pmcid():
     http = _epmc_http()
     EuropePmcSource(http).fetch(_epmc_ids(pmcid=None), need_pdf=True, need_supplements=False)
     assert http.called_matching(EPMC_XML) == 0
+
+
+# -- Europe PMC: an advertised free PDF that is not free ---------------------
+#
+# `europepmc` ran for 10.1016/j.jhep.2020.05.039 despite the paper having no PMCID,
+# which under `applies` can only mean Europe PMC advertised an open-access PDF URL.
+# It tried that URL over plain HTTP, failed, and said nothing -- the same
+# problems/attempts split that `_fetch_pdf` had in the browser tier.
+
+def test_an_advertised_free_pdf_that_fails_is_worth_saying_out_loud():
+    """A public index claiming free access to a paywalled article is actionable in a
+    way that the `?pdf=render` fallback failing is not: it means the index is wrong
+    about this paper, which is why only the advertised URLs earn a problem line."""
+    http = _epmc_http({OA_PDF_URL: (200, PAYWALL_HTML * 20, "application/pdf"),
+                       EPMC_RENDER: (404, b"", "")})
+    result = EuropePmcSource(http).fetch(_epmc_ids(), need_pdf=True, need_supplements=False)
+
+    advertised = [p for p in result.problems if "advertised a free PDF" in p]
+    assert len(advertised) == 1, "one line for the advertised URL, none for the fallback"
+    assert OA_PDF_URL in advertised[0]
+    assert "paywalled" in advertised[0]
+
+
+def test_the_render_fallback_failing_is_not_a_problem_line():
+    """It is Europe PMC's own renderer, not a claim about this article's licence, so
+    it failing says nothing a user can act on."""
+    http = _epmc_http({OA_PDF_URL: (404, b"", ""), EPMC_RENDER: (404, b"", "")})
+    result = EuropePmcSource(http).fetch(
+        _epmc_ids(pdf_urls=()), need_pdf=True, need_supplements=False)
+
+    assert result.pdf_status == "download_failed"
+    assert result.problems == []
+
+
+def test_a_pdf_that_arrives_from_europepmc_reports_nothing():
+    http = _epmc_http()
+    result = EuropePmcSource(http).fetch(_epmc_ids(), need_pdf=True, need_supplements=False)
+    assert result.pdf_status == "ok" and result.problems == []
+
+
+def test_a_named_diagnosis_survives_a_later_generic_failure():
+    """The hole in `test_the_most_informative_failure_survives_the_candidate_loop`
+    below: that test's second candidate 404s, which `continue`s before the status is
+    ever reassigned, so it never exercised the overwrite. Two candidates that both
+    return a *body* do -- and `paywalled` was being thrown away for `not_a_pdf`,
+    before `fetcher._best_pdf_status` could rank it."""
+    second = "https://example.org/viewer.pdf"
+    http = _epmc_http({OA_PDF_URL: (200, PAYWALL_HTML * 20, "application/pdf"),
+                       second: (200, b"<html>an HTML viewer</html>" * 40, "text/html")})
+    result = EuropePmcSource(http).fetch(
+        _epmc_ids(pmcid=None, pdf_urls=(OA_PDF_URL, second)),
+        need_pdf=True, need_supplements=False)
+
+    assert [a["status"] for a in result.attempts if a["action"] == "pdf"] == \
+        ["paywalled", "not_a_pdf"]
+    assert result.pdf_status == "paywalled", "the diagnosis outranks the generic miss"
+
+
+def test_a_later_diagnosis_replaces_an_earlier_one():
+    """Among two named diagnoses the last real attempt is the most relevant, matching
+    `fetcher._best_pdf_status`."""
+    second = "https://example.org/second.pdf"
+    http = _epmc_http({OA_PDF_URL: (200, b"<html>viewer</html>" * 40, "text/html"),
+                       second: (200, PAYWALL_HTML * 20, "application/pdf")})
+    result = EuropePmcSource(http).fetch(
+        _epmc_ids(pmcid=None, pdf_urls=(OA_PDF_URL, second)),
+        need_pdf=True, need_supplements=False)
+    assert result.pdf_status == "paywalled"
+
+
+@pytest.mark.parametrize("current,incoming,expected", [
+    (None, "not_a_pdf", "not_a_pdf"),
+    ("not_a_pdf", "paywalled", "paywalled"),      # a diagnosis beats a generic miss
+    ("paywalled", "not_a_pdf", "paywalled"),      # ... in either order
+    ("paywalled", "session_expired", "session_expired"),   # later diagnosis wins
+    ("not_a_pdf", "download_failed", "download_failed"),   # neither named: last wins
+])
+def test_which_pdf_failure_is_kept(current, incoming, expected):
+    from manuscript_harvest.fetch.sources.europepmc import _better_pdf_failure
+    assert _better_pdf_failure(current, incoming) == expected

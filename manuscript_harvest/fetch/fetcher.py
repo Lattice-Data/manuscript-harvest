@@ -136,6 +136,17 @@ def _supplement_status(
         return "none_listed"
     if ids.has_suppl is True:
         return "expected_but_missing"
+    # A tier that listed files and came away with none of them *looked*, and that is
+    # the whole difference from `unknown_none_found`, which means nobody did. Both
+    # produced the same word for 10.1016/j.oraloncology.2021.105348, so the summary
+    # line could not distinguish "we lost every file" from "no tier ever tried".
+    #
+    # The position is load-bearing. Above `has_suppl is True` it would swallow
+    # `expected_but_missing`, which is the stronger statement when the publisher says
+    # the files exist; above `none_listed` it would override a source that owns the
+    # content. Both of those are pinned in `test_supplement_status_precedence`.
+    if "partial_failure" in reported:
+        return "partial_failure"
     if "page_not_parsed" in reported:
         return "page_not_parsed"
     return "unknown_none_found"

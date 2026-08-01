@@ -167,15 +167,27 @@ def cmd_batch(args) -> int:
     _warn_if_no_session(config)
     lines = Path(args.file).read_text().splitlines()
 
-    dois = []
+    parsed = []
     for line in lines:
         line = line.split("#", 1)[0].strip()
         if not line:
             continue
         try:
-            dois.append(normalize_doi(line))
+            parsed.append(normalize_doi(line))
         except ValueError:
             print(f"skipping unparseable line: {line!r}", file=sys.stderr)
+
+    # Deduplicated, order preserved. A repeated DOI is not free even though
+    # `fetch_publication` caches it: each copy is counted again in the summary and in
+    # `--report`, and -- the reason this matters -- the proxy circuit breaker below
+    # counts *records*, so one paywalled paper listed three times reported
+    # "3 papers in a row" and dropped the browser tier for the rest of the run. A
+    # real 55-line input file had exactly that shape.
+    dois = list(dict.fromkeys(parsed))
+    collapsed = len(parsed) - len(dois)
+    if collapsed:
+        print(f"collapsed {collapsed} duplicate DOI line(s); fetching {len(dois)} distinct "
+              f"paper(s)", file=sys.stderr)
 
     if not dois:
         print("no DOIs found in input", file=sys.stderr)

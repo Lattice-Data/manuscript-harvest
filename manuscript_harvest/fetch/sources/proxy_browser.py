@@ -830,6 +830,14 @@ class ProxyBrowserSource(Source):
                 result.note("supplements", status="page_not_parsed",
                             adapter=adapter.name, denial=denial)
             elif not links:
+                # `suppl_status` is deliberately left unset. Setting it to a name of
+                # its own was tried and removed: `_supplement_status` recognises none
+                # of the values it could take here, so the record still resolved to
+                # `unknown_none_found` and the only effect was a status nothing
+                # consumed. And that outcome is right -- a regex over rendered HTML
+                # finding no links is not evidence that a paper has no supplements,
+                # which is the same reason a scrape can never earn plain `fetched`.
+                # The distinction is kept where it is actually readable: in `attempts`.
                 result.note("supplements", status="none_listed_on_page", adapter=adapter.name)
             else:
                 fetched, attempted = self._download_all(
@@ -1080,6 +1088,17 @@ class ProxyBrowserSource(Source):
                             content_type=content_type, label=link.get("label"))
             )
             fetched += 1
+
+        # The same split `_fetch_pdf` had: every per-file refusal was recorded in
+        # `attempts` and none of it reached the terminal, so a page that listed twelve
+        # supplements and delivered none printed a bare count. The cap and the
+        # challenge give-up already report above; this covers everything else.
+        lost = len(attempted) - fetched
+        if lost:
+            result.problems.append(
+                f"{lost} of {len(attempted)} supplementary file(s) listed on the page could "
+                f"not be fetched (via {via}); see attempts for the per-file reason"
+            )
         return fetched, len(attempted)
 
     def _oversize_mb(self, context, url: str, referer: str) -> Optional[float]:

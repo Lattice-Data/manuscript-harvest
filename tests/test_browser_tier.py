@@ -1257,3 +1257,51 @@ def test_sciencedirect_pdf_url_matches_what_the_adapter_builds():
     """Two places construct this shape. If they drift, the stub attempt asks for a
     URL the working path never validated."""
     assert pb.sciencedirect_pdf_url(_SD_STUB_URL, "S0092867421005730") == SD_PDFFT
+
+
+def test_supplements_that_were_listed_and_lost_say_so():
+    """Same split `_fetch_pdf` had: every per-file refusal went to `attempts` and none
+    of it reached the terminal, so a page listing twelve supplements and delivering
+    none printed a bare count. The cap and the challenge give-up already reported;
+    this covers the ordinary refusal."""
+    source = _source()
+    result = SourceResult(tier="proxy_browser")
+    context = FakeContext(request=FakeRequest({"": FakeResponse(403, b"")}))
+    links = [{"url": f"https://ars.els-cdn.com/mmc{n}.xlsx", "text": f"Table S{n}"}
+             for n in range(1, 4)]
+
+    fetched, attempted = source._download_all(context, links, "https://x", result, "elsevier")
+
+    assert (fetched, attempted) == (0, 3)
+    problem = next(p for p in result.problems if "could not be fetched" in p)
+    assert "3 of 3 supplementary file(s)" in problem
+    assert "elsevier" in problem
+
+
+def test_a_partial_supplement_set_names_the_shortfall():
+    class OneWorks(FakeRequest):
+        def get(self, url, headers=None):
+            self.gets.append(url)
+            if url.endswith("mmc1.xlsx"):
+                return FakeResponse(200, b"real bytes", {"content-type": "application/vnd.ms-excel"})
+            return FakeResponse(403, b"")
+
+    result = SourceResult(tier="proxy_browser")
+    links = [{"url": f"https://ars.els-cdn.com/mmc{n}.xlsx", "text": f"T{n}"} for n in (1, 2)]
+    fetched, attempted = _source()._download_all(
+        FakeContext(request=OneWorks()), links, "https://x", result, "elsevier")
+
+    assert (fetched, attempted) == (1, 2)
+    assert any("1 of 2 supplementary file(s)" in p for p in result.problems)
+
+
+def test_a_complete_supplement_set_reports_no_problem():
+    """The over-reporting guard, same as for the PDF: a clean fetch stays quiet."""
+    result = SourceResult(tier="proxy_browser")
+    context = FakeContext(request=FakeRequest({
+        "": FakeResponse(200, b"real bytes", {"content-type": "application/vnd.ms-excel"})}))
+    links = [{"url": "https://ars.els-cdn.com/mmc1.xlsx", "text": "T1"}]
+
+    fetched, attempted = _source()._download_all(context, links, "https://x", result, "elsevier")
+    assert (fetched, attempted) == (1, 1)
+    assert result.problems == []
