@@ -29,7 +29,7 @@ dependencies = [
 [project.optional-dependencies]
 # The library-proxy tier. Kept out of the base install so the open-access path
 # stays dependency-light and CI needs no browser.
-browser = ["playwright>=1.40"]
+browser = ["playwright>=1.45"]
 # Legacy binary .xls supplements; rare enough not to be a default.
 xls = ["xlrd>=2.0"]
 dev = ["pytest>=7.0", "pytest-cov>=4.0"]

@@ -43,6 +43,8 @@ non-obvious ones whenever a corpus is present.
 
 ## Install
 
+Needs **Python 3.10 or newer** (CI runs 3.10 through 3.13).
+
     python -m venv .venv && source .venv/bin/activate
     pip install -e .
 
@@ -54,11 +56,57 @@ Without installing, the same two entry points are reachable as
 `python -m manuscript_harvest.extract.cli`; `pip install -r requirements.txt` is
 enough for that.
 
-Optional extras:
+Optional extras, as requirements files or as pip extras — they install the same
+things, so use whichever fits how you installed the package:
 
-    pip install -r requirements-browser.txt   # the library-proxy tier (Playwright)
-    pip install -r requirements-dev.txt       # pytest, to run the suite
-    pip install xlrd                          # legacy binary .xls supplements
+    pip install -r requirements-browser.txt   # or: pip install -e '.[browser]'
+    pip install -r requirements-dev.txt       # or: pip install -e '.[dev]'
+    pip install xlrd                          # or: pip install -e '.[xls]'
+
+`browser` is the library-proxy tier (Playwright), `dev` is pytest, and `xls` is for
+legacy binary `.xls` supplements — one file in the reference corpus needs it.
+
+### If you need the browser tier
+
+Installing Playwright is **not enough on its own** — it needs a browser too:
+
+    pip install -r requirements-browser.txt
+    python -m playwright install chromium
+
+You can skip that download if Google Chrome is installed: leave
+`fetch.browser.channel: "chrome"` set in `config.yaml` and real Chrome is used
+instead. Prefer that where you can — it clears bot checks that bundled Chromium
+does not. With neither Chrome nor the Playwright download, every browser-tier fetch
+fails.
+
+None of this is needed for the open-access tiers, and `--oa-only` guarantees no
+browser ever opens.
+
+### Where configuration comes from
+
+Both commands read `config.yaml` **from the current directory** by default, and
+`--config` is a top-level flag, so it goes *before* the subcommand:
+
+    manuscript-fetch --config /etc/harvest.yaml get 10.1038/...
+
+Anything the file does not set falls back to the built-in defaults, which enable
+the proxy tier and write to `./corpus/`. Run from a different directory than the
+one holding your `config.yaml` and you get those defaults silently — worth knowing
+after `pip install -e .`, when the commands work from anywhere.
+
+### If your institution is not Stanford
+
+The shipped proxy prefix is an example. Two keys are all that need changing:
+
+    fetch:
+      proxy:
+        prefix: "https://YOUR-INSTITUTION.idm.oclc.org/login?url="
+      browser:
+        check_url: "https://a-journal-you-subscribe-to.example/some/article"
+
+`check_url` is the article `login` and `check` probe, so point it at something your
+library actually licenses. To turn the proxy off entirely, set
+`fetch.proxy.enabled: false` or pass `--no-proxy`.
 
 ### Before you run it against a publisher
 
@@ -81,9 +129,31 @@ opens.
     manuscript-fetch get 10.1038/s41586-021-03852-1
     manuscript-fetch batch dois.txt --report fetched.jsonl
 
+If any of the papers are paywalled, log in once first — the browser tier is the
+only one that needs it, and it is the last one tried:
+
+    manuscript-fetch login                     # headed browser, sign in by hand
+    manuscript-fetch check                     # confirm the session works
+    manuscript-fetch batch dois.txt            # now the paywalled ones resolve too
+
+**`--headed` is not a way to log in.** It shows the browser during a fetch, for
+debugging, and the fetch never waits for a human: on a dead session it opens on
+the Stanford login page, names the refusal `session_expired`, and closes about a
+second later. `login` is the command that waits. A batch that reports
+`session_expired` three papers in a row drops the browser tier for the rest of
+the run and says so, rather than reproving the point once per DOI.
+
 Writes `corpus/<doi_slug>/` containing `fulltext.pdf`, `supplementary/`, a
 `fulltext.nxml` when the JATS XML comes free, and a `manifest.json` recording
-where every byte came from. Re-running is a no-op unless you pass `--force`.
+where every byte came from. The browser tier also leaves `landing.html` (the page
+it scraped, for debugging an adapter) and a `media/` directory when an OA package
+carried the article's figure images. Re-running is a no-op unless you pass
+`--force`.
+
+`dois.txt` for `batch` is one DOI per line; `#` starts a comment, blank lines are
+skipped, and a line that is not a DOI is reported and skipped rather than aborting
+the run. `get` prints the article directory on **stdout** and everything else on
+stderr, so `DIR=$(manuscript-fetch get 10.1038/...)` gives you the path.
 
 Sources are tried in order, and the first four need no credentials and no
 browser. `--oa-only` guarantees nothing ever opens one:
@@ -93,7 +163,7 @@ browser. `--oa-only` guarantees nothing ever opens one:
 | `europepmc` | PDF via `fullTextUrlList`, JATS XML, supplements ZIP | works; the ZIP is not universal |
 | `pmc_supplements` | PMC lists the files, the publisher's OA host serves them | works |
 | `pmc_oa` | `oa.fcgi`: mainly an "is this in the OA subset" signal | the tarball tree is being retired (below) |
-| `biorxiv` | 10.1101 preprints: PDF, JATS, supplements | works |
+| `biorxiv` | 10.1101 and 10.64898 (openRxiv) preprints: PDF, JATS, supplements | works |
 | `proxy_browser` | Stanford library proxy + real browser | needs a one-time login |
 
 Two findings from testing against the live services are worth knowing, because
@@ -127,6 +197,16 @@ Cardinal Key is a WebAuthn credential and Duo cannot be scripted, so **the login
 itself is not automatable and this does not pretend otherwise**. `login` opens a
 real browser and you sign in by hand. Needs `requirements-browser.txt`.
 
+On a base install this tier is skipped rather than fatal, and the fetch reports why
+instead of crashing:
+
+    ! The proxy_browser tier needs Playwright, which is an optional dependency:
+          pip install playwright && python -m playwright install chromium
+      To skip this tier entirely, run with --oa-only.
+
+So a first paywalled paper gives you a `failed` record and that line, not a
+traceback.
+
 It does not ask you to press a key: the browser takes keyboard focus during
 login, so a terminal prompt just swallows an Enter that never arrives. Instead it
 polls until the article is actually reachable, and also stops if you simply close
@@ -148,7 +228,11 @@ Two things learned from getting this wrong:
 
 EZproxy sessions are short-lived, so expect to re-run `login` periodically;
 `check` tells you when. A dead session reports `session_expired`, not a silent
-failure.
+failure — and reports it with the command that fixes it, which it did not always
+do. Naming a cause without naming the cure sent one user to `--headed`, the only
+other flag that mentions a browser, where they watched Chrome open on the login
+page and close before they could type. So `get` and `batch` now also warn before
+the first fetch when the proxy tier is configured and no `login` has ever run.
 
 That promise had a hole in front of it until the page could be read at all.
 Stanford's SSO hop is a self-submitting SAML2 POST form, so on an expired session
@@ -258,6 +342,20 @@ There is no useful "drop the media" saving: measured across 63 papers, PDFs are
 45% and spreadsheets/CSV another 25%, with video and images only 8%. The bulk is
 the content you actually want, so staying inside a budget means giving up whole
 articles rather than trimming fat.
+
+### Exit codes
+
+Scripting either stage means reading the status taxonomy off the exit code:
+
+| Command | 0 | 1 | 2 |
+|---|---|---|---|
+| `fetch get`, `extract one` | `complete` | `partial` | anything else, or a bad DOI |
+| `fetch batch`, `extract all` | every article `complete` | at least one was not | no usable input |
+| `fetch check` | session works | it does not | — |
+
+So `manuscript-fetch get ... ; echo $?` returning 1 means the paper is on disk but
+something is missing — check `manifest.json` for which artifact and why, rather
+than re-running.
 
 ## Extraction: corpus files → blocks
 
@@ -424,8 +522,11 @@ in `tests/test_extract_corpus.py`.
 
 ### Caps
 
-Every cap lives in `manuscript_harvest/extract/limits.py`, each with a comment saying why it
-exists, and any of them can be overridden under `extract.limits` in `config.yaml`.
+Every file and table cap lives in `manuscript_harvest/extract/limits.py`, each with a
+comment saying why it exists, and any of them can be overridden under
+`extract.limits` in `config.yaml`. The one exception is the 6,000-character
+section-abandonment bound described above: it is a constant in
+`manuscript_harvest/extract/sections.py` and no config key reaches it.
 Nothing a cap drops is silent: it is recorded in `extraction.json` and in the
 affected table card's notes, so a thin result reads as "capped" rather than
 "empty".
@@ -454,6 +555,8 @@ The tests live in `tests/` and run under pytest:
 | `tests/test_extract_article.py` | source choice, per-file statuses, the extraction record, the CLI |
 | `tests/test_extract_corpus.py` | the real files that taught the extractor its rules — skipped without `corpus/` |
 | `tests/test_section_audit.py` | the section audit: alignment, scoring, and what must *not* count as an error |
+| `tests/test_fetch_cli.py` | the fetch CLI: the missing-login warning, the proxy breaker, exit codes, `usage`/`prune`/`check` |
+| `tests/test_open_access_tiers.py` | the four open-access tiers end to end: which status each outcome earns |
 | `tests/test_manual_fetch_units.py` | the comparison rules: publisher filename conventions, archives, article versions |
 | `tests/test_manual_fetch_live.py` | fetches those same DOIs for real and compares — off unless asked for twice |
 
@@ -469,7 +572,9 @@ The browser tier is the reason for `tests/fakes.py`. It is the largest and most
 fragile module here, and it previously had no offline coverage at all, so every
 regression in it surfaced only after a real run against a real publisher.
 
-`tests/test_extract_corpus.py` is the one file that touches real bytes. `corpus/`
+`tests/test_extract_corpus.py` is the one file in the default offline run that
+touches real bytes (`tests/test_manual_fetch_live.py` does too, but only when asked
+for twice — see below). `corpus/`
 is gitignored, so it skips in a clean checkout and runs on a machine that has
 fetched the papers; the synthetic equivalents of every shape it checks are pinned
 in `tests/test_extract_units.py`.
@@ -487,10 +592,39 @@ publisher's page and saving everything by hand.
 
 `manual_fetch/manual_fetch.yaml` is checked in; the bytes it describes are not, for the same reason
 `corpus/` is ignored. Point `MANUSCRIPT_HARVEST_MANUAL_DIR` at wherever they live —
-there is no need to copy them into the repo. To add papers, drop a folder per DOI
-and regenerate:
+there is no need to copy them into the repo.
 
-    python -m manuscript_harvest.fetch.manual_fetch bootstrap 10.1126/science.adt8307=Science
+To add a paper, drop a folder of its downloads next to the others and re-run
+`bootstrap`. **It writes the whole spec from its arguments, replacing whatever was
+there — it does not merge.** So every existing paper has to be listed too, or the
+ones you omit are silently dropped:
+
+    MANUSCRIPT_HARVEST_MANUAL_DIR=~/manual-fetch-papers \
+    python -m manuscript_harvest.fetch.manual_fetch bootstrap \
+      10.1038/s41588-025-02433-6=NatGenet \
+      10.1016/j.xgen.2026.101304=CellGenomics \
+      10.1126/science.adt8307=Science \
+      10.1016/j.cell.2021.04.038=j.cell.2021.04.038 \
+      10.1016/j.ccell.2021.03.007=j.ccell.2021.03.007 \
+      10.1126/sciimmunol.aba4163=sciimmunol.aba4163 \
+      10.1126/science.aat5031=science.aat5031 \
+      YOUR.NEW/doi=YourFolder
+
+To draft one paper's entry without touching the checked-in spec, send it somewhere
+else with `--out /tmp/draft.yaml` and copy the entry across by hand.
+
+To run the comparison itself, either use the pytest route above or call it
+directly, which prints a per-check table per paper and exits non-zero on any
+failure:
+
+    MANUSCRIPT_HARVEST_MANUAL_DIR=~/manual-fetch-papers \
+    python -m manuscript_harvest.fetch.manual_fetch verify
+
+It fetches each DOI in the spec into `manual-fetch-run/` — a scratch corpus kept
+away from your real one — and re-fetches every time, because comparing against a
+cached corpus would check the last run's bytes rather than today's code. Pass
+`--cached` to reuse what is already there when you are working on the comparison
+rules themselves.
 
 The spec it writes is a draft for a human to confirm, not an answer. Two things it
 gets right that are worth knowing about, because both were found on the first three

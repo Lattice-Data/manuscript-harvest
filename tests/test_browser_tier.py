@@ -26,11 +26,14 @@ from tests.fakes import (
     CLOUDFLARE_LINKS,
     DUO_PROMPT_HTML,
     DUO_PROMPT_URL,
+    EZPROXY_HTML,
+    PAYWALL_HTML,
     POW_HTML,
     RECAPTCHA_HTML,
     RESOURCE_NOT_FOUND_XML,
     SAML_REDIRECT_TITLE,
     SAML_REDIRECT_URL,
+    SSO_HTML,
     FakeContext,
     FakePage,
     FakeRequest,
@@ -604,6 +607,33 @@ def test_duo_landing_is_an_expired_session_not_a_missing_pdf():
     assert any("session_expired" in p for p in result.problems)
 
 
+def test_session_expired_carries_the_command_that_fixes_it():
+    """Naming a cause is half an answer. Until the remedy travelled with it, a
+    batch printed `session_expired` once per DOI and never said which command
+    fixes it -- and the user reached for `--headed`, which shows the browser but
+    never waits for a login."""
+    duo = ProxyRedirectPage(DUO_PROMPT_URL, title="Duo Security", links=[],
+                            content=DUO_PROMPT_HTML)
+    source = _source(proxy=PROXY)
+    result = SourceResult(tier="proxy_browser")
+
+    class Ids:
+        doi = "10.1126/science.adt8307"
+        landing_url = "https://www.science.org/doi/10.1126/science.adt8307"
+
+    source._publisher_page(FakeContext(pages=[duo]), Ids(), result,
+                           need_pdf=True, need_supplements=True)
+    assert any("manuscript-fetch login" in p for p in result.problems)
+
+
+def test_only_a_dead_session_gets_the_login_advice():
+    """A paywalled or misrouted page is not fixed by logging in again, so the
+    remedy must not be stapled to every refusal."""
+    assert pb.denial_problem("session_expired", "https://x/") .endswith(pb.SESSION_REMEDY)
+    for denial in ("paywalled", "proxy_not_configured", "link_resolver_error"):
+        assert pb.denial_problem(denial, "https://x/") == f"{denial} at https://x/"
+
+
 def test_unconfigured_proxy_retries_the_publisher_directly():
     """EZproxy having no stanza often means the host needs no proxy: Frontiers is
     fully open access yet failed outright as proxy_not_configured."""
@@ -710,3 +740,300 @@ def test_a_broken_tier_does_not_raise():
     finally:
         pb.browser_context = source_ctx
     assert any("browser tier failed" in p for p in result.problems)
+
+
+# -- what `manuscript-fetch check` reports -----------------------------------
+#
+# `_authenticated_yet` produces the one line a user reads when the proxy stops
+# working, and the remedy they reach for depends on which words are in it. Every
+# case below is a different real answer that has to be told apart from the others:
+# a dead session needs `login`, an unconfigured proxy stanza does not, and a page
+# that is merely slow needs neither.
+
+def _fetch_cfg(**overrides):
+    cfg = {"proxy": dict(PROXY), "browser": {}}
+    cfg.update(overrides)
+    return cfg
+
+
+def _pdf_context(pdf=None, status=200, headers=None):
+    body = pdf if pdf is not None else make_pdf()
+    return FakeContext(request=FakeRequest({
+        "": FakeResponse(status, body, headers or {"content-type": "application/pdf"}),
+    }))
+
+
+def test_a_validated_pdf_is_the_only_thing_that_proves_access():
+    """Not "the page loaded" and not "there is a PDF link": both are true on a
+    publisher's paywall shell. The proof is bytes that parse as the article."""
+    page = FakePage(url="https://www-nature-com.stanford.idm.oclc.org/articles/x",
+                    metas={"citation_pdf_url": "https://www-nature-com.x/articles/x.pdf"},
+                    content=b"<html><body>A real article about islets</body></html>")
+    alive, detail = _authenticated(page, _pdf_context())
+
+    assert alive is True
+    assert "downloaded and validated the PDF" in detail
+    assert "3 pages" in detail and "nature adapter" in detail
+
+
+def _authenticated(page, context=None, cfg=None):
+    return pb._authenticated_yet(page, context, cfg or _fetch_cfg())
+
+
+def test_an_expired_session_is_named_before_the_body_is_ever_read():
+    """The ordering that makes `check` work at all: on an expired session Stanford's
+    self-submitting SAML form never stops navigating, so `content()` hangs forever.
+    `page.title()` answers instantly, so the diagnosis has to come from there."""
+    page = FakePage(url=SAML_REDIRECT_URL, title=SAML_REDIRECT_TITLE,
+                    content=RuntimeError("content() would hang here"))
+    alive, detail = _authenticated(page, _pdf_context())
+
+    assert alive is False
+    assert detail.startswith("session_expired at ")
+
+
+def test_a_page_that_cannot_be_read_is_diagnosed_from_its_navigation_marker():
+    """`stable_content` gave up. Rather than "not readable yet", look at where the
+    browser actually is -- which on a dead session is Duo."""
+    page = FakePage(url=DUO_PROMPT_URL, title="Duo Security",
+                    content=RuntimeError("still navigating"))
+    alive, detail = _authenticated(page, _pdf_context())
+
+    assert alive is False
+    assert "session_expired" in detail
+
+
+def test_an_unreadable_page_with_no_diagnosis_says_only_that():
+    """A page that is simply slow must not be blamed on the session, or `check`
+    sends people to re-run `login` for a network hiccup."""
+    page = FakePage(url="https://www-nature-com.stanford.idm.oclc.org/articles/x",
+                    title="Nature", content=RuntimeError("timeout"))
+    alive, detail = _authenticated(page, _pdf_context())
+
+    assert alive is False
+    assert "page not readable yet (RuntimeError)" in detail
+    assert "session_expired" not in detail
+
+
+def test_a_denial_in_the_body_is_reported_with_the_url():
+    """EZproxy's "not been configured for access" is a proxy-stanza problem, not a
+    login problem, and the URL is what identifies the host that is missing one."""
+    page = FakePage(url="https://www-example-com.stanford.idm.oclc.org/x",
+                    content=EZPROXY_HTML * 20)
+    alive, detail = _authenticated(page, _pdf_context())
+
+    assert alive is False
+    assert detail.startswith("proxy_not_configured at https://www-example-com")
+
+
+def test_a_page_with_no_pdf_link_names_the_adapter_that_looked():
+    """Which adapter ran is the first thing to check when a publisher redesigns, so
+    it goes in the line rather than needing a re-run with logging."""
+    page = FakePage(url="https://www-nature-com.stanford.idm.oclc.org/articles/x",
+                   content=b"<html><body>An article page with no PDF anywhere</body></html>")
+    alive, detail = _authenticated(page, _pdf_context())
+
+    assert alive is False
+    assert "no PDF link yet (adapter=nature)" in detail
+
+
+def test_an_adapter_that_raises_is_treated_as_finding_nothing():
+    """A selector that throws is the adapter's problem, not evidence about the
+    session, and `check` must still print a line rather than a traceback."""
+    class Exploding(FakePage):
+        def get_attribute(self, selector, attribute, timeout=None):
+            raise RuntimeError("selector engine crashed")
+
+        def eval_on_selector_all(self, selector, script):
+            raise RuntimeError("selector engine crashed")
+
+    page = Exploding(url="https://www-nature-com.stanford.idm.oclc.org/articles/x",
+                     content=b"<html><body>An article about islets</body></html>")
+    alive, detail = _authenticated(page, _pdf_context())
+
+    assert alive is False
+    assert "no PDF link yet" in detail
+
+
+def test_a_pdf_link_with_no_context_is_honest_about_not_testing_it():
+    """`check_session` always passes a context; the guard exists because finding a
+    link is not access, and saying "found one but could not test it" is the only
+    truthful answer without one."""
+    page = FakePage(url="https://www-nature-com.stanford.idm.oclc.org/articles/x",
+                    metas={"citation_pdf_url": "https://www-nature-com.x/articles/x.pdf"},
+                    content=b"<html><body>An article about islets</body></html>")
+    alive, detail = _authenticated(page, context=None)
+
+    assert alive is False
+    assert "could not test it" in detail
+
+
+def _linked_page():
+    return FakePage(url="https://www-nature-com.stanford.idm.oclc.org/articles/x",
+                    metas={"citation_pdf_url": "https://www-nature-com.x/articles/x.pdf"},
+                    content=b"<html><body>An article about islets</body></html>")
+
+
+def test_a_download_that_raises_is_reported_with_its_exception_type():
+    context = FakeContext(request=FakeRequest({
+        "": FakeResponse(200, RuntimeError("connection reset")),
+    }))
+    alive, detail = _authenticated(_linked_page(), context)
+
+    assert alive is False
+    assert "download failed (RuntimeError: connection reset)" in detail
+
+
+def test_an_http_error_on_the_pdf_names_the_status_and_the_url():
+    alive, detail = _authenticated(_linked_page(), _pdf_context(status=403))
+
+    assert alive is False
+    assert "returned HTTP 403" in detail
+    assert "articles/x.pdf" in detail
+
+
+def test_a_pdf_that_is_really_a_paywall_page_is_named_as_such():
+    """The case the whole function exists for: HTTP 200, `application/pdf`, and a
+    body that is a sign-in page. Reporting `alive` here is how a batch of 53 papers
+    stores 53 paywall stubs."""
+    alive, detail = _authenticated(_linked_page(), _pdf_context(pdf=PAYWALL_HTML * 20))
+
+    assert alive is False
+    assert "PDF rejected as 'paywalled'" in detail
+
+
+# -- check_session and interactive_login -------------------------------------
+
+def _stub_browser_context(monkeypatch, context):
+    """Replace the Playwright-backed context manager with a canned context."""
+    from contextlib import contextmanager
+
+    @contextmanager
+    def fake(fetch_cfg, headless=None, restore=True):
+        yield context
+
+    monkeypatch.setattr(pb, "browser_context", fake)
+
+
+def test_check_session_reports_a_live_session(monkeypatch, tmp_path):
+    context = _pdf_context()
+    context._queued = [_linked_page()]
+    _stub_browser_context(monkeypatch, context)
+
+    alive, detail = pb.check_session(_fetch_cfg(browser={"profile_dir": str(tmp_path)}))
+    assert alive is True and "validated the PDF" in detail
+
+
+def test_a_missing_playwright_is_a_check_answer_not_a_crash(monkeypatch, tmp_path):
+    """`check` is the command someone runs *because* something is wrong, so it has
+    to survive the tier's own dependency being absent."""
+    from contextlib import contextmanager
+
+    @contextmanager
+    def missing(fetch_cfg, headless=None, restore=True):
+        raise ImportError("The proxy_browser tier needs Playwright")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(pb, "browser_context", missing)
+    alive, detail = pb.check_session(_fetch_cfg(browser={"profile_dir": str(tmp_path)}))
+
+    assert alive is False
+    assert "needs Playwright" in detail
+
+
+def test_any_other_failure_in_check_is_named_by_type(monkeypatch, tmp_path):
+    from contextlib import contextmanager
+
+    @contextmanager
+    def broken(fetch_cfg, headless=None, restore=True):
+        raise RuntimeError("chromium failed to launch")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(pb, "browser_context", broken)
+    alive, detail = pb.check_session(_fetch_cfg(browser={"profile_dir": str(tmp_path)}))
+
+    assert alive is False
+    assert detail == "RuntimeError: chromium failed to launch"
+
+
+def test_login_detects_success_on_its_own_and_snapshots_the_cookies(monkeypatch, tmp_path,
+                                                                   capsys):
+    """The promise the printed instructions make: nothing to do after signing in.
+    The snapshot has to happen before the context closes, because session cookies
+    die with it."""
+    context = _pdf_context()
+    context._queued = [_linked_page()]
+    _stub_browser_context(monkeypatch, context)
+    monkeypatch.setattr(pb.time, "sleep", lambda _s: None)
+
+    cfg = _fetch_cfg(browser={"profile_dir": str(tmp_path / "chrome")})
+    assert pb.interactive_login(cfg, timeout_seconds=10) == 0
+
+    out = capsys.readouterr().out
+    assert "Logged in." in out
+    assert "manuscript-fetch check" in out
+    assert pb.state_path(cfg).exists(), "cookies must be snapshotted inside the context"
+
+
+def test_login_gives_up_at_its_deadline_and_still_saves_what_it_has(monkeypatch, tmp_path,
+                                                                   capsys):
+    """A user who never finishes Duo should still get a usable snapshot -- and a
+    message that points at `check` rather than claiming failure outright."""
+    context = _pdf_context()
+    # A page with no PDF link never authenticates, so the loop runs to the deadline.
+    context._queued = [FakePage(url="https://login.stanford.edu/idp", title="Stanford Login",
+                                content=SSO_HTML * 20)]
+    _stub_browser_context(monkeypatch, context)
+
+    clock = {"t": 0.0}
+    monkeypatch.setattr(pb.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(pb.time, "sleep", lambda s: clock.__setitem__("t", clock["t"] + s))
+
+    cfg = _fetch_cfg(browser={"profile_dir": str(tmp_path / "chrome")})
+    assert pb.interactive_login(cfg, timeout_seconds=6) == 1
+
+    out = capsys.readouterr().out
+    assert "Could not confirm access" in out
+    assert "timed out after 6s" in out
+    assert "try: manuscript-fetch check" in out
+
+
+def test_login_notices_the_window_being_closed(monkeypatch, tmp_path, capsys):
+    """Closing the window is how people signal "done" or "give up". Either way it
+    is not a timeout, and saying so avoids a 600-second wait on an empty browser."""
+    context = _pdf_context()
+    context._queued = [_linked_page()]
+    _stub_browser_context(monkeypatch, context)
+
+    real_new_page = context.new_page
+
+    def new_page_then_vanish():
+        page = real_new_page()
+        context.pages.clear()          # the user closed it
+        return page
+
+    context.new_page = new_page_then_vanish
+    monkeypatch.setattr(pb.time, "sleep", lambda _s: None)
+
+    cfg = _fetch_cfg(browser={"profile_dir": str(tmp_path / "chrome")})
+    assert pb.interactive_login(cfg, timeout_seconds=10) == 1
+    assert "browser window closed by user" in capsys.readouterr().out
+
+
+def test_a_navigation_failure_at_login_is_a_warning_not_an_abort(monkeypatch, tmp_path,
+                                                                capsys):
+    """The proxy may be slow to answer the very first hop; the browser is open and
+    the user can still log in, so this must not end the command."""
+    context = _pdf_context()
+    context._queued = [FakePage(url="https://stanford.idm.oclc.org/login",
+                                goto_error=RuntimeError("net::ERR_TIMED_OUT"),
+                                content=SSO_HTML * 20)]
+    _stub_browser_context(monkeypatch, context)
+    monkeypatch.setattr(pb.time, "sleep", lambda _s: None)
+
+    clock = {"t": 0.0}
+    monkeypatch.setattr(pb.time, "monotonic", lambda: clock["t"])
+
+    cfg = _fetch_cfg(browser={"profile_dir": str(tmp_path / "chrome")})
+    pb.interactive_login(cfg, timeout_seconds=0)
+    assert "navigation warning: net::ERR_TIMED_OUT" in capsys.readouterr().out

@@ -6,7 +6,10 @@
     manuscript-fetch check          # is the browser session alive?
 
 `get` and `batch` work with no browser and no credentials for open-access papers.
-`login` and `check` exist only for the last-resort proxy tier.
+`login` and `check` exist only for the last-resort proxy tier, and `login` is the
+only command that waits for a human. `--headed` is for watching a fetch happen;
+nothing in the fetch path pauses for a login, so a browser opened by `--headed`
+on a dead session closes as soon as the tier has named the refusal.
 """
 
 import argparse
@@ -84,7 +87,54 @@ def _exit_code(record: dict) -> int:
     return {"complete": 0, "partial": 1}.get(record.get("status"), 2)
 
 
-def _report(record: dict, directory=None) -> None:
+# How many papers in a row may report a dead proxy session before the tier is
+# dropped for the rest of a batch. Three is enough to rule out one odd publisher
+# and few enough that a 50-DOI run does not spend itself on a login it never had.
+SESSION_FAILURE_LIMIT = 3
+
+
+def _warn_if_no_session(config: dict) -> None:
+    """Say up front when the proxy tier is configured but nobody has logged in.
+
+    Without this the first paywalled paper launches a browser, gets bounced to the
+    IdP, reports `session_expired` and closes -- and so does every paper after it.
+    The reported case was a 53-DOI batch run with `--headed`, on the assumption
+    that the flag offers a chance to log in. It does not: it shows the browser
+    during a fetch, and the fetch never waits for a human, so Chrome opened on the
+    Stanford login page and closed a second later, over and over.
+    """
+    fetch_cfg = config["fetch"]
+    if "proxy_browser" not in (fetch_cfg.get("tiers") or []):
+        return
+    # Imported here, not at module scope, for the same reason the tier itself is
+    # loaded lazily: this path must stay usable without Playwright installed.
+    from .sources.proxy_browser import session_saved, state_path
+
+    if session_saved(fetch_cfg):
+        return
+    print(
+        f"note: no saved proxy session at {state_path(fetch_cfg)}.\n"
+        "      Paywalled papers will report session_expired until you run:\n"
+        "          manuscript-fetch login\n"
+        "      (--headed only shows the browser during a fetch; it does not wait\n"
+        "       for a login.)",
+        file=sys.stderr,
+    )
+
+
+def _session_expired(record: dict) -> bool:
+    """Did the browser tier bounce off the IdP for this paper?
+
+    Read from `attempts` rather than `fulltext.status`, because the tier records
+    the diagnosis even on a run that only wanted supplements.
+    """
+    return any(
+        attempt.get("tier") == "proxy_browser" and attempt.get("status") == "session_expired"
+        for attempt in record.get("attempts") or []
+    )
+
+
+def _report(record: dict) -> None:
     doi = record.get("doi", "?")
     print(f"{doi}  {store.summarize(record)}", file=sys.stderr)
     for problem in record.get("problems") or []:
@@ -95,6 +145,7 @@ def _report(record: dict, directory=None) -> None:
 
 def cmd_get(args) -> int:
     config = _apply_cli_overrides(load_config(args.config), args)
+    _warn_if_no_session(config)
     record = fetch_publication(
         args.doi,
         config,
@@ -113,6 +164,7 @@ def cmd_get(args) -> int:
 
 def cmd_batch(args) -> int:
     config = _apply_cli_overrides(load_config(args.config), args)
+    _warn_if_no_session(config)
     lines = Path(args.file).read_text().splitlines()
 
     dois = []
@@ -132,6 +184,11 @@ def cmd_batch(args) -> int:
     # One shared Http so the per-host interval applies across the whole batch.
     http = build_http(config)
     records = []
+    # A dead proxy session fails identically for every paper that needs it, and
+    # each failure costs a browser launch, a navigation and the per-host wait. So
+    # count them and stop, rather than proving the same point fifty times.
+    session_failures = 0
+    dropped_proxy = False
     for doi in dois:
         record = fetch_publication(
             doi, config, force=args.force,
@@ -139,6 +196,28 @@ def cmd_batch(args) -> int:
         )
         _report(record)
         records.append(record)
+
+        tiers = config["fetch"].get("tiers") or []
+        if "proxy_browser" not in tiers:
+            continue
+        if _session_expired(record):
+            session_failures += 1
+        elif "proxy_browser" in (record.get("tiers_tried") or []):
+            # The tier ran and did not bounce, so the session is alive and
+            # whatever went wrong here was this paper's problem. Only a run of
+            # failures means the login is missing.
+            session_failures = 0
+        if session_failures >= SESSION_FAILURE_LIMIT:
+            config["fetch"]["tiers"] = [t for t in tiers if t != "proxy_browser"]
+            dropped_proxy = True
+            print(
+                f"\n{session_failures} papers in a row reported session_expired, so "
+                "proxy_browser is dropped for\nthe rest of this run -- the remaining "
+                "DOIs get open-access tiers only. To fix:\n"
+                "    manuscript-fetch login && manuscript-fetch check\n"
+                "then re-run this batch with --force.\n",
+                file=sys.stderr,
+            )
 
     if args.report:
         with Path(args.report).open("w", encoding="utf-8") as handle:
@@ -150,6 +229,12 @@ def cmd_batch(args) -> int:
     for record in records:
         by_status[record.get("status")] = by_status.get(record.get("status"), 0) + 1
     print("\n" + "  ".join(f"{k}={v}" for k, v in sorted(by_status.items())), file=sys.stderr)
+    if dropped_proxy:
+        # Said again at the end because the mid-run notice scrolls away behind the
+        # papers that followed it, and without it these totals read as a verdict
+        # on the papers rather than on a missing login.
+        print("proxy_browser was dropped mid-run: these totals understate what a "
+              "logged-in run would reach.", file=sys.stderr)
     return 0 if by_status.get("complete") == len(records) else 1
 
 
@@ -216,11 +301,13 @@ def cmd_login(args) -> int:
 
 
 def cmd_check(args) -> int:
-    from .sources.proxy_browser import check_session
+    from .sources.proxy_browser import SESSION_REMEDY, check_session
 
     config = _apply_cli_overrides(load_config(args.config), args)
     alive, detail = check_session(config["fetch"], probe_url=args.url)
     print(f"session: {'alive' if alive else 'not usable'} -- {detail}", file=sys.stderr)
+    if not alive and "session_expired" in detail:
+        print(f"  {SESSION_REMEDY}", file=sys.stderr)
     return 0 if alive else 1
 
 
@@ -241,7 +328,9 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument("--no-proxy", action="store_true",
                          help="do not prepend the library proxy prefix")
         sub.add_argument("--headed", action="store_true",
-                         help="show the browser (debugging the proxy tier)")
+                         help="show the browser during the fetch (debugging the proxy "
+                              "tier). This does NOT wait for you to log in -- for that, "
+                              "run 'manuscript-fetch login' first")
         sub.add_argument("--force", action="store_true", help="re-fetch even if cached")
         sub.add_argument("--no-supplements", action="store_true")
 

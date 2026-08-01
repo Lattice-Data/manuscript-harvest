@@ -8,7 +8,11 @@ was nothing there" unless something checks.
 """
 
 import sys
+import types
+from unittest import mock
 
+import openpyxl
+import openpyxl.worksheet._read_only
 import pytest
 
 from manuscript_harvest.extract import archive, docxfile, htmlfile, jats, ooxml, pdf, sections
@@ -34,6 +38,7 @@ from tests.fakes import (
     make_pdf_pages,
     make_scanned_pdf,
     make_strict_xlsx,
+    make_zero_sheet_xlsx,
     make_xlsx,
     make_zip,
 )
@@ -449,6 +454,195 @@ def test_legacy_xls_without_xlrd_says_so(monkeypatch):
     monkeypatch.setitem(sys.modules, "xlrd", None)
     cards, status, meta = spreadsheet.cards_from_xls(b"\xd0\xcf\x11\xe0", "x.xls", L)
     assert status == "unsupported_format" and "xlrd" in meta["reason"]
+
+
+def test_a_workbook_that_still_declares_no_sheets_after_relaxing_is_unreadable():
+    """The other half of the strict-OOXML story. `relax_strict` returning None means
+    the namespaces were already ordinary, so zero worksheets is the file's own
+    answer -- and `unreadable` says that, where `no_text` would blame the content."""
+    data = make_zero_sheet_xlsx()
+    cards, status, meta = spreadsheet.cards_from_xlsx(data, "x.xlsx", L)
+
+    assert (cards, status) == ([], "unreadable")
+    assert "declares no worksheets" in meta["reason"]
+    assert meta["sheets"] == 0
+    assert "strict_ooxml" not in meta, "nothing was relaxed"
+
+
+def test_sheets_beyond_the_cap_are_counted_not_dropped_quietly():
+    sheets = {f"S{n}": [["id", "value"], [f"r{n}", n]] for n in range(6)}
+    cards, status, meta = spreadsheet.cards_from_xlsx(
+        make_xlsx(sheets), "x.xlsx", Limits(max_sheets=2))
+
+    assert status == "ok" and len(cards) == 2
+    assert meta["sheets"] == 6 and meta["sheets_skipped"] == 4
+
+
+def test_the_card_cap_stops_the_sheet_loop():
+    sheets = {f"S{n}": [["id", "value"], [f"r{n}", n]] for n in range(5)}
+    cards, status, _ = spreadsheet.cards_from_xlsx(
+        make_xlsx(sheets), "x.xlsx", Limits(max_tables_per_file=2))
+    assert status == "ok" and len(cards) == 2
+
+
+def test_one_unreadable_sheet_does_not_lose_the_others():
+    """A workbook is a bag of independent tables; a single sheet that blows up on
+    iteration must be recorded and stepped over, not take the file down with it."""
+    data = make_xlsx({"good": [["id", "value"], ["a", 1]],
+                      "bad": [["id", "value"], ["b", 2]]})
+
+    real_iter_rows = openpyxl.worksheet._read_only.ReadOnlyWorksheet.iter_rows
+
+    def flaky(self, *args, **kwargs):
+        if self.title == "bad":
+            raise ValueError("Worksheet is unsized")
+        return real_iter_rows(self, *args, **kwargs)
+
+    with mock.patch.object(openpyxl.worksheet._read_only.ReadOnlyWorksheet,
+                           "iter_rows", flaky):
+        cards, status, meta = spreadsheet.cards_from_xlsx(data, "x.xlsx", L)
+
+    assert status == "ok"
+    assert [c.title for c in cards] == ["good"]
+    assert meta["errors"] == ["sheet 'bad': ValueError: Worksheet is unsized"]
+
+
+def test_a_sheet_that_cannot_reset_its_dimensions_is_still_read():
+    """`reset_dimensions` is a newer openpyxl API and the call is defensive. If it
+    is missing or refuses, the sheet must still be scanned rather than skipped."""
+    data = make_xlsx({"S": [["id", "value"], ["a", 1]]})
+
+    def refuse(self):
+        raise AttributeError("no reset_dimensions on this version")
+
+    with mock.patch.object(openpyxl.worksheet._read_only.ReadOnlyWorksheet,
+                           "reset_dimensions", refuse, create=True):
+        cards, status, _ = spreadsheet.cards_from_xlsx(data, "x.xlsx", L)
+
+    assert status == "ok" and cards[0].header == ["id", "value"]
+
+
+# -- spreadsheets: legacy .xls -----------------------------------------------
+
+class _FakeXlsSheet:
+    def __init__(self, name, rows):
+        self.name = name
+        self._rows = rows
+        self.nrows = len(rows)
+
+    def row_values(self, index):
+        return self._rows[index]
+
+
+class _FakeXlsBook:
+    def __init__(self, *sheets):
+        self._sheets = list(sheets)
+        self.nsheets = len(self._sheets)
+
+    def sheets(self):
+        return self._sheets
+
+
+def _fake_xlrd(book=None, error=None):
+    """A stand-in for the optional `xlrd`, so the .xls path is covered without it.
+
+    xlrd 2.x is an optional extra for exactly one file in this corpus, so CI does
+    not install it -- but the branch that reads it is ours and should not go
+    untested for that reason.
+    """
+    module = types.SimpleNamespace()
+
+    def open_workbook(file_contents=None):
+        if error is not None:
+            raise error
+        return book
+
+    module.open_workbook = open_workbook
+    return module
+
+
+def test_legacy_xls_sheets_become_cards(monkeypatch):
+    book = _FakeXlsBook(
+        _FakeXlsSheet("Table S1", [["id", "Sex"], ["a", "M"], ["b", "F"]]),
+        _FakeXlsSheet("Notes", [["read me"], ["some prose"]]),
+    )
+    monkeypatch.setitem(sys.modules, "xlrd", _fake_xlrd(book))
+    cards, status, meta = spreadsheet.cards_from_xls(b"\xd0\xcf\x11\xe0", "mmc2.xls", L)
+
+    assert status == "ok" and meta["sheets"] == 2
+    assert [c.title for c in cards] == ["Table S1", "Notes"]
+    assert cards[0].header == ["id", "Sex"]
+    assert cards[0].locator == "sheet 'Table S1'"
+
+
+def test_legacy_xls_honours_the_row_and_sheet_caps(monkeypatch):
+    rows = [["gene", "value"]] + [[f"G{n}", n] for n in range(100)]
+    book = _FakeXlsBook(_FakeXlsSheet("big", rows), _FakeXlsSheet("second", [["a"], ["b"]]))
+    monkeypatch.setitem(sys.modules, "xlrd", _fake_xlrd(book))
+    cards, status, _ = spreadsheet.cards_from_xls(
+        b"\xd0\xcf\x11\xe0", "x.xls", Limits(max_scan_rows=10, max_sheets=1))
+
+    assert status == "ok" and len(cards) == 1
+    assert cards[0].truncated is True
+    assert cards[0].n_rows_total == 101
+
+
+def test_an_unreadable_xls_is_named_not_crashed(monkeypatch):
+    monkeypatch.setitem(sys.modules, "xlrd",
+                        _fake_xlrd(error=ValueError("Unsupported format, or corrupt file")))
+    cards, status, meta = spreadsheet.cards_from_xls(b"garbage", "x.xls", L)
+    assert (cards, status) == ([], "unreadable")
+    assert "ValueError: Unsupported format" in meta["reason"]
+
+
+def test_an_empty_xls_is_no_text(monkeypatch):
+    monkeypatch.setitem(sys.modules, "xlrd", _fake_xlrd(_FakeXlsBook()))
+    assert spreadsheet.cards_from_xls(b"\xd0\xcf\x11\xe0", "x.xls", L)[1] == "no_text"
+
+
+# -- spreadsheets: CSV sniffing ----------------------------------------------
+
+@pytest.mark.parametrize("body,expected", [
+    (b"single column\nvalue\nother\n", ","),      # sniffer fails; no candidate present
+    (b"a|b|c\n1|2|3\n", "|"),
+    (b"justoneline", ","),
+    # The sniffer refuses a one-column file, but the fallback's count still finds
+    # the real delimiter on the first line.
+    (b"a;b\n1;2\n", ";"),
+])
+def test_the_delimiter_falls_back_to_counting_when_sniffing_fails(body, expected):
+    """`csv.Sniffer` raises "Could not determine delimiter" for a single-column
+    file, and a raise here would report a readable supplement as unreadable."""
+    cards, status, meta = spreadsheet.cards_from_csv(body, "x.csv", L)
+    assert meta["delimiter"] == expected
+    assert status in {"ok", "no_text"}
+
+
+def test_a_utf8_bom_is_stripped_from_the_first_header():
+    """Excel writes CSVs with a BOM; leaving it on turns the first column name into
+    `\\ufeffid`, which no downstream match on "id" would find."""
+    cards, status, _ = spreadsheet.cards_from_csv(
+        "﻿id,Sex\na,M\nb,F\n".encode("utf-8"), "x.csv", L)
+    assert status == "ok" and cards[0].header == ["id", "Sex"]
+
+
+def test_a_csv_with_nothing_but_a_delimiter_line_is_no_text():
+    """The card builder finds no usable table, and the sniffed delimiter is still
+    reported -- it is the evidence for why the file was read the way it was."""
+    cards, status, meta = spreadsheet.cards_from_csv(b",,,\n", "x.csv", L)
+    assert (cards, status) == ([], "no_text")
+    assert "delimiter" in meta
+
+
+def test_a_csv_field_over_the_stdlib_limit_is_named_not_crashed():
+    """`csv.reader` raises "field larger than field limit (131072)" mid-iteration,
+    not at construction, so the catch has to wrap the scan. A supplement with one
+    enormous cell -- a pasted FASTA, typically -- is how this shows up."""
+    body = b'a,b\n"' + b"x" * 200_000 + b'",2\n'
+    cards, status, meta = spreadsheet.cards_from_csv(body, "x.csv", L)
+
+    assert (cards, status) == ([], "unreadable")
+    assert "field larger than field limit" in meta["reason"]
 
 
 # -- JATS --------------------------------------------------------------------

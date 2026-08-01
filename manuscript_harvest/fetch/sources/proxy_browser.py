@@ -67,6 +67,22 @@ PMC_ARTICLE_URL = "https://pmc.ncbi.nlm.nih.gov/articles/{pmcid}/"
 # else: unproxied cell.com answers with Cloudflare's interstitial.
 CELL_PRESS_URL = "https://www.cell.com/retrieve/pii/{pii}"
 
+# What to do about a dead session. `session_expired` names the cause and used to
+# stop there, which is half an answer: a batch of paywalled papers printed the
+# same diagnosis once per DOI and never said which command fixes it. The reported
+# case was worse than unhelpful -- the user reached for `--headed`, which shows
+# the browser during a fetch but never waits for a human, so Chrome opened on the
+# Stanford login page and closed a second later, every time.
+SESSION_REMEDY = "run 'manuscript-fetch login' to re-establish the proxy session"
+
+
+def denial_problem(denial: str, url: str) -> str:
+    """The problem line for a named refusal, carrying the remedy where there is one."""
+    line = f"{denial} at {url}"
+    if denial == "session_expired":
+        line += f"; {SESSION_REMEDY}"
+    return line
+
 
 def pii_from(url: str) -> Optional[str]:
     """The Elsevier PII in a URL, or None."""
@@ -103,6 +119,18 @@ def _profile_dir(fetch_cfg: dict) -> Path:
 def state_path(fetch_cfg: dict) -> Path:
     """Where the cookie snapshot lives, next to the browser profile."""
     return _profile_dir(fetch_cfg).parent / "storage_state.json"
+
+
+def session_saved(fetch_cfg: dict) -> bool:
+    """Has `login` ever run against this profile?
+
+    Only the existence of the snapshot is checked, never its age. EZproxy does not
+    publish a session lifetime, so a guess would either nag through a working
+    session or stay quiet through a dead one -- and `check` answers the live
+    question properly. This exists for the one case it can settle without opening
+    a browser: nobody has logged in here at all.
+    """
+    return state_path(fetch_cfg).exists()
 
 
 def save_state(context, fetch_cfg: dict) -> Optional[Path]:
@@ -604,7 +632,7 @@ class ProxyBrowserSource(Source):
         except _AlreadyIdentified as named:
             result.note("landing", url=target, status=named.denial,
                         final_url=named.url, detail="named without reading the body")
-            result.problems.append(f"{named.denial} at {named.url}")
+            result.problems.append(denial_problem(named.denial, named.url))
             if need_pdf:
                 result.pdf_status = named.denial
             if need_supplements:
@@ -624,7 +652,7 @@ class ProxyBrowserSource(Source):
             result.note("landing", url=target, status=denial or "navigation_failed",
                         final_url=marker_url, error=f"{type(e).__name__}: {e}")
             if denial:
-                result.problems.append(f"{denial} at {marker_url}")
+                result.problems.append(denial_problem(denial, marker_url))
             if need_pdf:
                 result.pdf_status = denial or "download_failed"
             if need_supplements:
@@ -668,7 +696,7 @@ class ProxyBrowserSource(Source):
             # RESOURCE_NOT_FOUND XML was recorded as `loaded` and the generic
             # adapter turned it into `no_pdf_link` -- "we could not find a PDF
             # link on the page" for a resolver saying it has no such article.
-            result.problems.append(f"{denial} at {final_url}")
+            result.problems.append(denial_problem(denial, final_url))
             result.note("landing", url=target, final_url=final_url, status=denial)
             if need_pdf:
                 result.pdf_status = denial
