@@ -152,8 +152,14 @@ carried the article's figure images. Re-running is a no-op unless you pass
 
 `dois.txt` for `batch` is one DOI per line; `#` starts a comment, blank lines are
 skipped, and a line that is not a DOI is reported and skipped rather than aborting
-the run. `get` prints the article directory on **stdout** and everything else on
-stderr, so `DIR=$(manuscript-fetch get 10.1038/...)` gives you the path.
+the run. Repeats are collapsed after normalization, so `10.1038/X` and
+`https://doi.org/10.1038/x` count once — the run says which DOIs it collapsed. This
+is not only about wasted work: the proxy circuit breaker below counts *records*, so
+one paywalled paper listed three times used to report "3 papers in a row" and
+disable the browser tier for the rest of the run.
+
+`get` prints the article directory on **stdout** and everything else on stderr, so
+`DIR=$(manuscript-fetch get 10.1038/...)` gives you the path.
 
 Sources are tried in order, and the first four need no credentials and no
 browser. `--oa-only` guarantees nothing ever opens one:
@@ -285,8 +291,15 @@ here", so this is not a page we failed to parse) · `not_a_pdf` ·
 | `fetched_unverified` | every file we identified arrived, but nothing bounds the set |
 | `partial_failure` | some arrived; at least one failed |
 | `expected_but_missing` | `hasSuppl: Y` and we came away with nothing — **the bug case** |
+| `none_retrieved` | a tier tried and every file it went after was lost |
 | `page_not_parsed` | a page loaded but no file list could be read from it |
 | `unknown_none_found` | nobody said whether any exist, and none were found |
+
+`none_retrieved` and `unknown_none_found` both come back with an empty
+`supplementary/`, and separating them is the point: the first means a tier looked
+and lost everything, the second that no tier ever tried. They read the same on
+disk. `none_retrieved` is deliberately not `partial_failure` — that word is the
+only way to tell from the status alone that at least one file made it.
 
 **Why `fetched` splits in two.** The taxonomy told its own version of the lie it
 exists to prevent. For `10.1016/j.xgen.2026.101304` the adapter matched 1 of 12
@@ -595,9 +608,8 @@ publisher's page and saving everything by hand.
 there is no need to copy them into the repo.
 
 To add a paper, drop a folder of its downloads next to the others and re-run
-`bootstrap`. **It writes the whole spec from its arguments, replacing whatever was
-there — it does not merge.** So every existing paper has to be listed too, or the
-ones you omit are silently dropped:
+`bootstrap`. **It writes the whole spec from its arguments — it does not merge.** So
+every existing paper has to be listed too:
 
     MANUSCRIPT_HARVEST_MANUAL_DIR=~/manual-fetch-papers \
     python -m manuscript_harvest.fetch.manual_fetch bootstrap \
@@ -609,6 +621,12 @@ ones you omit are silently dropped:
       10.1126/sciimmunol.aba4163=sciimmunol.aba4163 \
       10.1126/science.aat5031=science.aat5031 \
       YOUR.NEW/doi=YourFolder
+
+Omitting one is not silent, though: a run that would drop any article the spec
+already holds is **refused**, and the ones that would have gone are named, so the fix
+is to paste them back onto the command line. Compared as DOIs rather than as a count,
+so swapping one paper for another is caught too. `--replace` accepts the loss
+deliberately (and still reports it).
 
 To draft one paper's entry without touching the checked-in spec, send it somewhere
 else with `--out /tmp/draft.yaml` and copy the entry across by hand.
@@ -731,8 +749,16 @@ run on every commit.
   10.1016/j.jhep.2019.01.003 lands on `journal-of-hepatology.eu` — which is outside
   the proxy and so answers with Cloudflare's interstitial. The retry requires the
   landed page to link its own PDF before it is believed, so that case keeps the
-  `publisher_stub_page` diagnosis instead of reporting a page nobody read.
-  Re-wrapping such a redirect in the proxy prefix is untried.
+  `publisher_stub_page` diagnosis instead of reporting a page nobody read, and the
+  failure names the host it was redirected to rather than suggesting `--headed`,
+  which cannot help when the obstacle is which host holds the article.
+  Re-wrapping such a redirect in the proxy prefix is untried. What is now tried, as
+  a last resort before giving up, is ScienceDirect's own `/pdfft` endpoint built
+  from the PII in the stub's URL — a different endpoint from the shell that was
+  stubbed, reached on the proxied origin. **Whether ScienceDirect serves it is
+  unmeasured**; the attempt is recorded in `attempts` either way, so the first live
+  run on such a paper settles it. Supplements stay unreachable regardless: only the
+  article page lists them.
 - Supplementary files larger than `fetch.max_file_mb` are recorded but not
   fetched (one Science supplement is a 487.8 MB gzip). Independently of the cap,
   the browser transport cannot return anything near ~512 MB, because Playwright's

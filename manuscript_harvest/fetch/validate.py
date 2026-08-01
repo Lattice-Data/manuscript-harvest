@@ -99,6 +99,41 @@ _MIN_TEXT_CHARS = 200
 # A PDF this small is only accepted if it reads like a real article.
 _SMALL_PDF_BYTES = 30_000
 
+#: Failure statuses that name a cause the user can act on, most decisive first.
+#: These beat a generic miss wherever they appear, because "your session expired"
+#: says more than "the last thing we tried returned HTML".
+#:
+#: This lives here, next to the code that produces the words, because two callers
+#: need the same ranking and neither can import the other: a tier has to pick a
+#: winner among its own candidate URLs before `fetcher` ever sees one status from
+#: it, and `fetcher` imports the tiers. Duplicating the order into the tier is what
+#: the previous version did, and the copy drifted -- it kept the *later* diagnosis
+#: where `fetcher` keeps the *higher-ranked* one, so `paywalled` then
+#: `session_expired` resolved to different words depending on whether the two came
+#: from one tier or two. Same set, same order, one definition.
+PDF_DIAGNOSES = ("paywalled", "session_expired", "proxy_not_configured",
+                 "publisher_stub_page", "link_resolver_error")
+
+
+def better_pdf_failure(current: Optional[str], incoming: str) -> str:
+    """Which of two PDF failure statuses explains more.
+
+    A named diagnosis beats a generic miss in either order; between two diagnoses
+    `PDF_DIAGNOSES` order decides; between two generic misses the later one wins,
+    since it comes from the more capable attempt. Folding this over a list is
+    exactly `fetcher._best_pdf_status`'s failure branch -- that function is written
+    in terms of this one so the two cannot disagree.
+    """
+    if current is None:
+        return incoming
+    if current in PDF_DIAGNOSES and incoming in PDF_DIAGNOSES:
+        return min(current, incoming, key=PDF_DIAGNOSES.index)
+    if incoming in PDF_DIAGNOSES:
+        return incoming
+    if current in PDF_DIAGNOSES:
+        return current
+    return incoming
+
 
 def _contains_any(haystack: str, needles) -> bool:
     return any(needle in haystack for needle in needles)

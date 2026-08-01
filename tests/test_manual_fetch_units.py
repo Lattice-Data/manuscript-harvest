@@ -594,3 +594,111 @@ def test_verify_with_an_empty_spec_exits_two(tmp_path):
     spec = tmp_path / "spec.yaml"
     spec.write_text(yaml.safe_dump({"articles": []}))
     assert manual_fetch.main(["verify", "--spec", str(spec)]) == 2
+
+
+# -- the bootstrap overwrite guard -------------------------------------------
+#
+# `bootstrap` builds the spec from its arguments alone -- it does not merge -- and
+# `--out` defaults to the checked-in spec. So the documented one-DOI invocation used
+# to discard every other paper, silently, and the only warning was in the README.
+
+OTHER_DOI = "10.1016/j.cell.2021.04.038"
+
+
+def _existing_spec(path, *dois):
+    path.write_text(yaml.safe_dump({"articles": [
+        {"doi": doi, "source_dir": "Whatever", "main_pdf": None, "supplements": []}
+        for doi in dois
+    ]}))
+    return path
+
+
+def _bootstrap(tmp_path, out, extra=()):
+    return manual_fetch.main(["bootstrap", f"{DOI}=Science", "--root", str(tmp_path),
+                              "--out", str(out), *extra])
+
+
+def test_bootstrap_refuses_to_drop_articles_and_names_them(tmp_path, capsys):
+    """The exact reported footgun: one DOI on the command line against a spec holding
+    several. Naming the losses matters more than counting them, because the fix is to
+    paste them back onto the command line."""
+    _download_folder(tmp_path)
+    out = _existing_spec(tmp_path / "spec.yaml", DOI, OTHER_DOI, "10.1126/science.aat5031")
+    before = out.read_text()
+
+    assert _bootstrap(tmp_path, out) == 2
+    assert out.read_text() == before, "the spec must be untouched"
+
+    err = capsys.readouterr().err
+    assert "would drop 2 of them" in err
+    assert OTHER_DOI in err and "10.1126/science.aat5031" in err
+    assert "it does not merge" in err
+    assert "--replace" in err and "--out" in err
+
+
+def test_a_run_that_drops_nothing_needs_no_flag(tmp_path):
+    """Regenerating the spec from the full list is the documented workflow and must
+    stay a one-liner."""
+    _download_folder(tmp_path)
+    out = _existing_spec(tmp_path / "spec.yaml", DOI)
+    assert _bootstrap(tmp_path, out) == 0
+    assert [a["doi"] for a in manual_fetch.load_spec(out)["articles"]] == [DOI]
+
+
+def test_replace_accepts_the_loss_but_still_says_what_went(tmp_path, capsys):
+    """A guard whose escape hatch is silent just moves the surprise later."""
+    _download_folder(tmp_path)
+    out = _existing_spec(tmp_path / "spec.yaml", DOI, OTHER_DOI)
+
+    assert _bootstrap(tmp_path, out, ["--replace"]) == 0
+    assert [a["doi"] for a in manual_fetch.load_spec(out)["articles"]] == [DOI]
+    assert f"dropped 1 article(s) at --replace: {OTHER_DOI}" in capsys.readouterr().err
+
+
+def test_a_fresh_out_path_has_nothing_to_lose(tmp_path):
+    """Drafting into a scratch file is the way to work on one paper, so it must not
+    trip the guard."""
+    _download_folder(tmp_path)
+    out = tmp_path / "does-not-exist-yet.yaml"
+    assert _bootstrap(tmp_path, out) == 0
+    assert out.exists()
+
+
+def test_a_same_size_swap_is_still_a_loss(tmp_path, capsys):
+    """Why the guard compares DOI sets and not counts: one article replaced by one
+    different article loses exactly as much, and a count check waves it through."""
+    _download_folder(tmp_path)
+    out = _existing_spec(tmp_path / "spec.yaml", OTHER_DOI)
+
+    assert _bootstrap(tmp_path, out) == 2
+    assert f"    {OTHER_DOI}" in capsys.readouterr().err
+
+
+def test_an_unreadable_spec_is_refused_rather_than_overwritten(tmp_path, capsys):
+    """The dangerous case. A file that will not parse may hold anything, so it cannot
+    be treated as empty -- that is the one reading that guarantees the loss."""
+    _download_folder(tmp_path)
+    out = tmp_path / "spec.yaml"
+    out.write_text("articles: [this is: not: valid: yaml\n")
+    before = out.read_text()
+
+    assert _bootstrap(tmp_path, out) == 2
+    assert out.read_text() == before
+    assert "could not be read" in capsys.readouterr().err
+
+    # And --replace is the way through, since fixing a corrupt spec is legitimate.
+    assert _bootstrap(tmp_path, out, ["--replace"]) == 0
+    assert [a["doi"] for a in manual_fetch.load_spec(out)["articles"]] == [DOI]
+
+
+@pytest.mark.parametrize("body", [
+    "articles: not-a-list\n",
+    "- just\n- a\n- list\n",
+    "",
+])
+def test_a_spec_of_the_wrong_shape_does_not_crash_the_guard(tmp_path, body):
+    """Whatever is in the file, bootstrap either writes or refuses -- it never raises."""
+    _download_folder(tmp_path)
+    out = tmp_path / "spec.yaml"
+    out.write_text(body)
+    assert _bootstrap(tmp_path, out, ["--replace"]) == 0

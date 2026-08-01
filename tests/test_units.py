@@ -7,6 +7,8 @@ fails.
 """
 
 
+import json
+
 import pytest
 import requests
 
@@ -29,6 +31,7 @@ from manuscript_harvest.fetch.cli import DEFAULT_FETCH_CONFIG, _merge, load_conf
 from manuscript_harvest.fetch.http import Http, HttpError
 from manuscript_harvest.fetch.identifiers import (
     Identifiers,
+    _query_ncbi_idconv,
     doi_slug,
     is_preprint_doi,
     normalize_doi,
@@ -45,9 +48,11 @@ from tests.fakes import (
     EZPROXY_HTML,
     PAYWALL_HTML,
     POW_HTML,
+    PMCID,
     RESOURCE_NOT_FOUND_XML,
     SCIENCE_ARTICLE_LINKS,
     SSO_HTML,
+    FakeHttp,
     FakePage,
     FakeRequestsResponse,
     FakeSession,
@@ -109,6 +114,62 @@ def test_open_access_pdf_urls_filters_by_availability():
         {"documentStyle": "html", "availabilityCode": "OA", "url": "https://a/page"},
     ])
     assert ids.open_access_pdf_urls() == ["https://a/1.pdf"]
+
+
+# -- NCBI's DOI -> PMCID converter -------------------------------------------
+#
+# The three answers this service gives are three different facts, and d09d7b2 moved
+# one of them without a test to hold it in place -- the changed line was executed by
+# nothing in the suite, so it could have been reverted silently.
+
+def _idconv_http(payload: dict) -> FakeHttp:
+    return FakeHttp({"idconv": (200, json.dumps(payload).encode(), "application/json")})
+
+
+def test_no_pmc_deposit_is_a_lookup_note_not_a_problem():
+    """"Identifier not found in PMC" is the correct answer for any paper without a
+    PMC deposit, which is most paywalled ones. As a `problems` entry it printed a `!`
+    for nearly every DOI in a batch with the same weight as a real refusal; on
+    10.1016/j.oraloncology.2021.105348 it was the only line the row had, making a
+    browser-tier failure look like a lookup miss."""
+    ids = Identifiers(doi=DOI, doi_raw=DOI)
+    _query_ncbi_idconv(ids, _idconv_http(
+        {"records": [{"status": "error", "errmsg": "Identifier not found in PMC"}]}))
+
+    assert ids.problems == []
+    assert ids.lookup_notes == ["ncbi_idconv: Identifier not found in PMC"]
+
+
+def test_the_note_does_not_land_in_resolved_by():
+    """Where d09d7b2 put it. `resolved_by` is a provenance list of services that
+    resolved something, read by anything consuming the manifest; a sentence is not a
+    service name, and nothing downstream can parse `ncbi_idconv:Identifier not found
+    in PMC` against `europepmc` / `ncbi_idconv` / `crossref`."""
+    ids = Identifiers(doi=DOI, doi_raw=DOI)
+    _query_ncbi_idconv(ids, _idconv_http(
+        {"records": [{"status": "error", "errmsg": "Identifier not found in PMC"}]}))
+
+    assert ids.resolved_by == []
+    assert "lookup_notes" in ids.to_dict()
+
+
+def test_the_service_failing_is_still_a_problem():
+    """The distinction the demotion turns on: the service answering "no" is not the
+    service being broken, and only one of those is worth interrupting a user over."""
+    ids = Identifiers(doi=DOI, doi_raw=DOI)
+    _query_ncbi_idconv(ids, FakeHttp({"idconv": (503, b"", "")}))
+
+    assert ids.problems == ["ncbi idconv returned HTTP 503"]
+    assert ids.lookup_notes == []
+
+
+def test_a_hit_records_the_service_by_name():
+    ids = Identifiers(doi=DOI, doi_raw=DOI)
+    _query_ncbi_idconv(ids, _idconv_http(
+        {"records": [{"pmcid": PMCID, "pmid": "34497389"}]}))
+
+    assert (ids.pmcid, ids.resolved_by) == (PMCID, ["ncbi_idconv"])
+    assert ids.problems == [] and ids.lookup_notes == []
 
 
 # -- validation --------------------------------------------------------------

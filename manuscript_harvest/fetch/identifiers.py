@@ -125,6 +125,13 @@ class Identifiers:
     landing_url: Optional[str] = None          # publisher page, from Crossref or doi.org
     lookup_doi: Optional[str] = None           # set when a variant DOI resolved instead
     resolved_by: List[str] = field(default_factory=list)
+    #: Things a lookup service told us that are neither a resolution nor a failure.
+    #: "PMC has no deposit for this DOI" is the whole motivating case: it is the
+    #: correct answer for most paywalled papers, so it is not a `problems` entry, but
+    #: `resolved_by` is a provenance list of services that *did* resolve something and
+    #: a sentence is not a service name. Kept apart so a manifest consumer reading
+    #: `resolved_by` still sees only `europepmc`, `ncbi_idconv`, `crossref`.
+    lookup_notes: List[str] = field(default_factory=list)
     problems: List[str] = field(default_factory=list)
 
     @property
@@ -163,6 +170,7 @@ class Identifiers:
             "landing_url": self.landing_url,
             "lookup_doi": self.lookup_doi,
             "resolved_by": self.resolved_by,
+            "lookup_notes": self.lookup_notes,
             "problems": self.problems,
         }
 
@@ -237,7 +245,21 @@ def _query_ncbi_idconv(ids: Identifiers, http: Http) -> None:
         return
     record = records[0]
     if record.get("status") == "error" or record.get("errmsg"):
-        ids.problems.append(f"ncbi idconv: {record.get('errmsg', 'no match')}")
+        # NOT a problem. "Identifier not found in PMC" is the correct answer for any
+        # paper without a PMC deposit, which is most paywalled ones -- so promoting it
+        # to a `problems` entry printed a `!` line for nearly every DOI in a batch,
+        # with the same visual weight as a real refusal. On
+        # 10.1016/j.oraloncology.2021.105348 it was the *only* line the user got, which
+        # made a genuine browser-tier failure look like a PMC lookup miss.
+        #
+        # Not `resolved_by` either, which is where d09d7b2 put it: that is a list of
+        # services that resolved something, and `ncbi_idconv:Identifier not found in
+        # PMC` is not a service name. `lookup_notes` is for exactly this -- a true
+        # thing a service said that is neither a resolution nor a failure.
+        #
+        # The HTTP and exception cases above stay in `problems`: those are the service
+        # failing, which is a different thing from the service answering "no".
+        ids.lookup_notes.append(f"ncbi_idconv: {record.get('errmsg', 'no match')}")
         return
     ids.pmcid = record.get("pmcid") or ids.pmcid
     ids.pmid = record.get("pmid") or ids.pmid

@@ -604,10 +604,66 @@ def _bootstrap(args) -> int:
 
     document = {"articles": articles}
     target = Path(args.out)
+
+    # bootstrap builds the spec from its arguments alone -- it does not merge -- and
+    # `--out` defaults to the checked-in spec. So a run naming one paper silently
+    # discarded the other six, and the only warning was in the README.
+    #
+    # Compared as DOI *sets* rather than counts: seven articles replaced by seven
+    # different ones loses exactly as much as seven replaced by one, and a count
+    # check would wave that through. Naming the losses matters more than the number,
+    # because the fix is usually to paste them back onto the command line.
+    kept = {entry["doi"] for entry in articles}
+    existing, readable = _spec_dois(target)
+    if not readable:
+        if not args.replace:
+            print(f"\nrefusing to write {target}: it already exists and could not be read, so "
+                  f"there is no way to tell what overwriting it would lose.\n"
+                  f"Pass --replace to overwrite it anyway, or --out to write elsewhere.",
+                  file=sys.stderr)
+            return 2
+    else:
+        dropped = sorted(existing - kept)
+        if dropped and not args.replace:
+            print(f"\nrefusing to write {target}: it holds {len(existing)} article(s), and this "
+                  f"run would drop {len(dropped)} of them:", file=sys.stderr)
+            for doi in dropped:
+                print(f"    {doi}", file=sys.stderr)
+            print("\nbootstrap writes the spec from its arguments; it does not merge. Either add "
+                  "these to\nthe command line to keep them, or pass --replace to accept the loss, "
+                  "or draft into a\nscratch file with --out.", file=sys.stderr)
+            return 2
+
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(yaml.safe_dump(document, sort_keys=False, width=100), encoding="utf-8")
+    if readable:
+        dropped = sorted(existing - kept)
+        if dropped:
+            # --replace was given, so this is what the user asked for. Still said out
+            # loud: the whole point of the guard is that the loss is never silent.
+            print(f"dropped {len(dropped)} article(s) at --replace: {', '.join(dropped)}",
+                  file=sys.stderr)
     print(f"wrote {target}", file=sys.stderr)
     return 0
+
+
+def _spec_dois(target: Path) -> Tuple[set, bool]:
+    """(DOIs in an existing spec, whether it could be read).
+
+    A missing file reads as empty and readable -- there is nothing to lose. A file
+    that exists but will not parse is the dangerous case: it may hold anything, so
+    it is reported as unreadable rather than as empty.
+    """
+    if not target.exists():
+        return set(), True
+    try:
+        loaded = yaml.safe_load(target.read_text(encoding="utf-8")) or {}
+    except (yaml.YAMLError, OSError, UnicodeDecodeError):
+        return set(), False
+    if not isinstance(loaded, dict):
+        return set(), False
+    return {entry.get("doi") for entry in (loaded.get("articles") or [])
+            if isinstance(entry, dict) and entry.get("doi")}, True
 
 
 def _verify(args) -> int:
@@ -654,6 +710,9 @@ def main(argv=None) -> int:
     boot.add_argument("--root", default=None,
                       help=f"folder holding the downloads (default ${MANUAL_DIR_ENV} or ./{DEFAULT_MANUAL_DIR})")
     boot.add_argument("--out", default=str(Path(DEFAULT_MANUAL_DIR) / SPEC_NAME))
+    boot.add_argument("--replace", action="store_true",
+                      help="accept dropping articles the existing --out spec holds. Without "
+                           "it, a run that would lose any is refused and names them")
     boot.set_defaults(func=_bootstrap)
 
     check = subparsers.add_parser("verify", help="fetch each DOI in the spec and compare (network)")

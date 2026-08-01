@@ -20,6 +20,7 @@ So what these tests defend is mostly the *naming* of outcomes:
 
 import pytest
 
+from manuscript_harvest.fetch.fetcher import _best_pdf_status
 from manuscript_harvest.fetch.http import HttpError, Response
 from manuscript_harvest.fetch.identifiers import Identifiers
 from manuscript_harvest.fetch.sources.biorxiv import (
@@ -27,12 +28,13 @@ from manuscript_harvest.fetch.sources.biorxiv import (
     _media_links,
     _version_key,
 )
-from manuscript_harvest.fetch.sources.europepmc import EuropePmcSource
+from manuscript_harvest.fetch.sources.europepmc import RENDER_PDF, EuropePmcSource
 from manuscript_harvest.fetch.sources.pmc_oa import PmcOaSource
 from manuscript_harvest.fetch.sources.pmc_supplements import (
     PmcSupplementsSource,
     _springer_url,
 )
+from manuscript_harvest.fetch.validate import PDF_DIAGNOSES, better_pdf_failure
 from tests.fakes import (
     DOI,
     PAYWALL_HTML,
@@ -1211,3 +1213,192 @@ def test_the_xml_is_not_requested_without_a_pmcid():
     http = _epmc_http()
     EuropePmcSource(http).fetch(_epmc_ids(pmcid=None), need_pdf=True, need_supplements=False)
     assert http.called_matching(EPMC_XML) == 0
+
+
+# -- Europe PMC: an advertised free PDF that is not free ---------------------
+#
+# `europepmc` ran for 10.1016/j.jhep.2020.05.039 despite the paper having no PMCID,
+# which under `applies` can only mean Europe PMC advertised an open-access PDF URL.
+# It tried that URL over plain HTTP, failed, and said nothing -- the same
+# problems/attempts split that `_fetch_pdf` had in the browser tier.
+
+def test_an_advertised_free_pdf_that_fails_is_worth_saying_out_loud():
+    """A public index claiming free access to a paywalled article is actionable in a
+    way that the `?pdf=render` fallback failing is not: it means the index is wrong
+    about this paper, which is why only the advertised URLs earn a problem line."""
+    http = _epmc_http({OA_PDF_URL: (200, PAYWALL_HTML * 20, "application/pdf"),
+                       EPMC_RENDER: (404, b"", "")})
+    result = EuropePmcSource(http).fetch(_epmc_ids(), need_pdf=True, need_supplements=False)
+
+    advertised = [p for p in result.problems if "advertised a free PDF" in p]
+    assert len(advertised) == 1, "one line for the advertised URL, none for the fallback"
+    assert OA_PDF_URL in advertised[0]
+    assert "paywalled" in advertised[0]
+
+
+def test_the_render_fallback_failing_is_not_a_problem_line():
+    """It is Europe PMC's own renderer, not a claim about this article's licence, so
+    it failing says nothing a user can act on."""
+    http = _epmc_http({OA_PDF_URL: (404, b"", ""), EPMC_RENDER: (404, b"", "")})
+    result = EuropePmcSource(http).fetch(
+        _epmc_ids(pdf_urls=()), need_pdf=True, need_supplements=False)
+
+    assert result.pdf_status == "download_failed"
+    assert result.problems == []
+
+
+def test_a_pdf_that_arrives_from_europepmc_reports_nothing():
+    http = _epmc_http()
+    result = EuropePmcSource(http).fetch(_epmc_ids(), need_pdf=True, need_supplements=False)
+    assert result.pdf_status == "ok" and result.problems == []
+
+
+def test_a_named_diagnosis_survives_a_later_generic_failure():
+    """The hole in `test_the_most_informative_failure_survives_the_candidate_loop`
+    below: that test's second candidate 404s, which `continue`s before the status is
+    ever reassigned, so it never exercised the overwrite. Two candidates that both
+    return a *body* do -- and `paywalled` was being thrown away for `not_a_pdf`,
+    before `fetcher._best_pdf_status` could rank it."""
+    second = "https://example.org/viewer.pdf"
+    http = _epmc_http({OA_PDF_URL: (200, PAYWALL_HTML * 20, "application/pdf"),
+                       second: (200, b"<html>an HTML viewer</html>" * 40, "text/html")})
+    result = EuropePmcSource(http).fetch(
+        _epmc_ids(pmcid=None, pdf_urls=(OA_PDF_URL, second)),
+        need_pdf=True, need_supplements=False)
+
+    assert [a["status"] for a in result.attempts if a["action"] == "pdf"] == \
+        ["paywalled", "not_a_pdf"]
+    assert result.pdf_status == "paywalled", "the diagnosis outranks the generic miss"
+
+
+def test_a_diagnosis_arriving_second_still_wins():
+    """The mirror of the test above: the generic miss comes first this time, so the
+    fix cannot be "keep whichever was seen first"."""
+    second = "https://example.org/second.pdf"
+    http = _epmc_http({OA_PDF_URL: (200, b"<html>viewer</html>" * 40, "text/html"),
+                       second: (200, PAYWALL_HTML * 20, "application/pdf")})
+    result = EuropePmcSource(http).fetch(
+        _epmc_ids(pmcid=None, pdf_urls=(OA_PDF_URL, second)),
+        need_pdf=True, need_supplements=False)
+    assert result.pdf_status == "paywalled"
+
+
+@pytest.mark.parametrize("current,incoming,expected", [
+    (None, "not_a_pdf", "not_a_pdf"),
+    ("not_a_pdf", "paywalled", "paywalled"),      # a diagnosis beats a generic miss
+    ("paywalled", "not_a_pdf", "paywalled"),      # ... in either order
+    ("paywalled", "session_expired", "paywalled"),         # PDF_DIAGNOSES order decides
+    ("session_expired", "paywalled", "paywalled"),         # ... regardless of arrival
+    ("not_a_pdf", "download_failed", "download_failed"),   # neither named: last wins
+])
+def test_which_pdf_failure_is_kept(current, incoming, expected):
+    assert better_pdf_failure(current, incoming) == expected
+
+
+# -- the tier and the orchestrator must not rank failures differently --------
+
+_FAILURE_VOCABULARY = list(PDF_DIAGNOSES) + [
+    "not_a_pdf", "download_failed", "not_in_oa_subset", "not_found",
+]
+
+
+def test_the_tier_and_the_orchestrator_rank_failures_identically():
+    """The word a user reads must not depend on whether two statuses came from one
+    tier or from two.
+
+    `europepmc` used to carry its own copy of the diagnosis order, and the copy had
+    drifted: it kept the *later* diagnosis where `_best_pdf_status` keeps the
+    higher-ranked one, so 10 of 64 status pairs resolved differently. Because the
+    tier collapses its candidates before the orchestrator sees them, the better word
+    was unrecoverable by the time anything could notice.
+
+    Exhaustive rather than exemplary on purpose -- the drift was in the 10 pairs
+    nobody had written an example for. Successes are excluded because an accepted
+    PDF returns from the candidate loop before this ever runs.
+    """
+    for a in _FAILURE_VOCABULARY:
+        for b in _FAILURE_VOCABULARY:
+            assert better_pdf_failure(a, b) == _best_pdf_status([a, b]), f"{a} then {b}"
+            for c in _FAILURE_VOCABULARY:
+                assert better_pdf_failure(better_pdf_failure(a, b), c) == \
+                    _best_pdf_status([a, b, c]), f"{a} then {b} then {c}"
+
+
+# -- a success says nothing --------------------------------------------------
+
+def test_a_dead_publisher_link_says_nothing_when_the_renderer_delivers():
+    """The regression the buffering exists to prevent, and the ordinary shape for a
+    PMC-held article: `fullTextUrlList` advertises a publisher URL that is dead, and
+    Europe PMC's own renderer serves the PDF a moment later.
+
+    Complaining mid-loop reported `pdf_status='ok'` *and* a `!` line. A success emits
+    no problem line -- otherwise every batch row grows one and the real failures stop
+    standing out. Same contract as `test_a_pdf_that_arrives_reports_no_problem_at_all`
+    in `test_browser_tier.py`.
+    """
+    dead = "https://publisher.example/dead.pdf"
+    http = _epmc_http({dead: (404, b"", ""),
+                       EPMC_RENDER: (200, make_pdf(), "application/pdf")})
+    result = EuropePmcSource(http).fetch(
+        _epmc_ids(pdf_urls=(dead,)), need_pdf=True, need_supplements=False)
+
+    assert result.pdf_status == "ok"
+    assert result.problems == [], "a fetch that succeeded has nothing to complain about"
+
+
+def test_the_renderer_does_not_complain_about_itself_when_epmc_lists_it():
+    """For a PMC-held article the render URL is *also* in `fullTextUrlList`, so it
+    arrives inside `open_access_pdf_urls()` and looked "advertised" -- earning the
+    complaint the code and the commit message both said it was exempt from.
+
+    That shape is the normal one, not a corner case: it is the reason
+    `_candidate_pdf_urls` has to dedupe the fallback at all.
+    """
+    render = RENDER_PDF.format(pmcid=PMCID)
+    http = _epmc_http({EPMC_RENDER: (404, b"", "")})
+    ids = _epmc_ids(pdf_urls=(render,))
+
+    assert EuropePmcSource(http)._candidate_pdf_urls(ids) == [render], "listed once"
+    result = EuropePmcSource(http).fetch(ids, need_pdf=True, need_supplements=False)
+    assert result.problems == []
+
+
+def test_a_url_listed_twice_is_fetched_once_and_reported_once():
+    """`fullTextUrlList` repeats a URL across entries that differ only in their
+    `availability` wording. Each copy cost a second identical request and printed a
+    second identical `!` line for one failure."""
+    http = _epmc_http({OA_PDF_URL: (404, b"", ""), EPMC_RENDER: (404, b"", "")})
+    ids = _epmc_ids(pmcid=None, pdf_urls=(OA_PDF_URL, OA_PDF_URL))
+    result = EuropePmcSource(http).fetch(ids, need_pdf=True, need_supplements=False)
+
+    assert http.called_matching(OA_PDF_URL) == 1
+    assert len(result.problems) == 1
+
+
+def test_a_redirect_is_recorded_because_the_verdict_came_from_where_it_landed():
+    """`validate_pdf` judges `resp.url`, not the URL we asked for, so `paywalled` can
+    be a statement about a host the advertised link merely pointed at. Without the
+    final URL, nothing downstream can check that verdict against the right page."""
+    landing = "https://publisher.example/paywall"
+
+    class Redirecting:
+        def get(self, url, params=None, accept=None, allow_redirects=True):
+            return Response(url=landing, status=200, content=PAYWALL_HTML * 20,
+                            content_type="application/pdf")
+
+    result = EuropePmcSource(Redirecting()).fetch(
+        _epmc_ids(pmcid=None), need_pdf=True, need_supplements=False)
+
+    attempt = [a for a in result.attempts if a["action"] == "pdf"][0]
+    assert attempt["url"] == OA_PDF_URL and attempt["final_url"] == landing
+    assert landing in result.problems[0]
+
+
+def test_a_request_that_did_not_move_records_no_final_url():
+    """Only redirects are worth a key in the manifest; the ordinary case stays quiet."""
+    http = _epmc_http({OA_PDF_URL: (200, PAYWALL_HTML * 20, "application/pdf")})
+    result = EuropePmcSource(http).fetch(
+        _epmc_ids(pmcid=None), need_pdf=True, need_supplements=False)
+
+    attempt = [a for a in result.attempts if a["action"] == "pdf"][0]
+    assert "final_url" not in attempt

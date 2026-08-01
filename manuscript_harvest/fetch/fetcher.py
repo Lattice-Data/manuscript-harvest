@@ -12,6 +12,7 @@ here is an empty `supplementary/` directory:
     fetched_unverified   every file we identified arrived, but nothing bounds the set
     partial_failure      we got some; at least one download or archive failed
     expected_but_missing hasSuppl=Y, and we came away with nothing  <-- the bug case
+    none_retrieved       a tier tried and every file it went after was lost
     page_not_parsed      a page loaded but we could not read a file list from it
     unknown_none_found   nobody told us whether supplements exist, and we found none
     not_requested        --no-supplements
@@ -39,12 +40,14 @@ Both are settled: see `store.SUPPL_SETTLED`. An unbounded set is not a failed on
 and re-running would scrape the same page and get the same answer.
 """
 
+from functools import reduce
 from typing import Dict, List, Optional
 
 from . import store
 from .http import Http
 from .identifiers import Identifiers, normalize_doi, resolve_identifiers
 from .sources import DEFAULT_TIERS, build_sources
+from .validate import better_pdf_failure
 from .sources.base import (
     ROLE_LANDING,
     ROLE_MEDIA,
@@ -56,11 +59,6 @@ from .sources.base import (
 # Statuses that mean the PDF is on disk and usable.
 _PDF_SUCCESS = {"ok", "scanned_pdf_suspected"}
 
-# Diagnoses that name a cause the user can act on. These win wherever they appear,
-# because "your session expired" beats "the last thing we tried returned HTML".
-_PDF_DIAGNOSES = ["paywalled", "session_expired", "proxy_not_configured",
-                  "publisher_stub_page", "link_resolver_error"]
-
 
 def _best_pdf_status(reported: List[str]) -> str:
     """Pick the most useful explanation from the statuses each tier reported.
@@ -71,14 +69,47 @@ def _best_pdf_status(reported: List[str]) -> str:
     `[download_failed, not_in_oa_subset, not_a_pdf]`, and a static ranking surfaced
     `not_in_oa_subset` when the actual cause was Wiley serving an HTML viewer.
     An actionable diagnosis still wins wherever it appears.
+
+    The failure branch is a fold of `validate.better_pdf_failure`, which is the same
+    function a tier uses to choose among its own candidate URLs. Sharing it is the
+    point: the word a user reads must not depend on whether two statuses came from
+    one tier or from two.
     """
     for status in reported:
         if status in _PDF_SUCCESS:
             return status
-    for candidate in _PDF_DIAGNOSES:
-        if candidate in reported:
-            return candidate
-    return reported[-1] if reported else "not_found"
+    if not reported:
+        return "not_found"
+    return reduce(better_pdf_failure, reported)
+
+
+def _no_tier_applied(ids: Identifiers, tier_names: List[str]) -> str:
+    """Why a run ended without a single tier having tried.
+
+    The one explanation that has to survive every tier list, because it is the case
+    where no tier ran to produce any other. `--oa-only` over a paywalled non-PMC DOI
+    is the shape that exposed it: every OA tier keys on a PMCID or a Europe PMC
+    open-access URL, this paper has neither, and the row read
+
+        failed  pdf=not_found  suppl=unknown_none_found  files=0  tiers=-
+
+    with nothing after it. d09d7b2 caused that by demoting the idconv miss out of
+    `problems` -- correctly, since "no PMC deposit" is the normal answer for a
+    paywalled paper, but it was the only line that row had, and the compensating
+    problem lines that commit added live in tiers which do not run here.
+
+    States the facts the `applies` methods key on rather than restating their rules,
+    so this cannot drift as tiers change.
+    """
+    known = f"pmcid={ids.pmcid or 'none'}, " \
+            f"europepmc open-access pdf urls={len(ids.open_access_pdf_urls())}, " \
+            f"preprint={'yes' if ids.is_preprint else 'no'}"
+    hint = ""
+    if "proxy_browser" not in tier_names:
+        hint = ("; the browser tier, which needs none of those, is not in this run's "
+                "tier list")
+    return (f"no configured tier could try this paper ({known}). Tiers: "
+            f"{', '.join(tier_names) or 'none'}{hint}")
 
 
 def suppl_flag_is_authoritative(ids: Identifiers) -> bool:
@@ -136,6 +167,33 @@ def _supplement_status(
         return "none_listed"
     if ids.has_suppl is True:
         return "expected_but_missing"
+    # A tier that tried and came away with nothing *looked*, and that is the whole
+    # difference from `unknown_none_found`, which means nobody did. Both produced the
+    # same word for 10.1016/j.oraloncology.2021.105348, so the summary line could not
+    # distinguish "we lost everything" from "no tier ever tried".
+    #
+    # "Tried", not "listed files and lost them", which is what d09d7b2's comment
+    # claimed: `europepmc` reaches `partial_failure` when the archive endpoint errors,
+    # answers with a non-archive, or yields an unreadable ZIP, and none of those
+    # involves a listing. Having tried is the fact all the producers share.
+    #
+    # Not `partial_failure`, which is what d09d7b2 returned here: that word is
+    # documented in the legend above and in the README as "some arrived; at least one
+    # failed", and it is the only way a consumer can tell from the status alone that
+    # a file made it. Reusing it for the zero-file case would put two facts under one
+    # name, which is the defect that commit set out to fix.
+    #
+    # The position is load-bearing. Above `has_suppl is True` it would swallow
+    # `expected_but_missing`, which is the stronger statement when the publisher says
+    # the files exist; above `none_listed` it would override a source that owns the
+    # content. Both of those are pinned in `test_supplement_status_precedence`.
+    #
+    # Above `page_not_parsed` because it claims more: something was there to retrieve
+    # and we lost it, where `page_not_parsed` says we never learned whether anything
+    # was. Reachable when Europe PMC's archive endpoint answers with a non-archive
+    # and the browser tier then cannot read the publisher's page.
+    if "partial_failure" in reported:
+        return "none_retrieved"
     if "page_not_parsed" in reported:
         return "page_not_parsed"
     return "unknown_none_found"
@@ -254,6 +312,9 @@ def fetch_publication(
             need_pdf = False
         if supplements:
             need_supplements = False
+
+    if not record["tiers_tried"]:
+        record["problems"].append(_no_tier_applied(ids, tier_names))
 
     # -- write everything out ----------------------------------------------
 
