@@ -39,12 +39,14 @@ Both are settled: see `store.SUPPL_SETTLED`. An unbounded set is not a failed on
 and re-running would scrape the same page and get the same answer.
 """
 
+from functools import reduce
 from typing import Dict, List, Optional
 
 from . import store
 from .http import Http
 from .identifiers import Identifiers, normalize_doi, resolve_identifiers
 from .sources import DEFAULT_TIERS, build_sources
+from .validate import better_pdf_failure
 from .sources.base import (
     ROLE_LANDING,
     ROLE_MEDIA,
@@ -56,11 +58,6 @@ from .sources.base import (
 # Statuses that mean the PDF is on disk and usable.
 _PDF_SUCCESS = {"ok", "scanned_pdf_suspected"}
 
-# Diagnoses that name a cause the user can act on. These win wherever they appear,
-# because "your session expired" beats "the last thing we tried returned HTML".
-_PDF_DIAGNOSES = ["paywalled", "session_expired", "proxy_not_configured",
-                  "publisher_stub_page", "link_resolver_error"]
-
 
 def _best_pdf_status(reported: List[str]) -> str:
     """Pick the most useful explanation from the statuses each tier reported.
@@ -71,14 +68,18 @@ def _best_pdf_status(reported: List[str]) -> str:
     `[download_failed, not_in_oa_subset, not_a_pdf]`, and a static ranking surfaced
     `not_in_oa_subset` when the actual cause was Wiley serving an HTML viewer.
     An actionable diagnosis still wins wherever it appears.
+
+    The failure branch is a fold of `validate.better_pdf_failure`, which is the same
+    function a tier uses to choose among its own candidate URLs. Sharing it is the
+    point: the word a user reads must not depend on whether two statuses came from
+    one tier or from two.
     """
     for status in reported:
         if status in _PDF_SUCCESS:
             return status
-    for candidate in _PDF_DIAGNOSES:
-        if candidate in reported:
-            return candidate
-    return reported[-1] if reported else "not_found"
+    if not reported:
+        return "not_found"
+    return reduce(better_pdf_failure, reported)
 
 
 def suppl_flag_is_authoritative(ids: Identifiers) -> bool:
