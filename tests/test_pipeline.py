@@ -262,12 +262,22 @@ def test_a_run_where_no_tier_applied_still_explains_itself(tmp_path):
 def test_the_browser_tier_being_configured_changes_the_advice(tmp_path):
     """Telling someone the browser tier is missing when they already asked for it
     sends them at the wrong obstacle -- the same reasoning as `_cell_press_retry`'s
-    two failure reasons."""
+    two failure reasons.
+
+    Checked against `_no_tier_applied`'s own message rather than a bare "browser
+    tier" substring: `proxy_browser` being configured also means it gets *tried*,
+    and where Playwright is not installed -- true of the CI environment, not this
+    one -- that failure is reported as `tier proxy_browser raised ImportError: ...
+    needs Playwright`, which contains "browser tier" too and is not what this test
+    is about.
+    """
     record = fetcher.fetch_publication(
         DOI, fetch_config(tmp_path, ["europepmc", "proxy_browser"]),
         http=_unreachable_http())
 
-    assert "browser tier" not in " ".join(record["problems"])
+    assert record["tiers_tried"] == ["proxy_browser"]
+    assert not any("no configured tier could try this paper" in p
+                   for p in record["problems"])
 
 
 def test_a_tier_that_ran_is_left_to_speak_for_itself(tmp_path):
