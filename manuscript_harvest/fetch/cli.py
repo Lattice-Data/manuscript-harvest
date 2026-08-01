@@ -186,8 +186,17 @@ def cmd_batch(args) -> int:
     dois = list(dict.fromkeys(parsed))
     collapsed = len(parsed) - len(dois)
     if collapsed:
+        # Named, not just counted. Normalization means the two lines that collapsed
+        # need not have looked alike -- `10.1038/X` and `https://doi.org/10.1038/x`
+        # are one paper -- so a bare count leaves the user unable to check the run
+        # against their own input. Truncated because the file that prompted this had
+        # 55 lines and the message is a warning, not the report.
+        repeated = [d for d in dois if parsed.count(d) > 1]
+        shown = ", ".join(repeated[:5])
+        if len(repeated) > 5:
+            shown += f", and {len(repeated) - 5} more"
         print(f"collapsed {collapsed} duplicate DOI line(s); fetching {len(dois)} distinct "
-              f"paper(s)", file=sys.stderr)
+              f"paper(s). Repeated: {shown}", file=sys.stderr)
 
     if not dois:
         print("no DOIs found in input", file=sys.stderr)

@@ -557,8 +557,43 @@ def test_a_repeated_doi_is_fetched_once(tmp_path, monkeypatch, capsys):
     cli.cmd_batch(args)
 
     assert fetched == ["10.1038/s41586-020-00001-1", "10.1038/s41586-020-00002-1"]
-    assert "collapsed 2 duplicate DOI line(s); fetching 2 distinct paper(s)" \
-        in capsys.readouterr().err
+    err = capsys.readouterr().err
+    notice = next(line for line in err.splitlines() if "collapsed" in line)
+    assert "collapsed 2 duplicate DOI line(s); fetching 2 distinct paper(s)" in notice
+    assert "Repeated: 10.1038/s41586-020-00001-1" in notice
+    assert "00002" not in notice, "only the ones that actually repeated"
+
+
+def test_the_collapse_names_dois_the_input_never_spelled_that_way(tmp_path, monkeypatch,
+                                                                  capsys):
+    """The two lines that collapse need not have looked alike -- normalization folds
+    case and strips the resolver prefix -- so a bare count leaves the user unable to
+    check the run against their own input."""
+    path = tmp_path / "papers.txt"
+    path.write_text("https://doi.org/10.1038/S41586-020-00001-1\n"
+                    "10.1038/s41586-020-00001-1\n")
+    args = cli.build_parser().parse_args(
+        ["--config", str(_config_file(tmp_path)), "batch", str(path), "--oa-only"])
+    monkeypatch.setattr(cli, "fetch_publication",
+                        lambda doi, *a, **k: _record(doi, proxy_tried=False, expired=False))
+    cli.cmd_batch(args)
+
+    assert "Repeated: 10.1038/s41586-020-00001-1" in capsys.readouterr().err
+
+
+def test_the_collapse_notice_stays_short_on_a_long_input(tmp_path, monkeypatch, capsys):
+    """It is a warning, not the report. The file that prompted this had 55 lines."""
+    path = tmp_path / "papers.txt"
+    path.write_text("".join(f"10.1038/s41586-020-{n:05d}-1\n" * 2 for n in range(1, 9)))
+    args = cli.build_parser().parse_args(
+        ["--config", str(_config_file(tmp_path)), "batch", str(path), "--oa-only"])
+    monkeypatch.setattr(cli, "fetch_publication",
+                        lambda doi, *a, **k: _record(doi, proxy_tried=False, expired=False))
+    cli.cmd_batch(args)
+
+    err = capsys.readouterr().err
+    assert "collapsed 8 duplicate DOI line(s)" in err
+    assert "and 3 more" in err
 
 
 def test_duplicates_cannot_trip_the_proxy_breaker_on_their_own(tmp_path, monkeypatch, capsys):

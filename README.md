@@ -152,8 +152,14 @@ carried the article's figure images. Re-running is a no-op unless you pass
 
 `dois.txt` for `batch` is one DOI per line; `#` starts a comment, blank lines are
 skipped, and a line that is not a DOI is reported and skipped rather than aborting
-the run. `get` prints the article directory on **stdout** and everything else on
-stderr, so `DIR=$(manuscript-fetch get 10.1038/...)` gives you the path.
+the run. Repeats are collapsed after normalization, so `10.1038/X` and
+`https://doi.org/10.1038/x` count once — the run says which DOIs it collapsed. This
+is not only about wasted work: the proxy circuit breaker below counts *records*, so
+one paywalled paper listed three times used to report "3 papers in a row" and
+disable the browser tier for the rest of the run.
+
+`get` prints the article directory on **stdout** and everything else on stderr, so
+`DIR=$(manuscript-fetch get 10.1038/...)` gives you the path.
 
 Sources are tried in order, and the first four need no credentials and no
 browser. `--oa-only` guarantees nothing ever opens one:
