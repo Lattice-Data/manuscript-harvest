@@ -285,8 +285,15 @@ here", so this is not a page we failed to parse) · `not_a_pdf` ·
 | `fetched_unverified` | every file we identified arrived, but nothing bounds the set |
 | `partial_failure` | some arrived; at least one failed |
 | `expected_but_missing` | `hasSuppl: Y` and we came away with nothing — **the bug case** |
+| `none_retrieved` | a tier tried and every file it went after was lost |
 | `page_not_parsed` | a page loaded but no file list could be read from it |
 | `unknown_none_found` | nobody said whether any exist, and none were found |
+
+`none_retrieved` and `unknown_none_found` both come back with an empty
+`supplementary/`, and separating them is the point: the first means a tier looked
+and lost everything, the second that no tier ever tried. They read the same on
+disk. `none_retrieved` is deliberately not `partial_failure` — that word is the
+only way to tell from the status alone that at least one file made it.
 
 **Why `fetched` splits in two.** The taxonomy told its own version of the lie it
 exists to prevent. For `10.1016/j.xgen.2026.101304` the adapter matched 1 of 12

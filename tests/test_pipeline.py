@@ -155,9 +155,9 @@ def test_supplement_status_precedence(reported, collected, expected):
 
 def test_losing_every_listed_file_is_not_the_same_as_nobody_looking():
     """Reported on 10.1016/j.oraloncology.2021.105348, whose row read
-    `suppl=unknown_none_found files=0`. A tier that listed supplement links and came
-    away with none of them *looked*; `unknown_none_found` means nobody did. Reporting
-    both the same way is the exact ambiguity this taxonomy exists to prevent.
+    `suppl=unknown_none_found files=0`. A tier that tried and came away with nothing
+    *looked*; `unknown_none_found` means nobody did. Reporting both the same way is
+    the exact ambiguity this taxonomy exists to prevent.
 
     Not expressible in `test_supplement_status_precedence` above: that parametrization
     hardcodes `has_suppl=True, in_pmc=True`, and `expected_but_missing` correctly wins
@@ -165,8 +165,40 @@ def test_losing_every_listed_file_is_not_the_same_as_nobody_looking():
     knows nothing.
     """
     ids = Identifiers(doi=DOI, doi_raw=DOI)          # has_suppl unknown
-    assert _supplement_status(ids, True, 0, ["partial_failure"]) == "partial_failure"
+    assert _supplement_status(ids, True, 0, ["partial_failure"]) == "none_retrieved"
     assert _supplement_status(ids, True, 0, []) == "unknown_none_found"
+
+
+def test_losing_everything_is_not_reported_as_a_partial_success():
+    """`partial_failure` is documented in the module legend and the README as "some
+    arrived; at least one failed", and it is the only way a consumer can tell from
+    the status alone that a file made it. d09d7b2 returned it for the zero-file case
+    too, putting two facts under one name -- the same defect that commit set out to
+    fix in `unknown_none_found`.
+
+    The word still has to mean what it says at both ends: files present or not.
+    """
+    ids = Identifiers(doi=DOI, doi_raw=DOI)
+    assert _supplement_status(ids, True, 0, ["partial_failure"]) == "none_retrieved"
+    assert _supplement_status(ids, True, 3, ["partial_failure"]) == "partial_failure"
+
+
+def test_losing_everything_outranks_never_reading_the_page():
+    """Reachable when Europe PMC's archive endpoint answers with a non-archive and
+    the browser tier then cannot read the publisher's page. `none_retrieved` claims
+    more -- something was there to retrieve and we lost it -- where `page_not_parsed`
+    says we never learned whether anything was."""
+    ids = Identifiers(doi=DOI, doi_raw=DOI)
+    for reported in (["partial_failure", "page_not_parsed"],
+                     ["page_not_parsed", "partial_failure"]):
+        assert _supplement_status(ids, True, 0, reported) == "none_retrieved"
+    assert _supplement_status(ids, True, 0, ["page_not_parsed"]) == "page_not_parsed"
+
+
+def test_losing_everything_does_not_make_a_record_look_complete():
+    """The same guard `partial_failure` has: outside `SUPPL_SETTLED`, or a paper that
+    lost every supplement would never be re-tried."""
+    assert "none_retrieved" not in store.SUPPL_SETTLED
 
 
 def test_a_publisher_that_says_files_exist_still_outranks_partial_failure():

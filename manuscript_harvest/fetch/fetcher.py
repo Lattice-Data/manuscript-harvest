@@ -12,6 +12,7 @@ here is an empty `supplementary/` directory:
     fetched_unverified   every file we identified arrived, but nothing bounds the set
     partial_failure      we got some; at least one download or archive failed
     expected_but_missing hasSuppl=Y, and we came away with nothing  <-- the bug case
+    none_retrieved       a tier tried and every file it went after was lost
     page_not_parsed      a page loaded but we could not read a file list from it
     unknown_none_found   nobody told us whether supplements exist, and we found none
     not_requested        --no-supplements
@@ -166,17 +167,33 @@ def _supplement_status(
         return "none_listed"
     if ids.has_suppl is True:
         return "expected_but_missing"
-    # A tier that listed files and came away with none of them *looked*, and that is
-    # the whole difference from `unknown_none_found`, which means nobody did. Both
-    # produced the same word for 10.1016/j.oraloncology.2021.105348, so the summary
-    # line could not distinguish "we lost every file" from "no tier ever tried".
+    # A tier that tried and came away with nothing *looked*, and that is the whole
+    # difference from `unknown_none_found`, which means nobody did. Both produced the
+    # same word for 10.1016/j.oraloncology.2021.105348, so the summary line could not
+    # distinguish "we lost everything" from "no tier ever tried".
+    #
+    # "Tried", not "listed files and lost them", which is what d09d7b2's comment
+    # claimed: `europepmc` reaches `partial_failure` when the archive endpoint errors,
+    # answers with a non-archive, or yields an unreadable ZIP, and none of those
+    # involves a listing. Having tried is the fact all the producers share.
+    #
+    # Not `partial_failure`, which is what d09d7b2 returned here: that word is
+    # documented in the legend above and in the README as "some arrived; at least one
+    # failed", and it is the only way a consumer can tell from the status alone that
+    # a file made it. Reusing it for the zero-file case would put two facts under one
+    # name, which is the defect that commit set out to fix.
     #
     # The position is load-bearing. Above `has_suppl is True` it would swallow
     # `expected_but_missing`, which is the stronger statement when the publisher says
     # the files exist; above `none_listed` it would override a source that owns the
     # content. Both of those are pinned in `test_supplement_status_precedence`.
+    #
+    # Above `page_not_parsed` because it claims more: something was there to retrieve
+    # and we lost it, where `page_not_parsed` says we never learned whether anything
+    # was. Reachable when Europe PMC's archive endpoint answers with a non-archive
+    # and the browser tier then cannot read the publisher's page.
     if "partial_failure" in reported:
-        return "partial_failure"
+        return "none_retrieved"
     if "page_not_parsed" in reported:
         return "page_not_parsed"
     return "unknown_none_found"
