@@ -14,7 +14,7 @@ not equally stable:
                   document IDs, so two correct fetches of one paper differ. Byte
                   equality here would fail constantly while meaning nothing. Page
                   count is asserted only when both copies are the same rendition:
-                  see `fetched_rendition`.
+                  see `rendition_of`.
 
     supplements   compared on content hash, because these are static assets served
                   identically to everyone. Matched as a *set*: browsers rename
@@ -82,6 +82,15 @@ _ELSEVIER_ARTICLE = re.compile(r"^1-s2\.0-\S+-main$", re.IGNORECASE)
 # punctuated S0092-8674(21)00573-0) so it cannot claim an ordinary filename.
 _CELLPRESS_ARTICLE = re.compile(r"^PIIS[0-9X()\-]{10,}$", re.IGNORECASE)
 
+# A folder downloaded from PMC rather than from the publisher: the author
+# manuscript is `nihms-<id>.pdf` and its supplements are
+# `NIHMS<id>-supplement-<name>`. 10.1016/j.cell.2025.05.027 arrives as
+# nihms-2117886.pdf, which matches neither the DOI rule nor either Elsevier form --
+# the third naming convention to defeat them, and silent in the same way, because a
+# folder with no recognised article PDF stops having its PDF checked at all. The
+# hyphen after `nihms` is load-bearing: it is what the supplements do not have.
+_NIHMS_ARTICLE = re.compile(r"^nihms-\d+$", re.IGNORECASE)
+
 # Only *container* archives are expanded -- a bundle a tier might legitimately
 # unpack into separate supplements. An .xlsx is a zip too, as is every Office and
 # OpenDocument format, so trusting `is_zipfile` alone recorded spreadsheet
@@ -97,25 +106,30 @@ _ARCHIVE_SUFFIXES = {".zip", ".tar", ".tgz", ".gz", ".bz2", ".xz"}
 # whole document to find it would mean parsing 88-page peer review files.
 _IDENTITY_PAGES = 2
 
-# Which rendition of the article the manual copy is. Only the published version can be
-# held to a page count: Cell Genomics' mmc12.pdf is the extended article at 59
-# pages where the typeset version runs a third of that, so asserting its length
-# against a correct fetch would fail on a difference that is not an error. Other
-# renditions still assert identity -- right paper, readable text.
-PUBLISHED = "published"
-_COUNTABLE_VERSIONS = {PUBLISHED}
-
-# `version` above describes the *manual* copy. What fetch returns can be a
-# different rendition of the same paper, and then a page count asserted across the
-# two fails on a correct fetch: for 10.1126/science.aat5031 Europe PMC serves the
-# author manuscript at 19 pages where the publisher's reprint runs 7. Nothing in
-# the spec can express that, because it is not a property of the manual copy.
+# Which rendition of the article a copy is. A page count only means something
+# between two copies of the *same* rendition, and there are three cases:
 #
-# It does not have to. A PMC rendition says what it is on its first page, so the
-# fetched file is asked directly. `author manuscript` alone would be too loose --
-# a paper *about* manuscripts could say it -- so each marker is a phrase only the
-# PMC/Europe PMC cover sheet uses.
+#   published          the publisher's typeset article
+#   author manuscript  the PMC/NIHMS deposit. Different pagination for the same
+#                      paper: 49 pages for 10.1016/j.cell.2025.05.027 against a
+#                      typeset article a third shorter, and 19 against 7 for
+#                      10.1126/science.aat5031
+#   anything else      a rendition a fetch cannot return, so never comparable.
+#                      Cell Genomics ships an extended article as mmc12.pdf, 59
+#                      pages against a 37-page typeset version, and both are the
+#                      same paper
+PUBLISHED = "published"
 AUTHOR_MANUSCRIPT = "author manuscript"
+
+#: Renditions a fetch can actually come back with, so a page count is comparable
+#: when the manual copy and the fetched file are the same one.
+COMPARABLE_VERSIONS = {PUBLISHED, AUTHOR_MANUSCRIPT}
+
+# A PMC deposit says what it is on its first page, so neither copy has to be
+# described by hand: `bootstrap` reads the rendition off the manual file and
+# `compare` reads it off the fetched one. `author manuscript` alone would be too
+# loose -- a paper *about* manuscripts could say it -- so each marker is a phrase
+# only the PMC/Europe PMC cover sheet uses.
 _AUTHOR_MANUSCRIPT_MARKERS = (
     "published in final edited form as",
     "hhs public access",
@@ -123,12 +137,16 @@ _AUTHOR_MANUSCRIPT_MARKERS = (
 )
 
 
-def fetched_rendition(head_text: str) -> Optional[str]:
-    """`AUTHOR_MANUSCRIPT` when the fetched PDF is a PMC deposit, else None."""
+def rendition_of(head_text: str) -> str:
+    """Which rendition this PDF's opening pages say it is.
+
+    `PUBLISHED` is the answer when nothing says otherwise, because the publisher's
+    typeset article is the one that carries no cover sheet announcing itself.
+    """
     lowered = head_text.lower()
     if any(marker in lowered for marker in _AUTHOR_MANUSCRIPT_MARKERS):
         return AUTHOR_MANUSCRIPT
-    return None
+    return PUBLISHED
 
 
 # -- reading files -----------------------------------------------------------
@@ -303,7 +321,7 @@ def classify(directory, doi: str, main_hint: Optional[str] = None) -> Tuple[Opti
         if _ELSEVIER_SUPPLEMENT.match(path.stem):
             continue
         if (_ELSEVIER_ARTICLE.match(path.stem) or _CELLPRESS_ARTICLE.match(path.stem)
-                or _stem_key(path) == tail):
+                or _NIHMS_ARTICLE.match(path.stem) or _stem_key(path) == tail):
             main = path
             break
 
@@ -338,8 +356,15 @@ def load_spec(path=None) -> dict:
 
 
 def build_article(doi: str, directory, source_dir: str, main_hint: Optional[str] = None,
-                  main_version: str = PUBLISHED, **extra) -> dict:
+                  main_version: Optional[str] = None, **extra) -> dict:
     """Fingerprint one folder of downloads into a spec entry.
+
+    `main_version` defaults to whatever the file says it is, rather than to
+    `PUBLISHED`. A folder downloaded from PMC holds the author manuscript, and a
+    spec that called it the published version would quietly stop comparing page
+    counts -- 49pp against 49pp went unasserted for 10.1016/j.cell.2025.05.027 for
+    exactly that reason. Pass a version explicitly for a rendition no file
+    announces, such as Cell Genomics' extended article.
 
     Written by `bootstrap` and then hand-reviewed -- the point of checking the spec
     in is that a human vouches for it, so the generated `expect` block is a
@@ -354,7 +379,7 @@ def build_article(doi: str, directory, source_dir: str, main_hint: Optional[str]
         "supplements": [fingerprint(p) for p in supplements],
     }
     if main is not None:
-        entry["main_pdf"]["version"] = main_version
+        entry["main_pdf"]["version"] = main_version or rendition_of(pdf_head_text(main))
     else:
         entry["note"] = (
             "no file matched the DOI, so the publisher's article PDF is absent from "
@@ -415,20 +440,24 @@ def compare(article: dict, record: dict, directory, root=None) -> List[dict]:
         fetched_pdf = directory / (fulltext.get("path") or store.FULLTEXT_PDF)
         if got_pdf and fetched_pdf.is_file():
             head = pdf_head_text(fetched_pdf)
-            rendition = fetched_rendition(head)
+            fetched_version = rendition_of(head)
             want = manual_pdf.get("pages")
             have = pdf_pages(fetched_pdf)
             version = manual_pdf.get("version", PUBLISHED)
             if want is not None and have is not None:
-                countable = version in _COUNTABLE_VERSIONS and rendition is None
-                if version not in _COUNTABLE_VERSIONS:
+                # Compared rendition to rendition. Two author manuscripts are as
+                # comparable as two typeset articles; it is the mismatch that makes
+                # a page count meaningless.
+                comparable = version in COMPARABLE_VERSIONS and version == fetched_version
+                if version not in COMPARABLE_VERSIONS:
                     why = f" -- not asserted, the manual copy is the {version} version"
-                elif rendition is not None:
-                    why = f" -- not asserted, fetch returned the {rendition} of the same paper"
+                elif not comparable:
+                    why = (f" -- not asserted, the manual copy is the {version} and fetch "
+                           f"returned the {fetched_version}")
                 else:
-                    why = ""
+                    why = f" ({version})"
                 checks.append(_check(
-                    "pdf_pages", (want == have) if countable else None,
+                    "pdf_pages", (want == have) if comparable else None,
                     f"manual {want}pp, fetched {have}pp" + why,
                 ))
             # Both ends of the document: the DOI is on page 1 of a PMC rendition and
@@ -539,7 +568,7 @@ def _bootstrap(args) -> int:
             print(f"expected DOI=FILE[@VERSION], got {item!r}", file=sys.stderr)
             return 2
         try:
-            hints[normalize_doi(doi)] = (filename, version or PUBLISHED)
+            hints[normalize_doi(doi)] = (filename, version or None)
         except ValueError as error:
             print(str(error), file=sys.stderr)
             return 2
@@ -550,7 +579,8 @@ def _bootstrap(args) -> int:
         if not directory.is_dir():
             print(f"no such directory: {directory}", file=sys.stderr)
             return 2
-        filename, version = hints.get(doi, (None, PUBLISHED))
+        # No version means "read it off the file"; see build_article.
+        filename, version = hints.get(doi, (None, None))
         try:
             entry = build_article(doi, directory, source_dir,
                                   main_hint=filename, main_version=version)

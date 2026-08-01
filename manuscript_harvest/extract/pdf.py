@@ -132,6 +132,9 @@ def blocks_from_pdf(
     meta["sections"] = tracker.seen
     if tracker.abandoned:
         meta["sections_abandoned"] = tracker.abandoned
+    if tracker.withheld:
+        meta["low_value_blocks_withheld"] = tracker.withheld
+    if tracker.reason():
         meta["reason"] = tracker.reason()
     body_chars = sum(len(b.text) for b in blocks)
     meta["chars"] = body_chars

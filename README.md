@@ -554,6 +554,7 @@ The tests live in `tests/` and run under pytest:
 | `tests/test_extract_units.py` | sections, table cards, and each parser: JATS, PDF, xlsx, docx, HTML, zip |
 | `tests/test_extract_article.py` | source choice, per-file statuses, the extraction record, the CLI |
 | `tests/test_extract_corpus.py` | the real files that taught the extractor its rules — skipped without `corpus/` |
+| `tests/test_section_audit.py` | the section audit: alignment, scoring, and what must *not* count as an error |
 | `tests/test_fetch_cli.py` | the fetch CLI: the missing-login warning, the proxy breaker, exit codes, `usage`/`prune`/`check` |
 | `tests/test_open_access_tiers.py` | the four open-access tiers end to end: which status each outcome earns |
 | `tests/test_manual_fetch_units.py` | the comparison rules: publisher filename conventions, archives, article versions |
@@ -653,10 +654,19 @@ papers), and each existed because the comparison was wrong about a *correct* fet
   define correctness.
 - **Page count is only compared between the same renditions.** For
   `10.1126/science.aat5031` fetch returns Europe PMC's 19-page author manuscript
-  where the human saved the publisher's 7-page reprint. `version` in the spec cannot
-  express that, because what differs is what *fetch* returned, so the fetched PDF is
-  asked directly — a PMC deposit says "Published in final edited form as" on page
-  one. Identity is still asserted; only the page count relaxes.
+  where the human saved the publisher's 7-page reprint. A PMC deposit says
+  "Published in final edited form as" on page one, so both copies are asked what
+  they are rather than described by hand: `bootstrap` reads the manual copy's
+  rendition off the file and `compare` reads the fetched one, and the page count is
+  asserted when they agree. Identity is asserted either way.
+
+The eighth paper, `10.1016/j.cell.2025.05.027`, was downloaded from PMC rather than
+from a publisher, and taught the harness two more things — that
+`nihms-<id>.pdf` is a third article naming convention, and that two *author
+manuscripts* are as comparable as two typeset articles, which is how 49pp against
+49pp stopped being reported and started being asserted. It is also the only entry
+so far whose `expect` is `fetched` rather than `fetched_unverified`: Europe PMC
+served the whole deposit as a ZIP, so the set is bounded rather than scraped.
 
 The check that justifies the exercise is `supplementary_status`. No synthetic
 fixture can catch a *silent* false negative — a paper that really has supplements,
@@ -765,8 +775,46 @@ run on every commit.
   saying so. Methods and Results are not bounded: they legitimately run for pages
   through their own unrecognised subsection headings. This trims the wrong labels
   on that paper from 68,268 characters to 6,035 — the front matter and
-  introduction — so it bounds the error rather than eliminating it. Closing the
-  rest needs a measure of section accuracy, which does not exist yet.
+  introduction — so it bounds the error rather than eliminating it.
+- **How accurate the PDF labeller is, measured rather than asserted.** JATS
+  declares its sections, so an article the fetch stage saved both renditions of
+  scores the heuristic for free — that is what
+  `manuscript_harvest/extract/section_audit.py` does, aligning the two by shared
+  eight-word shingle and comparing labels paragraph by paragraph:
+
+      python -m manuscript_harvest.extract.section_audit --corpus-dir corpus
+
+  Over the three open-access papers here, **309 of 337 alignable paragraphs agree
+  (91.7%)**, and Methods — the label worth most — scores precision 1.00, 1.00 and
+  0.88. On `10.1016/j.cell.2025.05.027` every remaining error is an *omission*, a
+  paragraph left `null`, which is the safe failure; the samples are small (125, 114
+  and 98 aligned paragraphs), so treat them as a baseline to improve against rather
+  than a published figure.
+
+  The audit paid for itself twice on its first run. It found `references` labelled
+  over five paragraphs of Methods and Results, which led to the low-value rule
+  above; and `methods` at precision 0.50 on a Cell paper, which led to the
+  `STAR★METHODS` glyph. Fixing those moved the same two papers from 90.0% and 87.7%
+  to 93.0% and 89.8%, and Methods on the Cell paper from 0.50 to 0.88.
+- **A Cell Press heading is published with a star glyph, not an asterisk.**
+  `STAR★METHODS` (U+2605) is what appears in both the XML and the PDF, and the
+  alias matched only the ASCII `STAR*Methods` that people type when writing *about*
+  it. Both Cell papers here had their whole top-level Methods section go
+  unrecognised, leaving 69 and 51 main-text blocks unlabelled — and in a STAR
+  Methods paper the key resources table, where the library kit and every antibody
+  are written down, sits under that heading. Recognising the glyph took Methods
+  from 29 to 91 blocks on `10.1016/j.cell.2025.05.027` and from 9 to 52 on
+  `10.1016/j.cell.2021.01.053`.
+- **A low-value heading only claims text that looks like its own content.** Being
+  in `sections.LOW_VALUE` makes a wrong label expensive in a way it is nowhere
+  else: a consumer that skips those sections does not deprioritise the text, it
+  drops it. On `10.1016/j.cell.2025.05.027`, a PMC author manuscript, the
+  `REFERENCES` heading on page 31 carried 227 of 415 blocks to the end of the
+  document — which in that layout is the key resources table, so `Punch pliers
+  Total Tools 9070220SB` was filed as somebody's bibliography. A character budget
+  is the wrong instrument, since a real reference list is legitimately enormous, so
+  `references` is now carried only onto blocks that look like citations, with the
+  count of withheld blocks in the extraction record.
 
 ## License
 

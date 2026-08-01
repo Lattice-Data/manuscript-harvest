@@ -157,6 +157,9 @@ def blocks_from_docx(
     meta["sections"] = tracker.seen
     if tracker.abandoned:
         meta["sections_abandoned"] = tracker.abandoned
+    if tracker.withheld:
+        meta["low_value_blocks_withheld"] = tracker.withheld
+    if tracker.reason():
         meta["reason"] = tracker.reason()
     if not blocks:
         return [], NO_TEXT, meta
