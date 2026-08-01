@@ -82,6 +82,35 @@ def _best_pdf_status(reported: List[str]) -> str:
     return reduce(better_pdf_failure, reported)
 
 
+def _no_tier_applied(ids: Identifiers, tier_names: List[str]) -> str:
+    """Why a run ended without a single tier having tried.
+
+    The one explanation that has to survive every tier list, because it is the case
+    where no tier ran to produce any other. `--oa-only` over a paywalled non-PMC DOI
+    is the shape that exposed it: every OA tier keys on a PMCID or a Europe PMC
+    open-access URL, this paper has neither, and the row read
+
+        failed  pdf=not_found  suppl=unknown_none_found  files=0  tiers=-
+
+    with nothing after it. d09d7b2 caused that by demoting the idconv miss out of
+    `problems` -- correctly, since "no PMC deposit" is the normal answer for a
+    paywalled paper, but it was the only line that row had, and the compensating
+    problem lines that commit added live in tiers which do not run here.
+
+    States the facts the `applies` methods key on rather than restating their rules,
+    so this cannot drift as tiers change.
+    """
+    known = f"pmcid={ids.pmcid or 'none'}, " \
+            f"europepmc open-access pdf urls={len(ids.open_access_pdf_urls())}, " \
+            f"preprint={'yes' if ids.is_preprint else 'no'}"
+    hint = ""
+    if "proxy_browser" not in tier_names:
+        hint = ("; the browser tier, which needs none of those, is not in this run's "
+                "tier list")
+    return (f"no configured tier could try this paper ({known}). Tiers: "
+            f"{', '.join(tier_names) or 'none'}{hint}")
+
+
 def suppl_flag_is_authoritative(ids: Identifiers) -> bool:
     """Can `hasSuppl: N` be believed as "this article has no supplements"?
 
@@ -266,6 +295,9 @@ def fetch_publication(
             need_pdf = False
         if supplements:
             need_supplements = False
+
+    if not record["tiers_tried"]:
+        record["problems"].append(_no_tier_applied(ids, tier_names))
 
     # -- write everything out ----------------------------------------------
 

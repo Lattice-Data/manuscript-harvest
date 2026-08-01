@@ -7,6 +7,8 @@ assertion that the pipeline does not lie about what it got.
 """
 
 
+import json
+
 import pytest
 
 from manuscript_harvest.fetch import fetcher, store
@@ -181,6 +183,69 @@ def test_a_source_that_owns_the_content_still_outranks_partial_failure():
     ids = Identifiers(doi="10.1101/2022.01.02.474723", doi_raw="x")
     assert _supplement_status(
         ids, True, 0, ["none_listed", "partial_failure"]) == "none_listed"
+
+
+# -- a row that tried nothing still has to say why ---------------------------
+
+def _unreachable_http() -> FakeHttp:
+    """10.1016/j.oraloncology.2021.105348's shape: indexed in Europe PMC as a MED
+    record, so the lookup succeeds, but with no PMCID, no open-access PDF URL and
+    nothing in PMC to convert to."""
+    return FakeHttp({
+        SEARCH: (200, europepmc_search_json(
+            pmcid=None, isOpenAccess="N", inEPMC="N", inPMC="N", hasPDF="N",
+            hasSuppl="N", fullTextUrlList={"fullTextUrl": []}), "application/json"),
+        "idconv": (200, json.dumps({"records": [
+            {"status": "error", "errmsg": "Identifier not found in PMC"}]}).encode(),
+            "application/json"),
+        "api.crossref.org": (200, crossref_json(), "application/json"),
+    })
+
+
+def test_a_run_where_no_tier_applied_still_explains_itself(tmp_path):
+    """The `--oa-only` hole d09d7b2 opened. Every OA tier keys on a PMCID or a
+    Europe PMC open-access URL; this paper has neither, so nothing ran and the row
+    read `failed pdf=not_found suppl=unknown_none_found files=0 tiers=-` with nothing
+    after it.
+
+    Demoting the idconv miss out of `problems` was right on its own -- "no PMC
+    deposit" is the normal answer for a paywalled paper -- but it was the only line
+    that row had, and the problem lines the same commit added to compensate live in
+    `europepmc._fetch_pdf` and `proxy_browser._download_all`, neither of which runs
+    here. This explanation has to survive every tier list, because it is the case
+    where no tier ran to produce any other.
+    """
+    record = fetcher.fetch_publication(
+        DOI, fetch_config(tmp_path, ["europepmc", "pmc_supplements", "pmc_oa", "biorxiv"]),
+        http=_unreachable_http())
+
+    assert record["tiers_tried"] == []
+    assert len(record["problems"]) == 1
+    problem = record["problems"][0]
+    assert "no configured tier could try this paper" in problem
+    assert "pmcid=none" in problem, "name the fact that decided it"
+    assert "browser tier" in problem, "and the tier that would not have needed it"
+
+
+def test_the_browser_tier_being_configured_changes_the_advice(tmp_path):
+    """Telling someone the browser tier is missing when they already asked for it
+    sends them at the wrong obstacle -- the same reasoning as `_cell_press_retry`'s
+    two failure reasons."""
+    record = fetcher.fetch_publication(
+        DOI, fetch_config(tmp_path, ["europepmc", "proxy_browser"]),
+        http=_unreachable_http())
+
+    assert "browser tier" not in " ".join(record["problems"])
+
+
+def test_a_tier_that_ran_is_left_to_speak_for_itself(tmp_path):
+    """The line is for the case where nothing ran. A tier that tried and failed has
+    already said why, and a second generic line above it would bury that."""
+    http = _http({PDF_URL: (404, b"", ""), SUPPL: (404, b"", "")})
+    record = fetcher.fetch_publication(DOI, fetch_config(tmp_path, ["europepmc"]), http=http)
+
+    assert record["tiers_tried"] == ["europepmc"]
+    assert not any("no configured tier" in p for p in record["problems"])
 
 
 def test_partial_failure_does_not_make_a_record_look_complete():
