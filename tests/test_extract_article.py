@@ -7,6 +7,8 @@ emptiness it cannot account for: a figure image has no text, a scanned PDF needs
 OCR, and a bot-check landing page is not an article.
 """
 
+import json
+
 import pytest
 
 from manuscript_harvest.extract import extractor
@@ -437,6 +439,38 @@ def test_a_changed_manifest_invalidates_the_cache(tmp_path):
     record["fetched_at"] = "2026-08-01T00:00:00+00:00"
     store.write_manifest(directory, record)
     assert extract_article(directory, limits=L).get("cached") is None
+
+
+def test_a_truncated_blocks_file_is_re_extracted_not_trusted(tmp_path):
+    """The cache used to test only that blocks.jsonl existed. Emptying a real
+    475 KB one and re-running gave `cached: True, status: complete,
+    totals.blocks: 532` over zero lines on disk."""
+    directory = _article(tmp_path, xml=jats_article(METHODS_BODY))
+    first = extract_article(directory, limits=L)
+    assert first["blocks_lines"] == first["totals"]["blocks"]
+    blocks_file = directory / EXTRACT_DIR / BLOCKS_NAME
+    blocks_file.write_text("")
+
+    again = extract_article(directory, limits=L)
+    assert again.get("cached") is None
+    assert again["problems"] == [f"{BLOCKS_NAME} did not match the hash in "
+                                 f"{extractor.EXTRACTION_NAME}; re-extracted"]
+    assert len(list(read_blocks(blocks_file))) == again["totals"]["blocks"] > 0
+    # Once repaired, the article goes back to being cached rather than looping.
+    assert extract_article(directory, limits=L).get("cached") is True
+
+
+def test_a_record_without_a_blocks_hash_is_re_extracted_once(tmp_path):
+    """Every extraction written before this check has no `blocks_sha256`. That
+    counts as a mismatch, so the corpus repairs itself on the next run."""
+    directory = _article(tmp_path, xml=jats_article(METHODS_BODY))
+    extract_article(directory, limits=L)
+    path = directory / EXTRACT_DIR / extractor.EXTRACTION_NAME
+    stale = json.loads(path.read_text())
+    stale.pop("blocks_sha256")
+    path.write_text(json.dumps(stale))
+    assert extract_article(directory, limits=L).get("cached") is None
+    assert extract_article(directory, limits=L).get("cached") is True
 
 
 def test_a_changed_limit_invalidates_the_cache(tmp_path):

@@ -89,13 +89,34 @@ def number_blocks(blocks: List[Block], start: int = 0) -> List[Block]:
     return blocks
 
 
-def write_blocks(path, blocks: List[Block]) -> Path:
+def write_blocks(path, blocks: List[Block]) -> dict:
+    """Write the block list and describe what landed: `{path, sha256, lines}`.
+
+    The sha and the line count go into `extraction.json` so the cache can check
+    the file it is about to trust. Emptying a real 475 KB `blocks.jsonl` and
+    re-running used to give `cached: True, status: complete, totals.blocks: 532`
+    over zero lines on disk.
+    """
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    with target.open("w", encoding="utf-8") as handle:
+    digest = hashlib.sha256()
+    lines = 0
+    with target.open("wb") as handle:
         for block in blocks:
-            handle.write(json.dumps(block.to_dict(), ensure_ascii=False, sort_keys=True) + "\n")
-    return target
+            line = (json.dumps(block.to_dict(), ensure_ascii=False, sort_keys=True)
+                    + "\n").encode("utf-8")
+            handle.write(line)
+            digest.update(line)
+            lines += 1
+    return {"path": target, "sha256": digest.hexdigest(), "lines": lines}
+
+
+def blocks_sha256(path) -> Optional[str]:
+    """The sha of a `blocks.jsonl` on disk, or `None` when it is not there."""
+    target = Path(path)
+    if not target.exists():
+        return None
+    return hashlib.sha256(target.read_bytes()).hexdigest()
 
 
 def read_blocks(path) -> Iterator[dict]:

@@ -36,6 +36,7 @@ from .blocks import (
     SUPPLEMENT,
     TABLE,
     Block,
+    blocks_sha256,
     number_blocks,
     render_markdown,
     write_blocks,
@@ -564,15 +565,24 @@ def extract_article(article_dir, limits: Optional[Limits] = None, force: bool = 
     key = extraction_key(manifest_sha, limits)
     output_dir = article_dir / EXTRACT_DIR
     existing_path = output_dir / EXTRACTION_NAME
+    problems: List[str] = []
     if not force and existing_path.exists():
         try:
             existing = json.loads(existing_path.read_text(encoding="utf-8"))
         except ValueError:
             existing = None
-        if existing and existing.get("extraction_key") == key \
-                and (output_dir / BLOCKS_NAME).exists():
-            existing["cached"] = True
-            return existing
+        if existing and existing.get("extraction_key") == key:
+            # "blocks.jsonl exists" is not the same claim as "blocks.jsonl is the
+            # file this record describes". Emptying a real 475 KB one and
+            # re-running gave `cached: True, status: complete, blocks: 532` over
+            # zero lines. A record written before this check has no
+            # `blocks_sha256`, which counts as a mismatch and re-extracts once.
+            on_disk = blocks_sha256(output_dir / BLOCKS_NAME)
+            if on_disk is not None and existing.get("blocks_sha256") == on_disk:
+                existing["cached"] = True
+                return existing
+            problems.append(f"{BLOCKS_NAME} did not match the hash in "
+                            f"{EXTRACTION_NAME}; re-extracted")
 
     main_result, labels, main_info = _main_text(article_dir, record, limits)
     results: List[FileResult] = [main_result]
@@ -594,7 +604,7 @@ def extract_article(article_dir, limits: Optional[Limits] = None, force: bool = 
     number_blocks(all_blocks)
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    write_blocks(output_dir / BLOCKS_NAME, all_blocks)
+    written = write_blocks(output_dir / BLOCKS_NAME, all_blocks)
     if write_markdown:
         (output_dir / ARTICLE_MD).write_text(render_markdown(all_blocks), encoding="utf-8")
 
@@ -641,7 +651,10 @@ def extract_article(article_dir, limits: Optional[Limits] = None, force: bool = 
         },
         "unextracted_text_files": text_bearing_failures,
         "status": status,
+        "problems": problems,
         "blocks_path": f"{EXTRACT_DIR}/{BLOCKS_NAME}",
+        "blocks_sha256": written["sha256"],
+        "blocks_lines": written["lines"],
     }
     existing_path.write_text(
         json.dumps(extraction, indent=2, ensure_ascii=False), encoding="utf-8")
