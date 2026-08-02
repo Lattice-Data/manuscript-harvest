@@ -63,6 +63,12 @@ class Limits:
     min_main_text_chars: int = 2000
     """Below this a JATS extraction is treated as too thin and the PDF is used
     instead. Some deposited XML carries only front matter."""
+    # -- review
+    max_review_cards_per_article: int = 25
+    """Low-confidence table cards queued for a human per article. Beyond this the
+    overflow is counted in `review.queue_truncated` rather than dropped quietly:
+    "there were 25 to check" and "there were 25 of 60" are different facts."""
+
     min_pdf_text_chars: int = 200
     """Matches manuscript_harvest.fetch.validate: less than this means scanned images."""
     running_header_min_pages: int = 3
