@@ -319,6 +319,74 @@ def test_a_runaway_paragraph_is_truncated_and_the_note_says_so(tmp_path):
     assert "probably data rather than prose" in entry["reason"]
 
 
+# -- a parser that dies must cost one file, not the run ----------------------
+
+#: 4,000 nested `<sec>` elements. The walker is recursive, so this defeats it
+#: well before CPython's limit is anywhere near the article's real depth.
+DEEP_XML = (b"<article><body>" + b"<sec>" * 4000
+            + b"<p>Nuclei were isolated from frozen tissue.</p>"
+            + b"</sec>" * 4000 + b"</body></article>")
+
+
+def test_a_deeply_nested_xml_is_unreadable_not_a_crash(tmp_path):
+    """Measured: this supplement raised RecursionError straight out of
+    `extract_article`, leaving neither extraction.json nor blocks.jsonl on disk."""
+    directory = _article(tmp_path, xml=jats_article(METHODS_BODY),
+                         supplements=[("deep.xml", DEEP_XML)])
+    record = extract_article(directory, limits=L)
+    entry = record["supplementary"][0]
+    assert entry["status"] == "unreadable"
+    assert "RecursionError" in entry["note"]
+    assert (directory / EXTRACT_DIR / BLOCKS_NAME).exists()
+
+
+def test_a_supplement_that_raises_becomes_parser_error_not_a_crash(tmp_path, monkeypatch):
+    """The backstop behind the per-parser guards: whatever a parser does, the
+    article still gets a record that names the file it happened in."""
+    def explode(*args, **kwargs):
+        raise KeyError("no such glyph")
+
+    monkeypatch.setattr(extractor.docxfile, "blocks_from_docx", explode)
+    directory = _article(tmp_path, xml=jats_article(METHODS_BODY),
+                         supplements=[("legends.docx",
+                                       make_docx([("paragraph", "Figure S1.")]))])
+    record = extract_article(directory, limits=L)
+    entry = record["supplementary"][0]
+    assert entry["status"] == extractor.PARSER_ERROR
+    assert entry["note"] == "KeyError: 'no such glyph'"
+    # Not benign: a file that crashed the parser is a file whose text is missing.
+    assert entry["path"] in record["unextracted_text_files"]
+    assert record["status"] == "partial"
+
+
+def test_cmd_all_survives_one_crashing_article(tmp_path, capsys):
+    """`cmd_all` calls the extractor in a bare loop; one bad article took the
+    whole corpus run with it."""
+    make_article(tmp_path / "a", xml=jats_article(METHODS_BODY))
+    make_article(tmp_path / "b", xml=jats_article(METHODS_BODY), doi="10.9999/second")
+    config = tmp_path / "config.yaml"
+    config.write_text(f"extract:\n  corpus_dir: {tmp_path}\n")
+
+    real = extractor.extract_article
+    calls = {"n": 0}
+
+    def flaky(directory, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("boom")
+        return real(directory, **kwargs)
+
+    extractor.extract_article = flaky
+    try:
+        assert main(["--config", str(config), "all"]) == 1
+    finally:
+        extractor.extract_article = real
+    err = capsys.readouterr().err
+    assert "crashed: RuntimeError: boom" in err
+    assert "crashed=1" in err
+    assert calls["n"] == 2, "the second article was never reached"
+
+
 # -- the record and the artifacts -------------------------------------------
 
 def test_extraction_writes_blocks_markdown_and_a_record(tmp_path):

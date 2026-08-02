@@ -325,10 +325,16 @@ def _front_metadata(article, walker: "_Walker") -> dict:
 def blocks_from_jats(
     data: bytes, source_file: str, limits: Limits
 ) -> Tuple[List[Block], str, dict]:
-    """Parse one JATS/NXML file. Returns `(blocks, status, meta)`."""
+    """Parse one JATS/NXML file. Returns `(blocks, status, meta)`.
+
+    The walk is recursive and the depth of a publisher's `<sec>` tree is not
+    something this module gets to choose, so `RecursionError` is caught here and
+    reported as an unreadable file. `extractor.extract_bytes` has a generic guard
+    behind this one; the point of catching here is that the reason names XML.
+    """
     try:
         root = ET.fromstring(_prepare(data))
-    except ET.ParseError as e:
+    except (ET.ParseError, ValueError) as e:
         return [], UNREADABLE, {"reason": f"XML parse error: {e}"}
 
     article = root if _tag(root) == "article" else next(
@@ -337,16 +343,18 @@ def blocks_from_jats(
         return [], UNREADABLE, {"reason": "no <article> element"}
 
     walker = _Walker(source_file, limits)
-    meta = _front_metadata(article, walker)
-
-    for child in article:
-        name = _tag(child)
-        if name == "body":
-            walker.walk_children(child, None, "body")
-        elif name == "back":
-            walker.walk_children(child, sections_mod.BACK_MATTER, "back")
-        elif name == "floats-group":
-            walker.walk_children(child, None, "floats-group")
+    try:
+        meta = _front_metadata(article, walker)
+        for child in article:
+            name = _tag(child)
+            if name == "body":
+                walker.walk_children(child, None, "body")
+            elif name == "back":
+                walker.walk_children(child, sections_mod.BACK_MATTER, "back")
+            elif name == "floats-group":
+                walker.walk_children(child, None, "floats-group")
+    except (ValueError, RecursionError) as e:
+        return [], UNREADABLE, {"reason": f"{type(e).__name__}: {e}"}
 
     meta["sections"] = walker.section_names
     meta["supplement_labels"] = walker.supplement_labels

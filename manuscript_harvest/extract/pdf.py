@@ -70,8 +70,9 @@ def blocks_from_pdf(
         return [], UNREADABLE, {"reason": f"{type(e).__name__}: {e}"}
 
     per_page: List[List[str]] = []
+    meta: dict = {}
     try:
-        meta: dict = {"pages": document.page_count}
+        meta["pages"] = document.page_count
         for page in document:
             texts = []
             try:
@@ -88,6 +89,11 @@ def blocks_from_pdf(
                 if cleaned:
                     texts.append(cleaned)
             per_page.append(texts)
+    except Exception as e:
+        # Page-level damage is already handled above; this is the document
+        # itself giving way, which must cost one file rather than the run.
+        meta["reason"] = f"{type(e).__name__}: {e}"
+        return [], UNREADABLE, meta
     finally:
         document.close()
 

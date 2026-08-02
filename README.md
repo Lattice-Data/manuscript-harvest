@@ -489,6 +489,7 @@ stage as much as the blocks are: a thin extraction has to be legible.
 | `too_large` | over `max_file_mb`; recorded, not read |
 | `missing` | in the manifest but not on disk |
 | `unreadable` | corrupt, or a parser named its own failure |
+| `parser_error` | a parser raised; the file is named and the run continues |
 
 The article is `complete` when the main text is usable and every file that should
 have yielded text did; `partial` when something is missing; `failed` when there is

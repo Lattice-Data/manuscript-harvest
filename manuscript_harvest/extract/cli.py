@@ -116,8 +116,16 @@ def cmd_all(args) -> int:
 
     by_status: dict = {}
     for directory in directories:
-        extraction = extractor.extract_article(directory, limits=limits, force=args.force,
-                                               write_markdown=markdown)
+        try:
+            extraction = extractor.extract_article(directory, limits=limits,
+                                                   force=args.force,
+                                                   write_markdown=markdown)
+        except Exception as e:
+            # One article must not take the rest of the corpus with it. The
+            # extractor guards each file; this guards everything above them.
+            print(f"{directory.name:38s} crashed: {type(e).__name__}: {e}", file=sys.stderr)
+            by_status["crashed"] = by_status.get("crashed", 0) + 1
+            continue
         status = extraction.get("status", "?")
         by_status[status] = by_status.get(status, 0) + 1
         marker = " (cached)" if extraction.get("cached") else ""

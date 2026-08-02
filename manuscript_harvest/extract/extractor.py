@@ -57,6 +57,10 @@ UNSUPPORTED = "unsupported_format"
 TOO_LARGE = "too_large"
 MISSING = "missing"
 UNREADABLE = "unreadable"
+PARSER_ERROR = "parser_error"
+"""A parser raised. Distinct from `unreadable`, which is a parser declining a
+file it recognised as broken: this is the stage itself failing, and it is in
+neither `_PRODUCTIVE` nor `_BENIGN` because the text was probably there."""
 
 #: Statuses that mean "there was text here and we got it".
 _PRODUCTIVE = {OK}
@@ -309,53 +313,64 @@ def extract_bytes(
         return FileResult(relative_path, role, status, blocks, origin_prefix + origin,
                           meta, label, caption, note)
 
-    if extension in IMAGE_EXTENSIONS:
-        return result(IMAGE_NO_TEXT, note="figure image; no extractable text "
-                                          "(a vision pass would be needed)")
-    if extension in MEDIA_EXTENSIONS:
-        return result(MEDIA_NO_TEXT, note="audio or video")
-    if extension in DATA_EXTENSIONS:
-        return result(DATA_SKIPPED, note="binary or columnar data file, not prose")
-    if extension in COMPRESSED_EXTENSIONS:
-        return result(UNSUPPORTED, note="compressed archive other than zip; "
-                                        "decompress by hand if it holds tables")
-    if extension in LEGACY_DOC_EXTENSIONS:
-        return result(UNSUPPORTED, note=f"{extension} is not parsed by this stage")
+    def dispatch() -> FileResult:
+        if extension in IMAGE_EXTENSIONS:
+            return result(IMAGE_NO_TEXT, note="figure image; no extractable text "
+                                              "(a vision pass would be needed)")
+        if extension in MEDIA_EXTENSIONS:
+            return result(MEDIA_NO_TEXT, note="audio or video")
+        if extension in DATA_EXTENSIONS:
+            return result(DATA_SKIPPED, note="binary or columnar data file, not prose")
+        if extension in COMPRESSED_EXTENSIONS:
+            return result(UNSUPPORTED, note="compressed archive other than zip; "
+                                            "decompress by hand if it holds tables")
+        if extension in LEGACY_DOC_EXTENSIONS:
+            return result(UNSUPPORTED, note=f"{extension} is not parsed by this stage")
 
-    if extension in SPREADSHEET_EXTENSIONS:
-        cards, status, meta = spreadsheet.cards_from_xlsx(data, relative_path, limits)
-        return result(status, _table_blocks(cards, relative_path, "xlsx", role, limits),
-                      "xlsx", meta, note=meta.get("reason"))
-    if extension in LEGACY_SPREADSHEET_EXTENSIONS:
-        cards, status, meta = spreadsheet.cards_from_xls(data, relative_path, limits)
-        return result(status, _table_blocks(cards, relative_path, "xls", role, limits),
-                      "xls", meta, note=meta.get("reason"))
-    if extension in DELIMITED_EXTENSIONS:
-        cards, status, meta = spreadsheet.cards_from_csv(data, relative_path, limits)
-        return result(status, _table_blocks(cards, relative_path, "csv", role, limits),
-                      "csv", meta, note=meta.get("reason"))
-    if extension in PLAIN_TEXT_EXTENSIONS:
-        blocks, status, meta = _plain_text_blocks(data, relative_path, limits, role)
-        return result(status, blocks, "txt", meta)
-    if extension == ".pdf":
-        blocks, status, meta = pdf.blocks_from_pdf(data, relative_path, limits)
-        note = meta.get("reason")
-        if status == SCANNED:
-            note = "parses as a PDF but has almost no extractable text: scanned images"
-        return result(status, blocks, "pdf", meta, note=note)
-    if extension == ".docx":
-        blocks, status, meta = docxfile.blocks_from_docx(data, relative_path, limits)
-        return result(status, blocks, "docx", meta, note=meta.get("reason"))
-    if extension in XML_EXTENSIONS:
-        blocks, status, meta = jats.blocks_from_jats(data, relative_path, limits)
-        return result(status, blocks, "jats", meta, note=meta.get("reason"))
-    if extension in HTML_EXTENSIONS:
-        blocks, status, meta = htmlfile.blocks_from_html(data, relative_path, limits)
-        return result(status, blocks, "html", meta, note=meta.get("reason"))
-    if extension == ".zip":
-        return _extract_zip(data, relative_path, limits, role, label, caption, depth)
+        if extension in SPREADSHEET_EXTENSIONS:
+            cards, status, meta = spreadsheet.cards_from_xlsx(data, relative_path, limits)
+            return result(status, _table_blocks(cards, relative_path, "xlsx", role, limits),
+                          "xlsx", meta, note=meta.get("reason"))
+        if extension in LEGACY_SPREADSHEET_EXTENSIONS:
+            cards, status, meta = spreadsheet.cards_from_xls(data, relative_path, limits)
+            return result(status, _table_blocks(cards, relative_path, "xls", role, limits),
+                          "xls", meta, note=meta.get("reason"))
+        if extension in DELIMITED_EXTENSIONS:
+            cards, status, meta = spreadsheet.cards_from_csv(data, relative_path, limits)
+            return result(status, _table_blocks(cards, relative_path, "csv", role, limits),
+                          "csv", meta, note=meta.get("reason"))
+        if extension in PLAIN_TEXT_EXTENSIONS:
+            blocks, status, meta = _plain_text_blocks(data, relative_path, limits, role)
+            return result(status, blocks, "txt", meta)
+        if extension == ".pdf":
+            blocks, status, meta = pdf.blocks_from_pdf(data, relative_path, limits)
+            note = meta.get("reason")
+            if status == SCANNED:
+                note = "parses as a PDF but has almost no extractable text: scanned images"
+            return result(status, blocks, "pdf", meta, note=note)
+        if extension == ".docx":
+            blocks, status, meta = docxfile.blocks_from_docx(data, relative_path, limits)
+            return result(status, blocks, "docx", meta, note=meta.get("reason"))
+        if extension in XML_EXTENSIONS:
+            blocks, status, meta = jats.blocks_from_jats(data, relative_path, limits)
+            return result(status, blocks, "jats", meta, note=meta.get("reason"))
+        if extension in HTML_EXTENSIONS:
+            blocks, status, meta = htmlfile.blocks_from_html(data, relative_path, limits)
+            return result(status, blocks, "html", meta, note=meta.get("reason"))
+        if extension == ".zip":
+            return _extract_zip(data, relative_path, limits, role, label, caption, depth)
 
-    return result(UNSUPPORTED, note=f"no parser for {extension or 'files without an extension'}")
+        return result(UNSUPPORTED,
+                      note=f"no parser for {extension or 'files without an extension'}")
+
+    try:
+        return dispatch()
+    except Exception as e:
+        # The backstop. Each parser guards itself, but a run of sixty articles
+        # must not end because one supplement found a shape nobody anticipated:
+        # a 4,000-deep `<sec>` nest raised RecursionError out of extract_article
+        # and left neither extraction.json nor blocks.jsonl on disk.
+        return result(PARSER_ERROR, note=f"{type(e).__name__}: {e}")
 
 
 def _extract_zip(data: bytes, relative_path: str, limits: Limits, role: str,

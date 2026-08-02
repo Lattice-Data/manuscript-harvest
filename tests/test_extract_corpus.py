@@ -51,7 +51,8 @@ def test_every_status_is_in_the_taxonomy():
     articles = {"complete", "partial", "failed", "no_manifest"}
     files = {extractor.OK, extractor.NO_TEXT, extractor.SCANNED, extractor.IMAGE_NO_TEXT,
              extractor.MEDIA_NO_TEXT, extractor.DATA_SKIPPED, extractor.UNSUPPORTED,
-             extractor.TOO_LARGE, extractor.MISSING, extractor.UNREADABLE}
+             extractor.TOO_LARGE, extractor.MISSING, extractor.UNREADABLE,
+             extractor.PARSER_ERROR}
     for record in _extractions():
         assert record["status"] in articles, record["slug"]
         assert (record["main_text"] or {}).get("status") in files | {None}
