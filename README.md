@@ -412,6 +412,20 @@ Two things a single concatenated blob cannot do:
 same bytes twice produces a byte-identical file. That makes an extraction safe to
 hash and lets a parser change be reviewed as a diff.
 
+### What makes `all` re-extract
+
+`extraction.json` carries an `extraction_key`: a hash over the manifest sha, the
+extractor version, a fingerprint of this package's own `*.py` source, the
+effective `limits`, and the PyMuPDF/openpyxl/Python versions. `all` reuses a
+cached extraction only when that key still matches, so a parser edit or a
+`config.yaml` cap change invalidates the corpus by itself. The pieces stay in the
+record separately, so a human can see which of them moved.
+
+Before this key existed, `extractor_version` had been bumped once — by a rename —
+while `sections.py` changed materially twice. Extracting 10.1126/science.aat5031
+across those changes gives 21 blocks a different `section` at the same version, so
+`--force` was the only thing that had ever picked up a parser fix.
+
 ### JATS XML first, PDF second, landing page last
 
 40 of the 63 articles here carry Europe PMC's `fulltext.nxml` next to the PDF, and

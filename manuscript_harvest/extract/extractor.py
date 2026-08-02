@@ -21,6 +21,7 @@ double every paragraph and leave a model to guess which copy to quote.
 import hashlib
 import io
 import json
+import sys
 import zipfile
 from collections import Counter
 from datetime import datetime, timezone
@@ -29,6 +30,7 @@ from typing import Dict, List, Optional, Tuple
 
 from ..fetch import store
 from . import __version__, archive, docxfile, htmlfile, jats, pdf, spreadsheet
+from . import source_fingerprint
 from .blocks import (
     MAIN_TEXT,
     SUPPLEMENT,
@@ -436,6 +438,40 @@ def extract_path(path, relative_path: str, limits: Limits, role: str = SUPPLEMEN
                          caption=caption, content_type=content_type)
 
 
+# -- the cache key -----------------------------------------------------------
+
+def _parser_versions() -> Dict[str, str]:
+    """The third-party parsers whose output is being cached.
+
+    Python is major.minor only. A patch bump does not change how PyMuPDF reads a
+    page, and invalidating every extraction in the corpus for one would make the
+    key expensive enough that someone turns it off.
+    """
+    import fitz
+    import openpyxl
+    return {"pymupdf": fitz.__version__, "openpyxl": openpyxl.__version__,
+            "python": "%d.%d" % sys.version_info[:2]}
+
+
+def extraction_key(manifest_sha: str, limits: Limits) -> str:
+    """Everything that decides what an extraction contains, in one hash.
+
+    The parts stay in the record separately as `source_manifest_sha256`,
+    `extractor_version` and `limits`, so a human can see *which* of them moved.
+    `limits` is in here because editing `max_scan_rows` in config.yaml used to
+    reuse a stale extraction made under the old cap.
+    """
+    payload = {
+        "manifest": manifest_sha,
+        "extractor_version": __version__,
+        "source": source_fingerprint(),
+        "limits": limits.to_dict(),
+        "parsers": _parser_versions(),
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+
+
 # -- article orchestration ---------------------------------------------------
 
 def _supplement_key(entry: dict) -> List[str]:
@@ -525,6 +561,7 @@ def extract_article(article_dir, limits: Optional[Limits] = None, force: bool = 
                 "problems": [f"no readable {store.MANIFEST_NAME} in {article_dir}"]}
 
     manifest_sha = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    key = extraction_key(manifest_sha, limits)
     output_dir = article_dir / EXTRACT_DIR
     existing_path = output_dir / EXTRACTION_NAME
     if not force and existing_path.exists():
@@ -532,8 +569,7 @@ def extract_article(article_dir, limits: Optional[Limits] = None, force: bool = 
             existing = json.loads(existing_path.read_text(encoding="utf-8"))
         except ValueError:
             existing = None
-        if existing and existing.get("source_manifest_sha256") == manifest_sha \
-                and existing.get("extractor_version") == __version__ \
+        if existing and existing.get("extraction_key") == key \
                 and (output_dir / BLOCKS_NAME).exists():
             existing["cached"] = True
             return existing
@@ -589,6 +625,8 @@ def extract_article(article_dir, limits: Optional[Limits] = None, force: bool = 
         "extracted_at": datetime.now(timezone.utc).isoformat(),
         "extractor_version": __version__,
         "source_manifest_sha256": manifest_sha,
+        "extraction_key": key,
+        "parser_versions": _parser_versions(),
         "fetch_status": record.get("status"),
         "limits": limits.to_dict(),
         "main_text": {**main_result.to_dict(), **main_info},

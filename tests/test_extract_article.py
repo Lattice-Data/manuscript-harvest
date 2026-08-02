@@ -439,6 +439,27 @@ def test_a_changed_manifest_invalidates_the_cache(tmp_path):
     assert extract_article(directory, limits=L).get("cached") is None
 
 
+def test_a_changed_limit_invalidates_the_cache(tmp_path):
+    """`limits` was recorded in the record but was not part of the key, so
+    editing `max_scan_rows` in config.yaml reused an extraction made under the
+    old cap."""
+    directory = _article(tmp_path, xml=jats_article(METHODS_BODY))
+    extract_article(directory, limits=Limits(max_scan_rows=5000))
+    assert extract_article(directory, limits=Limits(max_scan_rows=5000)).get("cached") is True
+    assert extract_article(directory, limits=Limits(max_scan_rows=10)).get("cached") is None
+
+
+def test_a_changed_parser_source_invalidates_the_cache(tmp_path, monkeypatch):
+    """`sections.py` changed materially twice under the same `"0.1.0"`, and 21
+    blocks of 10.1126/science.aat5031 got a different section out of it. Until
+    this key moved with the source, `--force` was the only way to see a fix."""
+    directory = _article(tmp_path, xml=jats_article(METHODS_BODY))
+    extract_article(directory, limits=L)
+    assert extract_article(directory, limits=L).get("cached") is True
+    monkeypatch.setattr(extractor, "source_fingerprint", lambda: "0123456789abcdef")
+    assert extract_article(directory, limits=L).get("cached") is None
+
+
 def test_the_record_names_the_caps_it_ran_under(tmp_path):
     """A thin result has to be attributable: was the table empty, or was the scan
     capped at 5,000 rows?"""
