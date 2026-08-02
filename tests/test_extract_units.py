@@ -382,6 +382,28 @@ def test_card_states_when_the_scan_was_capped():
     assert "source reports 99999" in text
 
 
+def test_a_truncated_scan_never_renders_its_value_set_as_complete():
+    """The `=` form means the complete value set, which is the entire point of
+    the card. 10.1126/science.aat5031's data_s1.csv is 40,269 lines; scanned to
+    5,000 it printed `celltype [text, 12 distinct] = B cell | CD4 T cell | ...`
+    where the file holds 33, missing Podocyte, Proximal tubule, Glomerular
+    endothelium and every other epithelial and endothelial type."""
+    body = b"barcode,celltype\n" + b"".join(
+        f"bc{i},{'Podocyte' if i > 40 else 'B cell'}\n".encode() for i in range(59))
+
+    whole = spreadsheet.cards_from_csv(body, "s1.csv", L)[0][0]
+    assert whole.n_rows_total == 60 and whole.truncated is False
+    assert "celltype [text, 2 distinct] = B cell | Podocyte" in tables.render(whole, L)
+
+    capped = spreadsheet.cards_from_csv(body, "s1.csv", Limits(max_scan_rows=10))[0][0]
+    text = tables.render(capped, Limits(max_scan_rows=10))
+    assert capped.n_rows_total == 60
+    assert "source reports 60 row(s)" in text
+    assert "scan stopped at 10 rows of 60" in text
+    assert " = " not in text
+    assert "celltype [text, 1 distinct] e.g. B cell" in text
+
+
 def test_card_does_not_copy_the_data_it_points_at_it():
     """Duplicating a 2.4 GB corpus to paraphrase it would be the wrong trade: the
     card records where to re-read the real values instead."""

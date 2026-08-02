@@ -210,6 +210,16 @@ def cards_from_csv(
     reader = csv.reader(io.StringIO(text), delimiter=delimiter)
     try:
         rows, truncated = _scan_rows(reader, limits)
+        # Count the file exactly. `n_rows_total=None` made
+        # 10.1126/science.aat5031's 40,269-line data_s1.csv read
+        # `Shape: 4998 data row(s) x 7 column(s)` with no total -- indistinguishable
+        # on that line from the 60-row file beside it. The whole text is already
+        # decoded above so this costs no I/O, and counting parsed rows rather than
+        # newlines keeps a quoted embedded newline from inflating the figure. The
+        # "never read a whole sheet to size it" rule is about xlsx, where sizing
+        # would mean a full parse of bytes nobody has touched yet.
+        total = sum(1 for row in csv.reader(io.StringIO(text), delimiter=delimiter)
+                    if any(str(cell).strip() for cell in row))
     except csv.Error as e:
         return [], UNREADABLE, {"reason": f"{type(e).__name__}: {e}"}
 
@@ -218,7 +228,7 @@ def cards_from_csv(
         source_file=source_file,
         locator="rows",
         limits=limits,
-        n_rows_total=None,
+        n_rows_total=total,
         truncated=truncated,
         data_ref={"file": source_file, "delimiter": delimiter},
     )

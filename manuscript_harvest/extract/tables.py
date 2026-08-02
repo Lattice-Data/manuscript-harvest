@@ -221,9 +221,19 @@ def _unique_names(header: List[Optional[str]]) -> List[str]:
 
 # -- column profiling --------------------------------------------------------
 
-def profile_column(name: str, values: List[Optional[str]], limits: Limits) -> dict:
+def profile_column(name: str, values: List[Optional[str]], limits: Limits,
+                   complete: bool = True) -> dict:
     """Summarise one column: type, cardinality, and either its full value set or
-    examples plus a numeric range."""
+    examples plus a numeric range.
+
+    `complete` is False when the scan was truncated. The `=` form means *the
+    complete value set* -- that is the entire point of the card -- so a value set
+    drawn from a partial scan must never be rendered with it. Measured on
+    10.1126/science.aat5031's `02_aat5031_data_s1.csv`, 40,269 lines scanned to
+    5,000: the card printed `celltype [text, 12 distinct] = B cell | CD4 T cell
+    | ...` where the file holds 33, missing Podocyte, Proximal tubule,
+    Glomerular endothelium and every other epithelial and endothelial type.
+    """
     present = [v for v in values if v is not None]
     profile: dict = {"name": name, "n_values": len(present), "n_empty": len(values) - len(present)}
 
@@ -252,7 +262,7 @@ def profile_column(name: str, values: List[Optional[str]], limits: Limits) -> di
 
     short = all(len(v) <= limits.max_value_chars for v in ordered_unique)
     ceiling = limits.max_unique_numeric_values if dtype == NUMBER else limits.max_unique_values
-    if len(ordered_unique) <= ceiling and short:
+    if complete and len(ordered_unique) <= ceiling and short:
         if dtype == NUMBER:
             profile["values"] = sorted(
                 ordered_unique, key=lambda v: (_as_number(v) is None, _as_number(v) or 0))
@@ -332,7 +342,7 @@ def build_card(
         notes.append("header present but no data rows")
 
     columns = [
-        profile_column(name, columns_values[position], limits)
+        profile_column(name, columns_values[position], limits, complete=not truncated)
         for position, name in enumerate(header_names)
     ]
     # Trailing all-empty columns are Excel padding, not real fields.
@@ -346,8 +356,9 @@ def build_card(
                      f"in the range")
 
     if truncated:
-        notes.append(f"scan stopped at {limits.max_scan_rows} rows; profile covers "
-                     f"only those rows")
+        of_total = f" of {n_rows_total}" if n_rows_total else ""
+        notes.append(f"scan stopped at {limits.max_scan_rows} rows{of_total}; the "
+                     f"value sets below are examples from those rows only")
 
     if header_row is not None and confidence == "low":
         notes.append("header row detected without type-change confirmation; it may "
