@@ -21,8 +21,11 @@ Several clean-ups happen here and they change the characters:
   spans whose font is a symbol face, and whatever is left over is counted in
   `glyphs_unmapped` rather than passed on quietly.
 - **Running heads.** A journal footer repeated on every page would otherwise
-  appear as thirty near-identical paragraphs. A short line seen on at least
-  `limits.running_header_min_pages` pages is dropped and the count recorded.
+  appear as thirty near-identical paragraphs. A short line seen *in a page
+  margin* on at least `limits.running_header_min_pages` pages is dropped, and
+  both the count and the strings are recorded. Position is what makes the rule
+  safe: without it the same test deleted `Reviewer #2 (Remarks to the Author):`
+  from a peer-review file and a UMAP legend from a figure.
 
 Table structure is not recovered from PDFs. A supplementary PDF that is really a
 table still yields its cell text as paragraphs -- searchable, but not a card.
@@ -151,17 +154,42 @@ def _clean_block(text: str, symbols: Optional[Dict[int, str]] = None,
     return re.sub(r"\s+", " ", text).strip()
 
 
-def _running_lines(page_texts: List[List[str]], limits: Limits) -> Dict[str, int]:
-    """Short strings that appear on enough pages to be furniture, not content.
+#: How far in from each edge still counts as a margin, as a fraction of the page.
+_MARGIN_TOP, _MARGIN_BOTTOM = 0.12, 0.88
+_MARGIN_LEFT, _MARGIN_RIGHT = 0.08, 0.92
 
-    Returns `text -> pages seen on`, not a set, so the record can name what was
-    deleted. This rule drops 424 of 1,160 blocks in 10.1126/sciimmunol.aba4163
-    and 854 of 2,474 in the 89-page Science supplement; a count alone does not
-    let anyone check whether that was right.
+
+def _in_margin(rect, width: float, height: float) -> bool:
+    """Whether a layout block sits in a page margin rather than in the body."""
+    x0, y0, x1, y1 = rect
+    return (y1 < _MARGIN_TOP * height or y0 > _MARGIN_BOTTOM * height
+            or x1 < _MARGIN_LEFT * width or x0 > _MARGIN_RIGHT * width)
+
+
+def _running_lines(page_texts: List[List[Tuple[str, bool]]],
+                   limits: Limits) -> Dict[str, int]:
+    """Short strings repeated in a page *margin*: furniture, not content.
+
+    Returns `text -> margin pages`, not a set, so the record can name what was
+    deleted. Position is the whole guard. Counting every appearance dropped 424
+    of 1,160 blocks in 10.1126/sciimmunol.aba4163 and 854 of 2,474 in the
+    89-page Science supplement, and among them
+    `Reviewer #2 (Remarks to the Author):` -- so that article's blocks.jsonl held
+    reviewers 1, 3, 1, 3 and 4 and no reviewer 2 at all, their remarks reading as
+    a continuation of reviewer 1's. It also deleted the UMAP legend
+    (`CD4 T cell`, `MNP-a`) and aba4163's `S. aureus`, `Day 0`, `Day 60`,
+    `Control`, `Crescents (%)`: treatment and timepoint labels.
+
+    "In a margin on *every* page" was tried and fails on real furniture. Counting
+    only margin appearances keeps `Krebs et al., Sci. Immunol...` (y0/h = 0.03
+    throughout), `SCIENCE IMMUNOLOGY | RESEARCH ARTICLE`, the rotated
+    `Downloaded from https://www.science.org...` (x0/w = 0.95), `ll`,
+    `ll Resource` and `(legend on next page)` dropped, while
+    `Reviewer #2 (Remarks to the Author):` (y0/h = 0.28, 0.53, 0.12) survives.
     """
     appearances: Counter = Counter()
     for texts in page_texts:
-        for text in set(texts):
+        for text in {t for t, margin in texts if margin}:
             if len(text) <= 100:
                 appearances[text] += 1
     return {text: count for text, count in appearances.items()
@@ -182,7 +210,7 @@ def blocks_from_pdf(
     except Exception as e:
         return [], UNREADABLE, {"reason": f"{type(e).__name__}: {e}"}
 
-    per_page: List[List[str]] = []
+    per_page: List[List[Tuple[str, bool]]] = []
     meta: dict = {}
     mapped: Counter = Counter()
     unmapped: Counter = Counter()
@@ -190,10 +218,12 @@ def blocks_from_pdf(
     try:
         meta["pages"] = document.page_count
         for page in document:
-            texts = []
+            texts: List[Tuple[str, bool]] = []
             try:
                 raw_blocks = page.get_text("blocks")
                 symbols = _symbol_map(page)
+                width = max(page.rect.width, 1.0)
+                height = max(page.rect.height, 1.0)
             except Exception as e:  # a damaged page should not lose the whole file
                 meta.setdefault("errors", []).append(f"page {page.number + 1}: {e}")
                 per_page.append([])
@@ -207,7 +237,7 @@ def blocks_from_pdf(
                 cleaned = _clean_block(source, symbols, hyphens)
                 unmapped.update(ord(c) for c in cleaned if _is_pua(ord(c)))
                 if cleaned:
-                    texts.append(cleaned)
+                    texts.append((cleaned, _in_margin(raw[0:4], width, height)))
             per_page.append(texts)
     except Exception as e:
         # Page-level damage is already handled above; this is the document
@@ -240,7 +270,7 @@ def blocks_from_pdf(
     blocks: List[Block] = []
     tracker = sections_mod.SectionTracker()
     for page_index, texts in enumerate(per_page, start=1):
-        for text in texts:
+        for text, _margin in texts:
             if text in furniture or _PAGE_NUMBER.match(text):
                 meta["running_lines_dropped"] += 1
                 continue

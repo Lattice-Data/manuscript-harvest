@@ -152,6 +152,19 @@ def test_every_blocks_line_is_json_that_is_not_only_pythons_dialect():
                     f"{path}:{number} is not JSON: {c}"))
 
 
+def test_the_second_reviewers_remarks_are_still_in_the_peer_review_file():
+    """The count-only running-head rule deleted
+    `Reviewer #2 (Remarks to the Author):` from all three pages it appears on, so
+    that article's blocks held reviewers 1, 3, 1, 3 and 4 and no reviewer 2 --
+    their remarks reading as a continuation of reviewer 1's."""
+    _needs("10.1038_s41467-023-40505-5/supplementary/"
+           "22_41467_2023_40505_MOESM2_ESM.pdf")
+    path = _needs("10.1038_s41467-023-40505-5/extracted/blocks.jsonl")
+    reviewers = [b["text"] for b in read_blocks(path)
+                 if b["text"].startswith("Reviewer #")]
+    assert sum(1 for t in reviewers if t.startswith("Reviewer #2")) == 3, reviewers
+
+
 # -- the specific files that taught this stage its rules ---------------------
 
 def test_the_strict_ooxml_supplement_still_reads():

@@ -959,6 +959,24 @@ def test_running_headers_are_dropped_and_named():
                                         "pages": 4}
 
 
+def test_a_repeated_line_in_the_body_is_not_mistaken_for_a_running_head():
+    """`Reviewer #2 (Remarks to the Author):` sits at y0/h = 0.28, 0.53 and 0.12
+    in 10.1038/s41467-023-40505-5's peer-review file, and the count-only rule
+    deleted all three: that article's blocks held reviewers 1, 3, 1, 3 and 4 and
+    no reviewer 2 at all, whose remarks then read as a continuation of
+    reviewer 1's."""
+    heading = "Reviewer #2 (Remarks to the Author):"
+    body = ("The authors should clarify how the nuclei were isolated and how many "
+            "donors contributed to each cluster in the figure. ")
+    data = make_pdf_pages([["Nature Communications | volume 14", heading, body * 2]] * 4)
+    blocks, _, meta = pdf.blocks_from_pdf(data, "f.pdf", L)
+    texts = [b.text for b in blocks]
+    assert texts.count(heading) == 4
+    assert not any("volume 14" in t for t in texts)
+    assert [r["text"] for r in meta["running_lines"]] == \
+        ["Nature Communications | volume 14"]
+
+
 def test_glued_section_heading_is_split_in_a_real_pdf():
     data = make_pdf_pages([[
         "Methods Data collection Nuclei isolation from adult heart tissue was "
