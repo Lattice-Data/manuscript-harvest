@@ -516,6 +516,26 @@ have yielded text did; `partial` when something is missing; `failed` when there 
 nothing to ask a question of. Images and media carry no blame — an article whose
 only supplements are figures is still `complete`.
 
+### Caveats
+
+Beside the status, `extraction.json` carries a `caveats` list from a closed
+vocabulary — things that are true about an extraction without being a per-file
+failure:
+
+| caveat | meaning |
+| --- | --- |
+| `supplements_expected_but_missing` | the fetch stage says files were listed and not retrieved |
+| `supplement_set_unverified` | supplements were fetched, no tier could confirm the set is complete |
+| `main_text_thin` | shorter than `min_main_text_chars`: front matter, not an article |
+| `landing_page_only` | the main text is a saved publisher landing page |
+| `manifest_entry_without_a_path` | a supplementary entry has no file on disk to read |
+
+The first three block `complete`. `supplement_set_unverified` deliberately does
+not: it is common — 2 of the 6 articles on this machine — and it is a caveat, not
+a defect. Before this the fetch stage's own `supplementary_status` was recorded by
+the fetcher and never read by the extractor, so an article whose manifest said
+`expected_but_missing` extracted as `complete` with an empty supplement list.
+
 Across the 63 articles: 42 complete, 12 partial, 9 failed (all nine are the
 Elsevier landing-page-only articles), producing 23,477 blocks and 1,188 table
 cards. Supplementary files: 302 `ok`, 323 `image_no_text`, 10

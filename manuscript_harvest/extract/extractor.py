@@ -70,6 +70,42 @@ _PRODUCTIVE = {OK}
 #: Statuses that are expected and carry no blame -- a figure has no text.
 _BENIGN = {IMAGE_NO_TEXT, MEDIA_NO_TEXT, DATA_SKIPPED}
 
+# -- caveats -----------------------------------------------------------------
+# A closed vocabulary, like the statuses above, for things that are true about an
+# extraction without being a per-file failure. Three of them come from the *fetch*
+# stage's own verdict, which this module recorded and never read: an article whose
+# manifest says `supplementary_status: expected_but_missing` and
+# `problems: ["...listed supplementary material; no tier retrieved it"]` extracted
+# as `status: complete, supplementary: [], suppl[-]`.
+SUPPLEMENTS_MISSING = "supplements_expected_but_missing"
+SUPPLEMENTS_UNVERIFIED = "supplement_set_unverified"
+MAIN_TEXT_THIN = "main_text_thin"
+LANDING_PAGE_ONLY = "landing_page_only"
+MANIFEST_ENTRY_WITHOUT_PATH = "manifest_entry_without_a_path"
+
+CAVEATS = {
+    SUPPLEMENTS_MISSING:
+        "the fetch stage says supplementary material was listed and not retrieved",
+    SUPPLEMENTS_UNVERIFIED:
+        "supplements were fetched but no tier could confirm the set is complete",
+    MAIN_TEXT_THIN:
+        "the main text is shorter than min_main_text_chars: front matter, not an article",
+    LANDING_PAGE_ONLY:
+        "the main text is a saved publisher landing page, not the article",
+    MANIFEST_ENTRY_WITHOUT_PATH:
+        "a supplementary entry in the manifest has no file on disk to read",
+}
+
+#: Fetch verdicts that mean files were lost, not merely uncounted. `none_retrieved`
+#: belongs here: the README defines it as "a tier tried and every file it went
+#: after was lost".
+_FETCH_SUPPLEMENTS_LOST = {"expected_but_missing", "partial_failure", "none_retrieved"}
+
+#: Caveats that stop an article being `complete`. `SUPPLEMENTS_UNVERIFIED` is
+#: deliberately absent: it is common (2 of the 6 articles here) and is a caveat,
+#: not a defect.
+_BLOCKING_CAVEATS = {SUPPLEMENTS_MISSING, MAIN_TEXT_THIN, LANDING_PAGE_ONLY}
+
 SPREADSHEET_EXTENSIONS = {".xlsx", ".xlsm"}
 LEGACY_SPREADSHEET_EXTENSIONS = {".xls"}
 DELIMITED_EXTENSIONS = {".csv", ".tsv"}
@@ -671,11 +707,14 @@ def extract_article(article_dir, limits: Optional[Limits] = None, force: bool = 
     main_result, labels, main_info = _main_text(article_dir, record, limits)
     results: List[FileResult] = [main_result]
 
+    entries_without_path = 0
     for entry in record.get("supplementary") or []:
         path = entry.get("path")
         if not path:
+            entries_without_path += 1
             continue
-        matched = next((labels[key] for key in _supplement_key(entry) if key in labels), None)
+        matched = next((labels[name] for name in _supplement_key(entry) if name in labels),
+                       None)
         label = (matched or {}).get("label") or entry.get("label")
         caption = (matched or {}).get("caption")
         results.append(extract_path(article_dir / path, path, limits,
@@ -704,11 +743,24 @@ def extract_article(article_dir, limits: Optional[Limits] = None, force: bool = 
     main_info["usable"] = main_usable
     supplement_text = any(r.blocks for r in results[1:])
 
+    fetch_supplements = record.get("supplementary_status")
+    caveats: List[str] = []
+    if fetch_supplements in _FETCH_SUPPLEMENTS_LOST:
+        caveats.append(SUPPLEMENTS_MISSING)
+    elif fetch_supplements == "fetched_unverified":
+        caveats.append(SUPPLEMENTS_UNVERIFIED)
     # `chars > 0` was the only length test, so a 185-character front-matter-only
     # JATS body with no PDF beside it came out `complete`. No new limit:
     # `min_main_text_chars` is already the number and already carries its why.
+    if main_info.get("thin"):
+        caveats.append(MAIN_TEXT_THIN)
+    if main_info.get("landing_page_only"):
+        caveats.append(LANDING_PAGE_ONLY)
+    if entries_without_path:
+        caveats.append(MANIFEST_ENTRY_WITHOUT_PATH)
+
     if main_usable and not text_bearing_failures \
-            and not main_info.get("landing_page_only") and not main_info.get("thin"):
+            and not _BLOCKING_CAVEATS & set(caveats):
         status = "complete"
     elif main_usable or supplement_text:
         status = "partial"
@@ -726,6 +778,7 @@ def extract_article(article_dir, limits: Optional[Limits] = None, force: bool = 
         "extraction_key": key,
         "parser_versions": _parser_versions(),
         "fetch_status": record.get("status"),
+        "fetch_supplementary_status": fetch_supplements,
         "limits": limits.to_dict(),
         "main_text": {**main_result.to_dict(), **main_info,
                       "section_labelling": _section_labelling(main_result, main_info)},
@@ -739,6 +792,7 @@ def extract_article(article_dir, limits: Optional[Limits] = None, force: bool = 
             "sections": sorted({b.section for b in all_blocks if b.section}),
         },
         "unextracted_text_files": text_bearing_failures,
+        "caveats": caveats,
         "status": status,
         "problems": problems,
         "blocks_path": f"{EXTRACT_DIR}/{BLOCKS_NAME}",
@@ -766,8 +820,10 @@ def summarize(extraction: dict) -> str:
     main = extraction.get("main_text") or {}
     by_status = extraction.get("supplementary_by_status") or {}
     supplements = "  ".join(f"{k}={v}" for k, v in sorted(by_status.items())) or "-"
+    caveats = extraction.get("caveats") or []
     return (
         f"{extraction.get('status', '?'):8s} main={str(main.get('source')):13s} "
         f"blocks={totals.get('blocks', 0):<5d} tables={totals.get('tables', 0):<4d} "
         f"chars={totals.get('chars', 0):<8d} suppl[{supplements}]"
+        + (f" caveats[{' '.join(caveats)}]" if caveats else "")
     )

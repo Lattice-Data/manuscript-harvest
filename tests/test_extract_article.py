@@ -120,6 +120,43 @@ def test_a_substantial_main_text_is_not_marked_thin(tmp_path):
     assert record["status"] == "complete"
 
 
+def test_a_fetch_verdict_of_lost_supplements_blocks_complete(tmp_path):
+    """`extract_article` copied `record["status"]` into `fetch_status` and never
+    read `record["supplementary_status"]`. An article whose manifest says
+    `expected_but_missing` -- with a problem line saying a tier listed
+    supplementary material and no tier retrieved it -- extracted as
+    `status: complete, supplementary: [], suppl[-]`."""
+    directory = _article(tmp_path, xml=jats_article(METHODS_BODY))
+    record = store.read_manifest(directory)
+    record["supplementary_status"] = "expected_but_missing"
+    store.write_manifest(directory, record)
+
+    result = extract_article(directory, limits=L, force=True)
+    assert result["fetch_supplementary_status"] == "expected_but_missing"
+    assert extractor.SUPPLEMENTS_MISSING in result["caveats"]
+    assert result["status"] == "partial"
+    assert "caveats[supplements_expected_but_missing]" in extractor.summarize(result)
+
+
+def test_an_unverified_supplement_set_is_a_caveat_not_a_defect(tmp_path):
+    """`fetched_unverified` is 2 of the 6 articles in this corpus. It is worth
+    saying and it is not a reason to withhold `complete`."""
+    directory = _article(tmp_path, xml=jats_article(METHODS_BODY))
+    record = store.read_manifest(directory)
+    record["supplementary_status"] = "fetched_unverified"
+    store.write_manifest(directory, record)
+
+    result = extract_article(directory, limits=L, force=True)
+    assert result["caveats"] == [extractor.SUPPLEMENTS_UNVERIFIED]
+    assert result["status"] == "complete"
+
+
+def test_every_caveat_is_in_the_closed_vocabulary(tmp_path):
+    directory = _article(tmp_path, landing=LANDING_INTERSTITIAL)
+    for name in extract_article(directory, limits=L)["caveats"]:
+        assert name in extractor.CAVEATS
+
+
 def test_bot_check_landing_page_gives_a_failed_article(tmp_path):
     """Nine Elsevier articles in this corpus are in exactly this state."""
     directory = _article(tmp_path, landing=LANDING_INTERSTITIAL)
