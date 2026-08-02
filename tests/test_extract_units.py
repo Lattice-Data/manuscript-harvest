@@ -763,6 +763,61 @@ def test_hyphenated_line_breaks_are_rejoined():
     assert "perturbation" in " ".join(b.text for b in blocks)
 
 
+class _FakePage:
+    """A PyMuPDF page as far as `_symbol_map` is concerned: spans with fonts.
+
+    A real fixture is not available -- PyMuPDF's own base-14 Symbol font ships a
+    ToUnicode map, so a synthesized PDF round-trips `g` as `g` and never
+    reproduces the private-use codepoint this guard exists for. The corpus test
+    over 10.1126/sciimmunol.aba4163 covers the real shape.
+    """
+
+    def __init__(self, spans):
+        self._spans = spans
+
+    def get_text(self, kind):
+        return {"blocks": [{"lines": [{"spans": [
+            {"font": font, "text": text} for font, text in self._spans]}]}]}
+
+
+@pytest.mark.parametrize("raw,expected", [
+    # `interleukin-<soft hyphen>\n17A` keeps its real hyphen.
+    ("interleukin-\u00ad\n17A", "interleukin-17A"),
+    ("scRNA-\u00ad seq", "scRNA-seq"),
+    ("pheno\u00ad type", "phenotype"),
+    ("pheno\u00ad\ntype", "phenotype"),
+    ("zero\u200bwidth", "zerowidth"),
+    ("\ufeffbom", "bom"),
+])
+def test_a_soft_hyphen_does_not_survive_inside_a_word(raw, expected):
+    """U+00AD is category Cf -- neither `\\w` nor `\\s` -- so `_HYPHEN_BREAK`
+    could not fire across one and the whitespace collapse left it in the word.
+    21 of them in 10.1126/sciimmunol.aba4163."""
+    cleaned = pdf._clean_block(raw)
+    assert cleaned == expected
+    assert "\u00ad" not in cleaned and "\u200b" not in cleaned
+
+
+def test_a_symbol_font_glyph_becomes_the_greek_letter_it_stands_for():
+    """`SymbolGreek` U+F067 is the gamma in `IFN-\u03b3`, 41 times in one article."""
+    symbols = pdf._symbol_map(_FakePage([("SymbolGreek", "\uf067\uf062")]))
+    assert symbols == {0xF067: "\u03b3", 0xF062: "\u03b2"}
+    assert pdf._clean_block("IFN-\uf067 and TGF-\uf062", symbols) == "IFN-\u03b3 and TGF-\u03b2"
+
+
+def test_a_private_use_codepoint_from_an_ordinary_font_is_left_alone():
+    """A subsetted Latin face reuses the private use area for its own glyphs.
+    Turning one of those into a Greek letter would invent a character."""
+    assert pdf._symbol_map(_FakePage([("ABCDEF+MinionPro", "\uf067")])) == {}
+    assert pdf._clean_block("x\uf067y", {}) == "x\uf067y"
+
+
+def test_an_unmapped_private_use_glyph_is_counted_not_hidden():
+    data = make_pdf_pages([["ordinary text with no symbol font at all here"]])
+    _, _, meta = pdf.blocks_from_pdf(data, "f.pdf", L)
+    assert "glyphs_unmapped" not in meta and "glyphs_mapped" not in meta
+
+
 def test_running_headers_are_dropped():
     """A journal footer repeated on every page would otherwise appear as thirty
     near-identical paragraphs."""

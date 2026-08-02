@@ -10,12 +10,14 @@ files: a strict-conformance workbook, a header on row 4, a caption nested inside
 Run them after fetching:  python -m pytest tests/test_extract_corpus.py -q
 """
 
+import collections
 import json
 from pathlib import Path
 
 import pytest
 
 from manuscript_harvest.extract import extractor, jats, spreadsheet
+from manuscript_harvest.extract.blocks import read_blocks
 from manuscript_harvest.extract.limits import Limits
 
 CORPUS = Path("corpus")
@@ -82,6 +84,24 @@ def test_completed_articles_have_a_main_text_source():
     for record in _extractions():
         if record["status"] == "complete":
             assert (record["main_text"] or {}).get("source") in {"jats", "pdf"}
+
+
+def test_no_extracted_block_carries_an_invisible_or_symbol_glyph():
+    """Measured before the fix: 79 damaged codepoints in
+    10.1126/sciimmunol.aba4163 alone -- 21x U+00AD, 41x U+F067 (Adobe Symbol
+    gamma), 5x U+200B -- so `interleukin-<U+00AD> 17A` and `interferon- (IFN-)`
+    reached a model where the paper says `interleukin-17A` and
+    `interferon-γ (IFN-γ)`."""
+    _extractions()
+    damaged = collections.Counter()
+    for path in sorted(CORPUS.glob("*/extracted/blocks.jsonl")):
+        for block in read_blocks(path):
+            for char in block["text"]:
+                point = ord(char)
+                if point in (0x00AD, 0x200B, 0x200C, 0x200D, 0xFEFF) \
+                        or 0xF000 <= point <= 0xF0FF:
+                    damaged[(path.parent.parent.name, f"U+{point:04X}")] += 1
+    assert not damaged, dict(damaged)
 
 
 # -- the specific files that taught this stage its rules ---------------------

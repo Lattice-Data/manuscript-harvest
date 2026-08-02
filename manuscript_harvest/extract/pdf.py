@@ -4,12 +4,22 @@ PyMuPDF's layout blocks are used rather than raw page text, because a block is a
 much better paragraph proxy than "text between blank lines" and it survives
 two-column layouts, which most publisher PDFs are.
 
-Two clean-ups happen here and they change the characters:
+Several clean-ups happen here and they change the characters:
 
 - **De-hyphenation.** "perturba-\\ntion" becomes "perturbation". Left alone, a
   hyphenated word is unsearchable and cannot be quoted. Any downstream check that
   a quote really appears in the source compares it against the text this module
   produced, so the text it produces is the text that counts.
+- **Invisible characters.** Soft hyphens, zero-width spaces and BOMs are removed.
+  U+00AD is category Cf -- neither `\\w` nor `\\s` -- so it survived both the
+  de-hyphenation pattern and the whitespace collapse and sat inside the word:
+  79 damaged codepoints in 10.1126/sciimmunol.aba4163, whose block 6 read
+  `interleukin-<U+00AD> 17A` where the paper says `interleukin-17A`.
+- **Symbol-font glyphs.** A Symbol glyph with no ToUnicode map arrives as an
+  Adobe Symbol position in the private use area: 41 of the same file's blocks
+  carried U+F067 where the paper says gamma. Those are translated, but only for
+  spans whose font is a symbol face, and whatever is left over is counted in
+  `glyphs_unmapped` rather than passed on quietly.
 - **Running heads.** A journal footer repeated on every page would otherwise
   appear as thirty near-identical paragraphs. A short line seen on at least
   `limits.running_header_min_pages` pages is dropped and the count recorded.
@@ -21,7 +31,7 @@ That is a real gap; JATS and spreadsheets are where the tables come from.
 
 import re
 from collections import Counter
-from typing import List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import fitz  # PyMuPDF
 
@@ -37,8 +47,82 @@ UNREADABLE = "unreadable"
 _HYPHEN_BREAK = re.compile(r"(\w)[-‐‑]\s*\n\s*(\w)")
 _PAGE_NUMBER = re.compile(r"^\s*(?:page\s*)?\d{1,4}\s*(?:of\s*\d{1,4})?\s*$", re.IGNORECASE)
 
+#: A soft hyphen and whatever line break it caused. This runs *before*
+#: `_HYPHEN_BREAK`, and it keeps any real hyphen beside it: the raw text of
+#: 10.1126/sciimmunol.aba4163 block 6 is `interleukin-­\n17A`, which must
+#: become `interleukin-17A` and not `interleukin17A`.
+_SOFT_BREAK = re.compile("­[ \t]*\n?[ \t]*")
 
-def _clean_block(text: str) -> str:
+#: Zero-width and invisible characters, removed outright. U+00AD is category Cf
+#: -- neither `\w` nor `\s` -- so `_HYPHEN_BREAK` could never fire across one and
+#: the whitespace collapse left it sitting inside the word.
+_INVISIBLE = {0x00ad: None, 0x200b: None, 0x200c: None, 0x200d: None, 0xfeff: None}
+
+#: Fonts whose private-use codepoints are Adobe Symbol positions rather than a
+#: subsetted Latin face. Checked per span, because a PUA codepoint out of an
+#: ordinary subsetted font means something else entirely and must be left alone.
+_SYMBOL_FONT = re.compile(r"symbol|cmsy|cmmi|mathematicalpi|advp", re.I)
+
+#: The Adobe Symbol encoding, offset into the private use area at 0xF000, which
+#: is how PyMuPDF reports a Symbol glyph with no ToUnicode map. Measured on
+#: 10.1126/sciimmunol.aba4163 (font `SymbolGreek`): 41x U+F067, which is the
+#: gamma in `IFN-γ`, `RORγt` and `CD8` across blocks 6, 13, 18, 66, 137,
+#: 138, 235-245 and 301.
+_SYMBOL_PUA: Dict[int, str] = {
+    # upper-case Greek
+    0xF041: "Α", 0xF042: "Β", 0xF043: "Χ", 0xF044: "Δ", 0xF045: "Ε", 0xF046: "Φ",
+    0xF047: "Γ", 0xF048: "Η", 0xF049: "Ι", 0xF04A: "ϑ", 0xF04B: "Κ", 0xF04C: "Λ",
+    0xF04D: "Μ", 0xF04E: "Ν", 0xF04F: "Ο", 0xF050: "Π", 0xF051: "Θ", 0xF052: "Ρ",
+    0xF053: "Σ", 0xF054: "Τ", 0xF055: "Υ", 0xF056: "ς", 0xF057: "Ω", 0xF058: "Ξ",
+    0xF059: "Ψ", 0xF05A: "Ζ",
+    # lower-case Greek
+    0xF061: "α", 0xF062: "β", 0xF063: "χ", 0xF064: "δ", 0xF065: "ε", 0xF066: "φ",
+    0xF067: "γ", 0xF068: "η", 0xF069: "ι", 0xF06A: "ϕ", 0xF06B: "κ", 0xF06C: "λ",
+    0xF06D: "μ", 0xF06E: "ν", 0xF06F: "ο", 0xF070: "π", 0xF071: "θ", 0xF072: "ρ",
+    0xF073: "σ", 0xF074: "τ", 0xF075: "υ", 0xF076: "ϖ", 0xF077: "ω", 0xF078: "ξ",
+    0xF079: "ψ", 0xF07A: "ζ",
+    # the mathematical operators that turn up in a methods section
+    0xF02D: "−", 0xF0A3: "≤", 0xF0A5: "∞", 0xF0AC: "←", 0xF0AD: "↑", 0xF0AE: "→",
+    0xF0AF: "↓", 0xF0B0: "°", 0xF0B1: "±", 0xF0B2: "″", 0xF0B3: "≥", 0xF0B4: "×",
+    0xF0B5: "∝", 0xF0B6: "∂", 0xF0B7: "•", 0xF0B8: "÷", 0xF0B9: "≠", 0xF0BA: "≡",
+    0xF0BB: "≈", 0xF0BC: "…", 0xF0D6: "√", 0xF0D7: "⋅",
+}
+
+_PUA_START, _PUA_END = 0xE000, 0xF8FF
+
+
+def _is_pua(codepoint: int) -> bool:
+    return _PUA_START <= codepoint <= _PUA_END
+
+
+def _symbol_map(page) -> Dict[int, str]:
+    """The private-use codepoints on this page that came out of a symbol font.
+
+    Built per page from `page.get_text("dict")` spans so that a PUA codepoint
+    from an unrelated subsetted font is never turned into a Greek letter.
+    """
+    found: Dict[int, str] = {}
+    try:
+        rendered = page.get_text("dict")
+    except Exception:
+        return found
+    for block in rendered.get("blocks", []):
+        for line in block.get("lines", []):
+            for span in line.get("spans", []):
+                if not _SYMBOL_FONT.search(span.get("font") or ""):
+                    continue
+                for char in span.get("text") or "":
+                    replacement = _SYMBOL_PUA.get(ord(char))
+                    if replacement is not None:
+                        found[ord(char)] = replacement
+    return found
+
+
+def _clean_block(text: str, symbols: Optional[Dict[int, str]] = None) -> str:
+    text = _SOFT_BREAK.sub("", text)
+    text = text.translate(_INVISIBLE)
+    if symbols:
+        text = text.translate(symbols)
     text = _HYPHEN_BREAK.sub(r"\1\2", text)
     text = text.replace("\xa0", " ")
     return re.sub(r"\s+", " ", text).strip()
@@ -71,12 +155,15 @@ def blocks_from_pdf(
 
     per_page: List[List[str]] = []
     meta: dict = {}
+    mapped: Counter = Counter()
+    unmapped: Counter = Counter()
     try:
         meta["pages"] = document.page_count
         for page in document:
             texts = []
             try:
                 raw_blocks = page.get_text("blocks")
+                symbols = _symbol_map(page)
             except Exception as e:  # a damaged page should not lose the whole file
                 meta.setdefault("errors", []).append(f"page {page.number + 1}: {e}")
                 per_page.append([])
@@ -85,7 +172,10 @@ def blocks_from_pdf(
                 # (x0, y0, x1, y1, text, block_no, block_type); type 1 is an image.
                 if len(raw) >= 7 and raw[6] != 0:
                     continue
-                cleaned = _clean_block(raw[4] if len(raw) > 4 else "")
+                source = raw[4] if len(raw) > 4 else ""
+                mapped.update(ord(c) for c in source if ord(c) in symbols)
+                cleaned = _clean_block(source, symbols)
+                unmapped.update(ord(c) for c in cleaned if _is_pua(ord(c)))
                 if cleaned:
                     texts.append(cleaned)
             per_page.append(texts)
@@ -96,6 +186,15 @@ def blocks_from_pdf(
         return [], UNREADABLE, meta
     finally:
         document.close()
+
+    if mapped:
+        meta["glyphs_mapped"] = {f"U+{cp:04X}": _SYMBOL_PUA[cp] for cp in sorted(mapped)}
+    if unmapped:
+        # Named rather than silently passed on: `1 <U+F8FF>i <U+F8FF>n` from
+        # CMSY10 in 10.1038/s41467-023-40505-5 is really `1 <= i <= n`, and
+        # U+F8FF is PyMuPDF's "no unicode mapping" fallback rather than an Adobe
+        # Symbol position, so guessing a character for it would be a guess.
+        meta["glyphs_unmapped"] = {f"U+{cp:04X}": n for cp, n in sorted(unmapped.items())}
 
     furniture = _running_lines(per_page, limits)
     meta["running_lines_dropped"] = 0
