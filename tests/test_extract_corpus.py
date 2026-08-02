@@ -17,9 +17,10 @@ from pathlib import Path
 
 import pytest
 
-from manuscript_harvest.extract import extractor, jats, spreadsheet
+from manuscript_harvest.extract import extractor, jats, section_audit, spreadsheet
 from manuscript_harvest.extract.blocks import read_blocks
 from manuscript_harvest.extract.limits import Limits
+from manuscript_harvest.fetch import store
 
 CORPUS = Path("corpus")
 L = Limits()
@@ -217,6 +218,76 @@ def test_block_ids_are_unique_over_the_corpus():
         assert all(ids), path
         repeated = [i for i, n in collections.Counter(ids).items() if n > 1]
         assert not repeated, (path.parent.parent.name, repeated[:5])
+
+
+# -- the section labeller as a regression metric -----------------------------
+
+EXPECTED_SCORES = Path("tests/expected_section_scores.json")
+
+
+def test_no_article_regressed_against_the_recorded_section_scores():
+    """`section_audit.py` scores the PDF labeller against JATS, which declares
+    its sections. It was a thing someone remembered to run; this makes it a gate.
+
+    A legitimate improvement updates `tests/expected_section_scores.json` in the
+    same commit, so the diff shows the gain.
+    """
+    baseline = json.loads(EXPECTED_SCORES.read_text())
+    regressions = []
+    for directory in sorted(p for p in CORPUS.glob("*") if p.is_dir()):
+        report = section_audit.audit_article(directory)
+        if report is None or report.get("skipped"):
+            continue
+        recorded = baseline.get(report["slug"])
+        if recorded is None:
+            continue
+        if report["correct"] < recorded["correct"]:
+            regressions.append((report["slug"], "correct",
+                                recorded["correct"], report["correct"]))
+        for name, was in recorded["precision"].items():
+            now = (report["sections"].get(name) or {}).get("precision")
+            if now is not None and now < was:
+                regressions.append((report["slug"], name, was, now))
+    assert not regressions, regressions
+
+
+def test_pdf_reading_order_is_not_improved_by_sorting():
+    """PyMuPDF's `get_text("blocks", sort=True)` is the obvious fix for two-column
+    reading order and it is measurably worse. Measured once and pinned here so the
+    next person does not "fix" it: insertion order gives 10 backward steps in 98
+    aligned paragraphs, and sorting makes both statistics worse.
+    """
+    import fitz
+
+    pairs = [(p.parent / store.FULLTEXT_XML, p)
+             for p in sorted(CORPUS.glob("*/" + store.FULLTEXT_PDF))]
+    pairs = [(x, p) for x, p in pairs if x.is_file()]
+    if not pairs:
+        pytest.skip("no article here has both renditions")
+
+    worse = []
+    for xml_path, pdf_path in pairs:
+        jats_blocks, status, _ = jats.blocks_from_jats(xml_path.read_bytes(),
+                                                       str(xml_path), L)
+        if status != "ok":
+            continue
+        scores = {}
+        for sort in (False, True):
+            document = fitz.open(pdf_path)
+            texts = []
+            for page in document:
+                for raw in page.get_text("blocks", sort=sort):
+                    if len(raw) >= 7 and raw[6] != 0:
+                        continue
+                    cleaned = " ".join((raw[4] or "").split())
+                    if cleaned:
+                        texts.append(cleaned)
+            document.close()
+            scores[sort] = section_audit.reading_order_score(jats_blocks, texts)
+        if scores[True]["inverted_pairs"] < scores[False]["inverted_pairs"]:
+            worse.append((pdf_path.parent.name, scores[False], scores[True]))
+    assert not worse, ("sorting improved reading order here; re-measure before "
+                       "changing pdf.py", worse)
 
 
 # -- the specific files that taught this stage its rules ---------------------

@@ -1,0 +1,27 @@
+{
+  "10.1016_j.cell.2021.01.053": {
+    "aligned": 98,
+    "correct": 87,
+    "precision": {
+      "abstract": 0.667,
+      "back_matter": 0.8,
+      "data_availability": 1.0,
+      "discussion": 1.0,
+      "introduction": 0.714,
+      "methods": 0.879,
+      "results": 0.975,
+      "supplementary": 0.0
+    }
+  },
+  "10.1038_s41467-023-40505-5": {
+    "aligned": 125,
+    "correct": 115,
+    "precision": {
+      "back_matter": 0.8,
+      "data_availability": 1.0,
+      "discussion": 1.0,
+      "methods": 1.0,
+      "results": 0.981
+    }
+  }
+}

@@ -862,6 +862,14 @@ run on every commit.
   eight-word shingle and comparing labels paragraph by paragraph:
 
       python -m manuscript_harvest.extract.section_audit --corpus-dir corpus
+      python -m manuscript_harvest.extract.section_audit --fail-under 0.85
+
+  `--fail-under` makes it a gate, and `tests/expected_section_scores.json` holds a
+  per-slug baseline that `tests/test_extract_corpus.py` asserts against, so a
+  regression in one article cannot hide behind an improvement in another; a real
+  improvement updates that file in the same commit, and the diff shows the gain.
+  Articles with no XML/PDF pair are named before the headline rather than dropped
+  from it, so the percentage never reads as corpus coverage.
 
   Over the three open-access papers here, **309 of 337 alignable paragraphs agree
   (91.7%)**, and Methods — the label worth most — scores precision 1.00, 1.00 and
@@ -875,6 +883,12 @@ run on every commit.
   above; and `methods` at precision 0.50 on a Cell paper, which led to the
   `STAR★METHODS` glyph. Fixing those moved the same two papers from 90.0% and 87.7%
   to 93.0% and 89.8%, and Methods on the Cell paper from 0.50 to 0.88.
+- **Sorting PDF reading order is measurably worse, twice.** PyMuPDF's
+  `get_text("blocks", sort=True)` is the obvious fix for two-column layout and it
+  makes both articles here worse: backward steps 10 → 23 and inverted pairs
+  11.2% → 12.0% on `10.1016/j.cell.2021.01.053`, 4 → 38 and 2.5% → 3.9% on
+  `10.1038/s41467-023-40505-5`. Pinned by
+  `test_pdf_reading_order_is_not_improved_by_sorting`.
 - **A Cell Press heading is published with a star glyph, not an asterisk.**
   `STAR★METHODS` (U+2605) is what appears in both the XML and the PDF, and the
   alias matched only the ASCII `STAR*Methods` that people type when writing *about*
