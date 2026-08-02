@@ -88,6 +88,23 @@ def _exit_code(extraction: dict) -> int:
     return {"complete": 0, "partial": 1}.get(extraction.get("status"), 2)
 
 
+def _labelling(extraction: dict) -> dict:
+    return ((extraction.get("main_text") or {}).get("section_labelling")) or {}
+
+
+def _section_warning(extraction: dict) -> list:
+    """The one line worth printing when the main text is barely labelled.
+
+    An article can be `complete` with no methods or results label anywhere in its
+    body -- 10.1126/science.aat5031 is -- because `totals.sections` counts the
+    supplements too. Nothing said that was abnormal.
+    """
+    report = _labelling(extraction)
+    if report.get("confidence") in {"low", "none"}:
+        return [f"section labelling is {report['confidence']}: {report['why']}"]
+    return []
+
+
 def cmd_one(args) -> int:
     corpus_dir, limits, markdown = _settings(args)
     directory = _resolve(corpus_dir, args.article)
@@ -99,6 +116,8 @@ def cmd_one(args) -> int:
     for note in [(extraction.get("main_text") or {}).get("note")]:
         if note:
             print(f"    ! {note}", file=sys.stderr)
+    for line in _section_warning(extraction):
+        print(f"    ! {line}", file=sys.stderr)
     for path in extraction.get("unextracted_text_files") or []:
         print(f"    ! no text from {path}", file=sys.stderr)
     if args.json:
@@ -133,6 +152,8 @@ def cmd_all(args) -> int:
         marker = " (cached)" if extraction.get("cached") else ""
         print(f"{directory.name:38s} {extractor.summarize(extraction)}{marker}",
               file=sys.stderr)
+        for line in _section_warning(extraction):
+            print(f"{'':38s}   ! {line}", file=sys.stderr)
 
     print("\n" + "  ".join(f"{k}={v}" for k, v in sorted(by_status.items())), file=sys.stderr)
     return 0 if by_status.get("complete") == len(directories) else 1
@@ -149,6 +170,7 @@ def cmd_status(args) -> int:
     totals = {"articles": 0, "extracted": 0, "blocks": 0, "tables": 0, "chars": 0}
     file_statuses: dict = {}
     sources: dict = {}
+    labelling: dict = {}
     for directory in directories:
         totals["articles"] += 1
         extraction = extractor.read_extraction(directory)
@@ -164,8 +186,11 @@ def cmd_status(args) -> int:
         sources[source] = sources.get(source, 0) + 1
         for status, count in (extraction.get("supplementary_by_status") or {}).items():
             file_statuses[status] = file_statuses.get(status, 0) + count
+        sect = _labelling(extraction).get("confidence", "?")
+        labelling[sect] = labelling.get(sect, 0) + 1
         if not args.quiet:
-            print(f"{directory.name:38s} {extractor.summarize(extraction)}", file=sys.stderr)
+            print(f"{directory.name:38s} {extractor.summarize(extraction)} sect={sect}",
+                  file=sys.stderr)
 
     print(f"\n{totals['extracted']}/{totals['articles']} articles extracted: "
           f"{totals['blocks']} blocks, {totals['tables']} tables, "
@@ -174,6 +199,8 @@ def cmd_status(args) -> int:
         sources.items(), key=lambda kv: str(kv[0]))), file=sys.stderr)
     print("supplementary files: " + "  ".join(f"{k}={v}" for k, v in sorted(
         file_statuses.items())), file=sys.stderr)
+    print("main-text section labelling: " + "  ".join(f"{k}={v}" for k, v in sorted(
+        labelling.items())), file=sys.stderr)
     return 0
 
 

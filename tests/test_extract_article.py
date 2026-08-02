@@ -441,6 +441,45 @@ def test_a_changed_manifest_invalidates_the_cache(tmp_path):
     assert extract_article(directory, limits=L).get("cached") is None
 
 
+def test_an_unlabelled_body_is_reported_even_when_the_article_is_complete(tmp_path):
+    """10.1126/science.aat5031 is `complete` with 52 of its 87 main-text blocks
+    carrying no section, the whole Results and Discussion among them, while
+    `totals.sections` lists `methods` because every methods block comes from a
+    supplementary PDF. A filter for `section == methods` over that main text
+    returns nothing and the record used to say nothing was wrong."""
+    page = ("Tissue-resident immune cells are important for organ homeostasis. "
+            "We profiled the mature and developing human kidney. ") * 12
+    directory = _article(tmp_path, fulltext=make_pdf_pages([[page]]))
+    record = extract_article(directory, limits=L)
+    report = record["main_text"]["section_labelling"]
+    assert record["status"] == "complete"
+    assert report["method"] == "heuristic"
+    assert report["confidence"] == "none"
+    assert report["body_sections_missing"] == ["methods", "results"]
+    assert "no body section label" in report["why"]
+
+
+def test_declared_sections_are_not_scored_as_a_heuristic(tmp_path):
+    directory = _article(tmp_path, xml=jats_article(METHODS_BODY))
+    report = extract_article(directory, limits=L)["main_text"]["section_labelling"]
+    assert report["method"] == "declared" and report["confidence"] == "declared"
+    assert "methods" in report["body_sections_found"]
+
+
+def test_cli_prints_the_section_labelling_warning(tmp_path, capsys):
+    page = ("Tissue-resident immune cells are important for organ homeostasis. "
+            "We profiled the mature and developing human kidney. ") * 12
+    _article(tmp_path, fulltext=make_pdf_pages([[page]]))
+    config = tmp_path / "config.yaml"
+    config.write_text(f"extract:\n  corpus_dir: {tmp_path}\n")
+    main(["--config", str(config), "one", DOI])
+    assert "section labelling is none" in capsys.readouterr().err
+    main(["--config", str(config), "status"])
+    err = capsys.readouterr().err
+    assert "sect=none" in err
+    assert "main-text section labelling: none=1" in err
+
+
 def test_the_record_names_the_running_lines_it_deleted(tmp_path):
     """`meta["running_lines_dropped"]` was set by the parser but was missing from
     the allow-list, so it never reached extraction.json and nothing outside one

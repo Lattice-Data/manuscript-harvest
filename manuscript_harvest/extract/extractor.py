@@ -443,6 +443,66 @@ def extract_path(path, relative_path: str, limits: Limits, role: str = SUPPLEMEN
                          caption=caption, content_type=content_type)
 
 
+# -- how much of the main text carries a section label -----------------------
+
+#: Sections that are part of the body of a paper, as opposed to its apparatus.
+_BODY_SECTIONS = ("abstract", "introduction", "results", "methods", "discussion")
+#: The two whose absence from a body makes every downstream filter unreliable.
+_REQUIRED_SECTIONS = ("methods", "results")
+
+
+def _section_labelling(main_result: FileResult, main_info: dict) -> dict:
+    """What fraction of the main text is labelled, and how much to trust it.
+
+    10.1126/science.aat5031 is `complete`, `main_text.source: pdf`, and 52 of its
+    87 main-text blocks carry no section at all -- the entire Results and
+    Discussion among them. `totals.sections` nonetheless lists `methods`, because
+    every one of that article's methods blocks comes from a *supplementary* PDF,
+    so a downstream filter for `section == methods` over the main text returns
+    nothing and the record says nothing is wrong.
+
+    Deliberately not a new article status: the taxonomy is closed, and this is a
+    measurement rather than a verdict.
+    """
+    blocks = main_result.blocks
+    total_chars = sum(len(b.text) for b in blocks)
+    labelled = [b for b in blocks if b.section]
+    labelled_chars = sum(len(b.text) for b in labelled)
+    coverage = round(labelled_chars / total_chars, 2) if total_chars else 0.0
+    present = {b.section for b in labelled}
+    found = sorted(present & set(_BODY_SECTIONS))
+    missing = [s for s in _REQUIRED_SECTIONS if s not in present]
+
+    method = "declared" if main_result.origin.endswith("jats") else "heuristic"
+    percent = f"{int(round(coverage * 100))}% of characters labelled"
+    if method == "declared":
+        confidence = "declared"
+        why = "sections come from the JATS XML rather than from a heading heuristic"
+    elif not present & {"introduction", "results", "methods", "discussion"}:
+        confidence = "none"
+        why = f"no body section label anywhere in the main text ({percent})"
+    elif missing:
+        confidence = "low"
+        why = f"no {' or '.join(missing)} label anywhere in the main text ({percent})"
+    elif coverage < 0.75:
+        confidence = "low"
+        why = f"only {percent} in the main text"
+    else:
+        confidence = "ok"
+        why = f"{percent}"
+
+    return {
+        "method": method,
+        "labelled_blocks": len(labelled), "total_blocks": len(blocks),
+        "labelled_chars": labelled_chars, "total_chars": total_chars,
+        "coverage": coverage,
+        "body_sections_found": found,
+        "body_sections_missing": missing,
+        "confidence": confidence,
+        "why": why,
+    }
+
+
 # -- the cache key -----------------------------------------------------------
 
 def _parser_versions() -> Dict[str, str]:
@@ -643,7 +703,8 @@ def extract_article(article_dir, limits: Optional[Limits] = None, force: bool = 
         "parser_versions": _parser_versions(),
         "fetch_status": record.get("status"),
         "limits": limits.to_dict(),
-        "main_text": {**main_result.to_dict(), **main_info},
+        "main_text": {**main_result.to_dict(), **main_info,
+                      "section_labelling": _section_labelling(main_result, main_info)},
         "supplementary": [r.to_dict() for r in results[1:]],
         "supplementary_by_status": by_status,
         "totals": {
