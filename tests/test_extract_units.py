@@ -981,6 +981,36 @@ def test_jats_sections_and_metadata():
     assert any(b.section == "abstract" for b in blocks)
 
 
+def test_a_jats_block_carries_the_heading_path_it_sits_under():
+    """`section` is one canonical name out of eleven, and `walk_section` already
+    knows the whole tree. `pdf.py` is deliberately left alone: there the tree is
+    a guess, and a guessed path is what this package refuses to produce."""
+    body = ('<sec sec-type="methods"><title>Methods</title>'
+            '<sec><title>Nuclei isolation</title>'
+            '<p>Nuclei were isolated from frozen tissue.</p></sec>'
+            '<sec><title>Library preparation</title>'
+            '<p>Libraries were made with the 10x kit.</p></sec></sec>')
+    blocks, _, _ = jats.blocks_from_jats(jats_article(body), "f.nxml", L)
+    paths = {b.text: b.section_path for b in blocks if b.origin == "jats"}
+    assert paths["Nuclei were isolated from frozen tissue."] == \
+        ["Methods", "Nuclei isolation"]
+    assert paths["Libraries were made with the 10x kit."] == \
+        ["Methods", "Library preparation"]
+    assert paths["Nuclei isolation"] == ["Methods", "Nuclei isolation"]
+    assert paths["Methods"] == ["Methods"]
+    # Emitted only when it is real, so nothing else in the line changes.
+    front = next(b for b in blocks if b.kind == METADATA)
+    assert front.section_path is None and "section_path" not in front.to_dict()
+
+
+def test_a_pdf_block_gets_no_guessed_heading_path():
+    data = make_pdf_pages([[
+        "Methods Data collection Nuclei isolation from adult heart tissue was "
+        "performed as described, and libraries were prepared with the 10x kit."]])
+    blocks, _, _ = pdf.blocks_from_pdf(data, "f.pdf", L)
+    assert all(b.section_path is None for b in blocks)
+
+
 def test_citation_markers_are_dropped_but_other_cross_references_kept():
     """Left in, `<xref ref-type="bibr">` turns "as shown previously" into "as shown
     previously12,13", which is noise in a quote and worse in an evidence check."""

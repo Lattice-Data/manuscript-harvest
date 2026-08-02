@@ -58,6 +58,11 @@ class Block:
     locator: str = ""
     """Where inside the file: `p.7`, `sheet 'Table S6'`, `para 42`, `table-wrap 3`."""
     section: Optional[str] = None
+    section_path: Optional[List[str]] = None
+    """The heading path down to this block, verbatim, e.g.
+    `["Methods", "Nuclei isolation"]`. Set only where the tree is real: JATS
+    declares it and `walk_section` already knows it. A PDF's tree is a guess, and
+    a guessed path is exactly what this package refuses to produce."""
     label: Optional[str] = None
     """The publisher's name for this item, e.g. "Supplementary Table 3"."""
     table: Optional[dict] = None
@@ -77,6 +82,8 @@ class Block:
             "text_sha256": hashlib.sha256(self.text.encode("utf-8")).hexdigest(),
             "text": self.text,
         }
+        if self.section_path:
+            record["section_path"] = list(self.section_path)
         if self.table is not None:
             record["table"] = self.table
         return record

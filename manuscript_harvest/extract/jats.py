@@ -241,6 +241,14 @@ class _Walker:
         self.supplement_labels: Dict[str, dict] = {}
         self.tables_seen = 0
         self.section_names: List[str] = []
+        self.title_stack: List[str] = []
+        """The headings enclosing whatever is being walked, outermost first.
+
+        `walk_section` has always known the full path and thrown it away, leaving
+        `section` -- one canonical name out of eleven -- as the only structure a
+        consumer could filter on. The tree is declared here, so recording it costs
+        nothing and is not a guess.
+        """
 
     def add(self, kind: str, text: str, section: Optional[str], locator: str,
             label: Optional[str] = None, table: Optional[dict] = None) -> None:
@@ -248,6 +256,7 @@ class _Walker:
             return
         self.blocks.append(Block(kind=kind, text=text, source_file=self.source_file,
                                  origin="jats", locator=locator, section=section,
+                                 section_path=list(self.title_stack) or None,
                                  label=label, table=table))
 
     # -- containers
@@ -260,8 +269,14 @@ class _Walker:
         if section and section not in self.section_names:
             self.section_names.append(section)
         if title:
-            self.add(HEADING, title, section, path)
-        self.walk_children(element, section, path, skip_title=True)
+            self.title_stack.append(title)
+        try:
+            if title:
+                self.add(HEADING, title, section, path)
+            self.walk_children(element, section, path, skip_title=True)
+        finally:
+            if title:
+                self.title_stack.pop()
 
     def walk_children(self, element, section: Optional[str], path: str,
                       skip_title: bool = False) -> None:
