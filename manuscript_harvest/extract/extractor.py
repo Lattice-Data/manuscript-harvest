@@ -555,17 +555,32 @@ def _supplement_key(entry: dict) -> List[str]:
     return keys
 
 
-def _main_text(article_dir: Path, record: dict, limits: Limits) -> Tuple[FileResult, Dict[str, dict], dict]:
-    """Pick and extract the main text. Returns `(result, supplement_labels, info)`."""
+def _main_text(article_dir: Path, record: dict,
+               limits: Limits) -> Tuple[FileResult, Dict[str, dict], dict]:
+    """Pick and extract the main text. Returns `(result, supplement_labels, info)`.
+
+    `info["thin"]` is set here for whichever rendition won, whatever its source.
+    `main_usable` used to be `status == OK and chars > 0`, so a synthetic article
+    with only a thin JATS body and no PDF came out `complete` with
+    `main_text.chars: 185`. The four complete articles in this corpus carry
+    89,151 / 88,262 / 43,746 / 94,014 characters, so the gate flips none of them.
+    """
     info: dict = {}
     labels: Dict[str, dict] = {}
+    result = _choose_main_text(article_dir, record, limits, info, labels)
+    info["thin"] = result.chars < limits.min_main_text_chars
+    return result, labels, info
 
+
+def _choose_main_text(article_dir: Path, record: dict, limits: Limits,
+                      info: dict, labels: Dict[str, dict]) -> FileResult:
+    """JATS if it is there and substantial, else the PDF, else the landing page."""
     xml_entry = record.get("fulltext_xml") or {}
     xml_path = xml_entry.get("path")
     xml_result: Optional[FileResult] = None
     if xml_path and (article_dir / xml_path).exists():
         xml_result = extract_path(article_dir / xml_path, xml_path, limits, role=MAIN_TEXT)
-        labels = xml_result.meta.get("supplement_labels") or {}
+        labels.update(xml_result.meta.get("supplement_labels") or {})
         info["jats_chars"] = xml_result.chars
 
     pdf_entry = record.get("fulltext") or {}
@@ -578,27 +593,32 @@ def _main_text(article_dir: Path, record: dict, limits: Limits) -> Tuple[FileRes
         info["source"] = "jats"
         if pdf_available:
             info["note"] = "JATS XML preferred over the PDF; the PDF was not parsed"
-        return xml_result, labels, info
-
-    if xml_result is not None and xml_result.status == OK:
-        info["note"] = (f"JATS XML yielded only {xml_result.chars} characters "
-                        f"(under {limits.min_main_text_chars}); fell back to the PDF")
+        return xml_result
 
     if pdf_available:
+        if xml_result is not None and xml_result.status == OK:
+            info["note"] = (f"JATS XML yielded only {xml_result.chars} characters "
+                            f"(under {limits.min_main_text_chars}); fell back to the PDF")
         pdf_result = extract_path(article_dir / pdf_path, pdf_path, limits, role=MAIN_TEXT)
         if pdf_result.status == OK or xml_result is None:
             info["source"] = "pdf"
-            return pdf_result, labels, info
+            return pdf_result
         # A scanned PDF beside thin XML: keep whichever has more text.
         if xml_result.chars >= pdf_result.chars:
             info["source"] = "jats"
-            return xml_result, labels, info
+            return xml_result
         info["source"] = "pdf"
-        return pdf_result, labels, info
+        return pdf_result
 
     if xml_result is not None:
         info["source"] = "jats"
-        return xml_result, labels, info
+        if xml_result.status == OK and xml_result.chars < limits.min_main_text_chars:
+            # The note used to claim a fallback to a PDF that is not there: it was
+            # set before anything checked whether one existed.
+            info["note"] = (f"JATS XML yielded only {xml_result.chars} characters "
+                            f"(under {limits.min_main_text_chars}) and there is no PDF "
+                            f"to fall back to; this is front matter, not the article")
+        return xml_result
 
     landing = (record.get("landing_html") or {}).get("path") or store.LANDING_HTML
     if (article_dir / landing).exists():
@@ -607,11 +627,11 @@ def _main_text(article_dir: Path, record: dict, limits: Limits) -> Tuple[FileRes
         info["landing_page_only"] = True
         info["note"] = ("no PDF and no XML: main text is the saved publisher landing "
                         "page, which is metadata and abstract at best, not the article")
-        return result, labels, info
+        return result
 
     info["source"] = None
     return FileResult("", MAIN_TEXT, MISSING,
-                      note="no PDF, no XML, and no saved landing page"), labels, info
+                      note="no PDF, no XML, and no saved landing page")
 
 
 def extract_article(article_dir, limits: Optional[Limits] = None, force: bool = False,
@@ -684,7 +704,11 @@ def extract_article(article_dir, limits: Optional[Limits] = None, force: bool = 
     main_info["usable"] = main_usable
     supplement_text = any(r.blocks for r in results[1:])
 
-    if main_usable and not text_bearing_failures and not main_info.get("landing_page_only"):
+    # `chars > 0` was the only length test, so a 185-character front-matter-only
+    # JATS body with no PDF beside it came out `complete`. No new limit:
+    # `min_main_text_chars` is already the number and already carries its why.
+    if main_usable and not text_bearing_failures \
+            and not main_info.get("landing_page_only") and not main_info.get("thin"):
         status = "complete"
     elif main_usable or supplement_text:
         status = "partial"

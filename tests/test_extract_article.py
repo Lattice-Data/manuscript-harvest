@@ -95,6 +95,31 @@ def test_landing_page_only_is_never_complete(tmp_path):
     assert "not the article" in record["main_text"]["note"]
 
 
+def test_a_thin_main_text_is_not_complete_and_says_there_was_no_fallback(tmp_path):
+    """`main_usable` was `status == ok and chars > 0`, so an article with only a
+    thin JATS body and no PDF came out `complete` with `main_text.chars: 185` --
+    and carried the note "fell back to the PDF", about a PDF that does not
+    exist, because that note was set before anything checked. The four complete
+    articles in this corpus carry 89,151 / 88,262 / 43,746 / 94,014 characters,
+    so the gate flips none of them."""
+    directory = _article(tmp_path, xml=jats_article(
+        "<sec><title>Results</title><p>Short.</p></sec>"))
+    record = extract_article(directory, limits=L)
+    assert record["main_text"]["source"] == "jats"
+    assert record["main_text"]["thin"] is True
+    assert record["main_text"]["chars"] < L.min_main_text_chars
+    assert record["status"] == "partial"
+    assert "no PDF to fall back to" in record["main_text"]["note"]
+    assert "fell back to the PDF" not in record["main_text"]["note"]
+
+
+def test_a_substantial_main_text_is_not_marked_thin(tmp_path):
+    directory = _article(tmp_path, xml=jats_article(METHODS_BODY))
+    record = extract_article(directory, limits=L)
+    assert record["main_text"]["thin"] is False
+    assert record["status"] == "complete"
+
+
 def test_bot_check_landing_page_gives_a_failed_article(tmp_path):
     """Nine Elsevier articles in this corpus are in exactly this state."""
     directory = _article(tmp_path, landing=LANDING_INTERSTITIAL)
@@ -448,7 +473,7 @@ def test_an_unlabelled_body_is_reported_even_when_the_article_is_complete(tmp_pa
     supplementary PDF. A filter for `section == methods` over that main text
     returns nothing and the record used to say nothing was wrong."""
     page = ("Tissue-resident immune cells are important for organ homeostasis. "
-            "We profiled the mature and developing human kidney. ") * 12
+            "We profiled the mature and developing human kidney. ") * 20
     directory = _article(tmp_path, fulltext=make_pdf_pages([[page]]))
     record = extract_article(directory, limits=L)
     report = record["main_text"]["section_labelling"]
@@ -468,7 +493,7 @@ def test_declared_sections_are_not_scored_as_a_heuristic(tmp_path):
 
 def test_cli_prints_the_section_labelling_warning(tmp_path, capsys):
     page = ("Tissue-resident immune cells are important for organ homeostasis. "
-            "We profiled the mature and developing human kidney. ") * 12
+            "We profiled the mature and developing human kidney. ") * 20
     _article(tmp_path, fulltext=make_pdf_pages([[page]]))
     config = tmp_path / "config.yaml"
     config.write_text(f"extract:\n  corpus_dir: {tmp_path}\n")
