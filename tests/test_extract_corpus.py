@@ -182,6 +182,31 @@ def test_every_label_source_is_in_the_closed_set():
                 (record["slug"], entry["path"], entry.get("label_source"))
 
 
+def test_every_jats_locator_resolves_to_the_element_it_names():
+    """`[n]` in XPath counts children of that tag. Counting every child left only
+    76 of the 168 body/back locators in 10.1038/s41467-023-40505-5 resolving at
+    all, and 153 of them pointing at a different element."""
+    import xml.etree.ElementTree as ET
+
+    for xml_path in sorted(CORPUS.glob("*/fulltext.nxml")):
+        blocks_path = xml_path.parent / "extracted" / "blocks.jsonl"
+        if not blocks_path.exists():
+            continue
+        root = ET.fromstring(jats._prepare(xml_path.read_bytes()))
+        article = root if jats._tag(root) == "article" else next(
+            (e for e in root.iter() if jats._tag(e) == "article"), None)
+        for element in article.iter():
+            element.tag = jats._tag(element)
+        unresolved = []
+        for block in read_blocks(blocks_path):
+            locator = block.get("locator") or ""
+            if block.get("origin") != "jats" or "[" not in locator:
+                continue
+            if article.find("./" + locator) is None:
+                unresolved.append(locator)
+        assert not unresolved, (xml_path.parent.name, unresolved[:10])
+
+
 # -- the specific files that taught this stage its rules ---------------------
 
 def test_the_strict_ooxml_supplement_still_reads():

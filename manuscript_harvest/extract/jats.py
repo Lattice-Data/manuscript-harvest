@@ -27,6 +27,7 @@ by the same rule: `(Korsunsky et al., 2019)` became `()`.
 
 import re
 import xml.etree.ElementTree as ET
+from collections import Counter
 from html.entities import name2codepoint
 from typing import Dict, List, Optional, Tuple
 
@@ -280,11 +281,16 @@ class _Walker:
 
     def walk_children(self, element, section: Optional[str], path: str,
                       skip_title: bool = False) -> None:
-        index = 0
+        # `[n]` in XPath counts children *of that tag*, not all children. Counting
+        # every child made 153 of the 168 body/back locators in
+        # 10.1038/s41467-023-40505-5 point at a different element, and only 76 of
+        # them resolve at all.
+        seen: Counter = Counter()
         for child in element:
             name = _tag(child)
-            index += 1
-            child_path = f"{path}/{name}[{index}]" if path else f"{name}[{index}]"
+            seen[name] += 1
+            child_path = (f"{path}/{name}[{seen[name]}]" if path
+                          else f"{name}[{seen[name]}]")
             if name == "title" and skip_title:
                 continue
             if name == "sec":
@@ -408,9 +414,14 @@ def _front_metadata(article, walker: "_Walker") -> dict:
     if lines:
         walker.add(METADATA, "\n".join(lines), None, "front/article-meta")
 
+    # Enumerated, not hard-coded: a Cell Press article carries a summary abstract
+    # and a graphical one, and `front/abstract` named both.
+    abstracts = 0
     for element in article_meta:
         if _tag(element) == "abstract":
-            walker.walk_children_one(element, sections_mod.ABSTRACT, "front/abstract")
+            abstracts += 1
+            walker.walk_children_one(element, sections_mod.ABSTRACT,
+                                     f"front/article-meta/abstract[{abstracts}]")
     return meta
 
 

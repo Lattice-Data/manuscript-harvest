@@ -1003,6 +1003,31 @@ def test_a_jats_block_carries_the_heading_path_it_sits_under():
     assert front.section_path is None and "section_path" not in front.to_dict()
 
 
+def test_a_jats_locator_counts_children_of_its_own_tag():
+    """`[n]` in XPath means the nth child *of that tag*. Counting every child made
+    153 of the 168 body/back locators in 10.1038/s41467-023-40505-5 point at a
+    different element, and only 76 resolved at all."""
+    body = ("<sec><title>T</title><p>first paragraph here</p><fig/>"
+            "<p>second paragraph here</p></sec>")
+    blocks, _, _ = jats.blocks_from_jats(jats_article(body), "f.nxml", L)
+    second = next(b for b in blocks if b.text == "second paragraph here")
+    assert second.locator == "body/sec[1]/p[2]"
+
+
+def test_a_pdf_block_carries_the_rectangle_it_came_from():
+    """PyMuPDF hands over (x0, y0, x1, y1, text, block_no, block_type) and this
+    module kept two of the seven, so a PDF block was locatable only to a page."""
+    data = make_pdf_pages([["Nuclei were isolated from frozen heart tissue and "
+                            "libraries were prepared with the 10x Chromium kit."]])
+    blocks, _, _ = pdf.blocks_from_pdf(data, "f.pdf", L)
+    ref = blocks[0].locator_ref
+    assert ref["page"] == 1
+    assert len(ref["bbox"]) == 4 and all(isinstance(v, float) for v in ref["bbox"])
+    # Rounded, so re-extracting the same bytes gives the same line.
+    assert all(round(v, 1) == v for v in ref["bbox"])
+    assert blocks[0].to_dict()["locator_ref"] == ref
+
+
 def test_a_pdf_block_gets_no_guessed_heading_path():
     data = make_pdf_pages([[
         "Methods Data collection Nuclei isolation from adult heart tissue was "

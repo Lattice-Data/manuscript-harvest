@@ -166,7 +166,7 @@ def _in_margin(rect, width: float, height: float) -> bool:
             or x1 < _MARGIN_LEFT * width or x0 > _MARGIN_RIGHT * width)
 
 
-def _running_lines(page_texts: List[List[Tuple[str, bool]]],
+def _running_lines(page_texts: List[List[Tuple[str, bool, dict]]],
                    limits: Limits) -> Dict[str, int]:
     """Short strings repeated in a page *margin*: furniture, not content.
 
@@ -189,7 +189,7 @@ def _running_lines(page_texts: List[List[Tuple[str, bool]]],
     """
     appearances: Counter = Counter()
     for texts in page_texts:
-        for text in {t for t, margin in texts if margin}:
+        for text in {t for t, margin, _ref in texts if margin}:
             if len(text) <= 100:
                 appearances[text] += 1
     return {text: count for text, count in appearances.items()
@@ -210,7 +210,7 @@ def blocks_from_pdf(
     except Exception as e:
         return [], UNREADABLE, {"reason": f"{type(e).__name__}: {e}"}
 
-    per_page: List[List[Tuple[str, bool]]] = []
+    per_page: List[List[Tuple[str, bool, dict]]] = []
     meta: dict = {}
     mapped: Counter = Counter()
     unmapped: Counter = Counter()
@@ -218,7 +218,7 @@ def blocks_from_pdf(
     try:
         meta["pages"] = document.page_count
         for page in document:
-            texts: List[Tuple[str, bool]] = []
+            texts: List[Tuple[str, bool, dict]] = []
             try:
                 raw_blocks = page.get_text("blocks")
                 symbols = _symbol_map(page)
@@ -237,7 +237,12 @@ def blocks_from_pdf(
                 cleaned = _clean_block(source, symbols, hyphens)
                 unmapped.update(ord(c) for c in cleaned if _is_pua(ord(c)))
                 if cleaned:
-                    texts.append((cleaned, _in_margin(raw[0:4], width, height)))
+                    # Rounded to one decimal so the JSON stays byte-stable across
+                    # re-extraction of the same bytes.
+                    ref = {"page": page.number + 1,
+                           "bbox": [round(float(v), 1) for v in raw[0:4]],
+                           "block_no": int(raw[5]) if len(raw) > 5 else None}
+                    texts.append((cleaned, _in_margin(raw[0:4], width, height), ref))
             per_page.append(texts)
     except Exception as e:
         # Page-level damage is already handled above; this is the document
@@ -270,7 +275,7 @@ def blocks_from_pdf(
     blocks: List[Block] = []
     tracker = sections_mod.SectionTracker(limits=limits)
     for page_index, texts in enumerate(per_page, start=1):
-        for text, _margin in texts:
+        for text, _margin, ref in texts:
             if text in furniture or _PAGE_NUMBER.match(text):
                 meta["running_lines_dropped"] += 1
                 continue
@@ -281,25 +286,25 @@ def blocks_from_pdf(
             named = sections_mod.normalize(text)
             if named:
                 blocks.append(Block(kind=HEADING, text=text, source_file=source_file,
-                                    origin=origin, locator=locator,
+                                    origin=origin, locator=locator, locator_ref=ref,
                                     section=tracker.heading(named)))
                 continue
             glued = sections_mod.split_leading_heading(text)
             if glued:
                 named, heading, text = glued
                 blocks.append(Block(kind=HEADING, text=heading, source_file=source_file,
-                                    origin=origin, locator=locator,
+                                    origin=origin, locator=locator, locator_ref=ref,
                                     section=tracker.heading(named)))
                 meta["glued_headings_split"] = meta.get("glued_headings_split", 0) + 1
             elif sections_mod.looks_like_heading(text):
                 blocks.append(Block(kind=HEADING, text=text, source_file=source_file,
-                                    origin=origin, locator=locator,
+                                    origin=origin, locator=locator, locator_ref=ref,
                                     section=tracker.carry(text)))
                 continue
             if len(text) < limits.min_paragraph_chars:
                 continue
             blocks.append(Block(kind=PARAGRAPH, text=text, source_file=source_file,
-                                origin=origin, locator=locator,
+                                origin=origin, locator=locator, locator_ref=ref,
                                 section=tracker.carry(text)))
 
     meta["sections"] = tracker.seen

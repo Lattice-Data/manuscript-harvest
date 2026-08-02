@@ -56,7 +56,16 @@ class Block:
     `zip:<member>` for something read out of an archive."""
     role: str = MAIN_TEXT
     locator: str = ""
-    """Where inside the file: `p.7`, `sheet 'Table S6'`, `para 42`, `table-wrap 3`."""
+    """Where inside the file: `p.7`, `sheet 'Table S6'`, `para 42`,
+    `body/sec[4]/p[2]`. A JATS locator is real XPath: `[n]` counts children of
+    that tag, which it did not until 153 of one article's 168 body locators were
+    found to point at a different element."""
+    locator_ref: Optional[dict] = None
+    """Machine-readable provenance where the locator alone is too coarse. For a
+    PDF: `{"page": n, "bbox": [x0, y0, x1, y1], "block_no": n}`. PyMuPDF hands
+    over the rectangle and this module kept two of the seven fields, so a PDF
+    block was locatable only to a page -- which is not enough to point a human at
+    a paragraph on it."""
     section: Optional[str] = None
     section_path: Optional[List[str]] = None
     """The heading path down to this block, verbatim, e.g.
@@ -96,6 +105,8 @@ class Block:
             record["section_path"] = list(self.section_path)
         if self.caption:
             record["caption"] = self.caption
+        if self.locator_ref:
+            record["locator_ref"] = self.locator_ref
         if self.table is not None:
             record["table"] = self.table
         return record
