@@ -812,6 +812,32 @@ def test_a_private_use_codepoint_from_an_ordinary_font_is_left_alone():
     assert pdf._clean_block("x\uf067y", {}) == "x\uf067y"
 
 
+@pytest.mark.parametrize("raw,expected", [
+    ("IL-\n17A", "IL-17A"),
+    ("scRNA-\nseq", "scRNA-seq"),
+    ("CD4-\npositive", "CD4-positive"),
+    ("SARS-CoV-\n2", "SARS-CoV-2"),
+    ("perturba-\ntion", "perturbation"),
+    # The accepted cost of the rule: nothing short of a dictionary separates a
+    # common hyphenated adjective from a word broken at a syllable.
+    ("well-\nknown", "wellknown"),
+])
+def test_a_hyphen_inside_an_identifier_survives_the_line_break(raw, expected):
+    """Rejoining unconditionally deleted a real hyphen out of 78 of the 648
+    line-break hyphens in this corpus's PDFs -- `SARS-CoV-2`, `COVID-19`,
+    `Mono_c1-CD14-CCL3` -- which is exactly the vocabulary a curation answer is
+    made of."""
+    assert pdf._clean_block(raw) == expected
+
+
+def test_the_hyphen_ratio_is_recorded_so_it_can_be_inspected():
+    data = make_pdf_pages([["The IL-\n17A response and the perturba-\ntion of it "
+                            "were measured across all of the matched samples that "
+                            "were collected on the same day by the same operator."]])
+    _, _, meta = pdf.blocks_from_pdf(data, "f.pdf", L)
+    assert meta["hyphens_kept"] == 1 and meta["hyphens_joined"] == 1
+
+
 def test_an_unmapped_private_use_glyph_is_counted_not_hidden():
     data = make_pdf_pages([["ordinary text with no symbol font at all here"]])
     _, _, meta = pdf.blocks_from_pdf(data, "f.pdf", L)

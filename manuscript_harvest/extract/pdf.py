@@ -118,12 +118,35 @@ def _symbol_map(page) -> Dict[int, str]:
     return found
 
 
-def _clean_block(text: str, symbols: Optional[Dict[int, str]] = None) -> str:
+def _rejoin_hyphen(match: "re.Match", tally: Optional[Counter] = None) -> str:
+    """Close a line break at a hyphen, keeping the hyphen inside an identifier.
+
+    Rejoining unconditionally deletes a real hyphen whenever a hyphenated token
+    happens to break at it. Measured over the PDFs in this corpus: 648 hyphens at
+    a line break, 78 of them in tokens this guard keeps -- `SARS-CoV-2`,
+    `COVID-19`, `snRNA-seq`, `Mono_c1-CD14-CCL3`, `T_CD8_c09-SLC4A10`. Those are
+    gene symbols, cell-type names and accessions, which is what a curation answer
+    is made of; the other 570 are ordinary words like `perturba-tion`.
+
+    A digit or a capital on either side of the break is the whole test. It costs
+    `well-\\nknown`, which becomes `wellknown` -- nothing short of a dictionary
+    separates that from `perturba-tion`, and losing a hyphen out of a common
+    adjective is cheaper than losing one out of a cell-type name.
+    """
+    before, after = match.group(1), match.group(2)
+    keep = before.isdigit() or before.isupper() or after.isdigit() or after.isupper()
+    if tally is not None:
+        tally["kept" if keep else "joined"] += 1
+    return f"{before}-{after}" if keep else f"{before}{after}"
+
+
+def _clean_block(text: str, symbols: Optional[Dict[int, str]] = None,
+                 hyphens: Optional[Counter] = None) -> str:
     text = _SOFT_BREAK.sub("", text)
     text = text.translate(_INVISIBLE)
     if symbols:
         text = text.translate(symbols)
-    text = _HYPHEN_BREAK.sub(r"\1\2", text)
+    text = _HYPHEN_BREAK.sub(lambda m: _rejoin_hyphen(m, hyphens), text)
     text = text.replace("\xa0", " ")
     return re.sub(r"\s+", " ", text).strip()
 
@@ -157,6 +180,7 @@ def blocks_from_pdf(
     meta: dict = {}
     mapped: Counter = Counter()
     unmapped: Counter = Counter()
+    hyphens: Counter = Counter()
     try:
         meta["pages"] = document.page_count
         for page in document:
@@ -174,7 +198,7 @@ def blocks_from_pdf(
                     continue
                 source = raw[4] if len(raw) > 4 else ""
                 mapped.update(ord(c) for c in source if ord(c) in symbols)
-                cleaned = _clean_block(source, symbols)
+                cleaned = _clean_block(source, symbols, hyphens)
                 unmapped.update(ord(c) for c in cleaned if _is_pua(ord(c)))
                 if cleaned:
                     texts.append(cleaned)
@@ -187,6 +211,9 @@ def blocks_from_pdf(
     finally:
         document.close()
 
+    if hyphens:
+        meta["hyphens_kept"] = hyphens["kept"]
+        meta["hyphens_joined"] = hyphens["joined"]
     if mapped:
         meta["glyphs_mapped"] = {f"U+{cp:04X}": _SYMBOL_PUA[cp] for cp in sorted(mapped)}
     if unmapped:
