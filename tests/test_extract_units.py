@@ -275,6 +275,18 @@ def test_an_abandoned_section_is_not_reopened_by_its_own_heading():
     assert tracker.heading(sections.METHODS) == sections.METHODS
 
 
+def test_the_abandonment_bound_is_a_configurable_cap():
+    """It decided a third of one article's labels while being a module constant
+    with no config key, which the README said outright."""
+    assert Limits().max_bounded_section_chars == sections.MAX_BOUNDED_SECTION_CHARS
+    tracker = sections.SectionTracker(limits=Limits(max_bounded_section_chars=100))
+    tracker.heading(sections.ABSTRACT)
+    assert tracker.carry("x" * 200) == sections.ABSTRACT
+    assert tracker.carry("the next paragraph") is None
+    assert tracker.abandoned == [sections.ABSTRACT]
+    assert "100 characters" in tracker.reason()
+
+
 def test_a_long_abstract_is_kept_up_to_the_measured_budget():
     """The longest legitimate run measured is a 4,653-character Cell Press abstract
     with its highlights and eTOC blurb, so the budget must not cut that."""

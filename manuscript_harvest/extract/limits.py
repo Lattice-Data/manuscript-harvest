@@ -66,7 +66,17 @@ class Limits:
     min_pdf_text_chars: int = 200
     """Matches manuscript_harvest.fetch.validate: less than this means scanned images."""
     running_header_min_pages: int = 3
-    """A short line repeated on this many pages is a running head, not content."""
+    """A short line repeated in a page margin on this many pages is a running
+    head, not content."""
+    max_bounded_section_chars: int = 6000
+    """How far a heading that names a *statement* -- abstract, conclusions, data
+    availability -- may carry before `SectionTracker` abandons it.
+
+    Chosen against measurement rather than taste. The longest legitimate run seen
+    over the ground-truth papers is 4,653 characters (a Cell Press abstract plus
+    its highlights and eTOC blurb, 10.1016/j.xgen.2026.101304); the shortest
+    pathological one is 6,294. This sits between them. It decided a third of one
+    article's labels while being a module constant with no config key."""
 
     def to_dict(self) -> dict:
         return asdict(self)

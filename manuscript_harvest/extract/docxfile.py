@@ -101,7 +101,7 @@ def blocks_from_docx(
 
     blocks: List[Block] = []
     meta: dict = {"tables": 0, "paragraphs": 0}
-    tracker = sections_mod.SectionTracker()
+    tracker = sections_mod.SectionTracker(limits=limits)
     paragraph_index = 0
     table_index = 0
 

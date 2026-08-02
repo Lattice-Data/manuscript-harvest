@@ -556,14 +556,15 @@ in `tests/test_extract_corpus.py`.
 
 ### Caps
 
-Every file and table cap lives in `manuscript_harvest/extract/limits.py`, each with a
-comment saying why it exists, and any of them can be overridden under
-`extract.limits` in `config.yaml`. The one exception is the 6,000-character
-section-abandonment bound described above: it is a constant in
-`manuscript_harvest/extract/sections.py` and no config key reaches it.
-Nothing a cap drops is silent: it is recorded in `extraction.json` and in the
-affected table card's notes, so a thin result reads as "capped" rather than
-"empty".
+Every cap lives in `manuscript_harvest/extract/limits.py`, each with a comment
+saying why it exists, and any of them can be overridden under `extract.limits` in
+`config.yaml` — including the 6,000-character section-abandonment bound described
+above, which used to be a constant in `sections.py` that no config key reached
+while deciding a third of one article's labels. Nothing a cap drops is silent: it
+is recorded in `extraction.json` and in the affected table card's notes, so a thin
+result reads as "capped" rather than "empty". Because `limits` is part of the
+extraction key, changing one re-extracts the corpus rather than reusing a
+result made under the old value.
 
 ## Tests
 

@@ -268,7 +268,7 @@ def blocks_from_pdf(
                              in sorted(furniture.items(), key=lambda kv: (-kv[1], kv[0]))][:20]
 
     blocks: List[Block] = []
-    tracker = sections_mod.SectionTracker()
+    tracker = sections_mod.SectionTracker(limits=limits)
     for page_index, texts in enumerate(per_page, start=1):
         for text, _margin in texts:
             if text in furniture or _PAGE_NUMBER.match(text):

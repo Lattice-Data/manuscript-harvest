@@ -22,6 +22,8 @@ was looking for while reporting a confident answer.
 import re
 from typing import List, Optional, Tuple
 
+from .limits import Limits
+
 ABSTRACT = "abstract"
 INTRODUCTION = "introduction"
 METHODS = "methods"
@@ -261,13 +263,13 @@ def looks_like_citation(text: str) -> bool:
     return bool(_CITATION.search(text))
 
 
-MAX_BOUNDED_SECTION_CHARS = 6000
+MAX_BOUNDED_SECTION_CHARS = Limits().max_bounded_section_chars
 """How far a `BOUNDED_SECTIONS` heading may carry before it is abandoned.
 
-Chosen against measurement rather than taste. The longest *legitimate* run seen
-over the ground-truth papers is 4,653 characters -- a Cell Press abstract plus its
-highlights and eTOC blurb, in 10.1016/j.xgen.2026.101304 -- and the shortest
-pathological one is 6,294. This sits between them.
+The number itself lives in `Limits.max_bounded_section_chars`, with the
+measurement that chose it, so it is configurable and so it is recorded in every
+extraction's `limits` block. This alias is the default for a `SectionTracker`
+constructed without one.
 """
 
 
@@ -317,7 +319,10 @@ class SectionTracker:
     genuine citation after a stray line is still labelled.
     """
 
-    def __init__(self, max_bounded_chars: int = MAX_BOUNDED_SECTION_CHARS):
+    def __init__(self, max_bounded_chars: Optional[int] = None,
+                 limits: Optional[Limits] = None):
+        if max_bounded_chars is None:
+            max_bounded_chars = (limits or Limits()).max_bounded_section_chars
         self.max_bounded_chars = max_bounded_chars
         self.current: Optional[str] = None
         self.seen: List[str] = []
