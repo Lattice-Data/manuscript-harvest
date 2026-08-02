@@ -73,8 +73,28 @@ def _normalize_ws(text: str) -> str:
     return re.sub(r"\s+", " ", text.replace("\xa0", " ")).strip()
 
 
-def _inline_text(element) -> str:
-    """All text under `element`, minus citation markers."""
+#: Children that end a run of text. Without a boundary between them a `<td>`
+#: holding three `<p>`s reads as one value.
+_BLOCK_LEVEL = frozenset({"p", "list-item", "disp-quote", "sec", "title", "def",
+                          "term", "tr"})
+
+#: The boundary marker, carried through the whitespace collapse and swapped for
+#: the caller's separator at the end. A plain "; " inserted during the walk
+#: leaves `'; 0.798; ; 0.15;'` once the empty runs collapse; a sentinel does not.
+#: XML 1.0 forbids this codepoint in content, so no publisher file carries one.
+_SEP = "\x1f"
+_SEP_RUN = re.compile(r"\s*\x1f+\s*")
+
+
+def _inline_text(element, block_sep: str = " ") -> str:
+    """All text under `element`, minus citation markers.
+
+    `block_sep` is what separates block-level children. It is `"; "` for a table
+    cell: 24 of the 144 `td`/`th` in 10.1038/s41467-023-40505-5 hold more than
+    one block child, and Table 1's SNP PIP column read `0.7980.15` for two
+    values, which also flipped the column's dtype from number to mixed and cost
+    it its min/max/median.
+    """
     parts: List[str] = []
 
     def walk(node, is_root: bool) -> None:
@@ -85,12 +105,18 @@ def _inline_text(element) -> str:
         if node.text:
             parts.append(node.text)
         for child in node:
-            walk(child, False)
+            if _tag(child) in _BLOCK_LEVEL:
+                parts.append(_SEP)
+                walk(child, False)
+                parts.append(_SEP)
+            else:
+                walk(child, False)
         if not is_root and node.tail:
             parts.append(node.tail)
 
     walk(element, True)
-    return _normalize_ws("".join(parts))
+    text = _SEP_RUN.sub(_SEP, "".join(parts).replace("\xa0", " ")).strip(_SEP)
+    return re.sub(r"\s+", " ", text.replace(_SEP, block_sep)).strip()
 
 
 _WRAPPERS = {"media", "graphic", "alternatives", "inline-supplementary-material"}
@@ -145,12 +171,17 @@ def _table_rows(table_element) -> List[List[str]]:
     `colspan` is not expanded. A spanning header cell therefore lands in one
     column rather than being repeated, which shifts nothing because the card
     profiles columns by position within each row as read.
+
+    A cell's block-level children are joined with `"; "`. In prose the boundary
+    between two paragraphs is a space; in a cell it is the boundary between two
+    values, and 10.1038/s41467-023-40505-5 Table 1 read `0.7980.15` without it.
     """
     rows: List[List[str]] = []
     for row in table_element.iter():
         if _tag(row) != "tr":
             continue
-        cells = [_inline_text(cell) for cell in row if _tag(cell) in {"th", "td"}]
+        cells = [_inline_text(cell, block_sep="; ")
+                 for cell in row if _tag(cell) in {"th", "td"}]
         if cells:
             rows.append(cells)
     return rows

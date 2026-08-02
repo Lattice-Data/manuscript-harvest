@@ -12,6 +12,7 @@ Run them after fetching:  python -m pytest tests/test_extract_corpus.py -q
 
 import collections
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -102,6 +103,22 @@ def test_no_extracted_block_carries_an_invisible_or_symbol_glyph():
                         or 0xF000 <= point <= 0xF0FF:
                     damaged[(path.parent.parent.name, f"U+{point:04X}")] += 1
     assert not damaged, dict(damaged)
+
+
+def test_no_table_card_fuses_two_numbers_into_one_value():
+    """`_inline_text` had no boundary between a cell's block-level children, so
+    10.1038/s41467-023-40505-5 Table 1's SNP PIP column read `0.7980.15` and its
+    dtype flipped from number to mixed."""
+    _extractions()
+    fused = re.compile(r"^\d+\.\d+\d\.\d")
+    offenders = []
+    for path in sorted(CORPUS.glob("*/extracted/blocks.jsonl")):
+        for block in read_blocks(path):
+            for column in ((block.get("table") or {}).get("columns") or []):
+                for value in (column.get("values") or []) + (column.get("examples") or []):
+                    if fused.match(str(value)):
+                        offenders.append((path.parent.parent.name, column["name"], value))
+    assert not offenders, offenders[:10]
 
 
 # -- the specific files that taught this stage its rules ---------------------

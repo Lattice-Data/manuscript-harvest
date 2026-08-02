@@ -700,6 +700,43 @@ def test_jats_table_becomes_a_card():
     assert "Donor characteristics" in card.text
 
 
+def test_a_cell_holding_several_paragraphs_keeps_them_apart():
+    """10.1038/s41467-023-40505-5 Table 1: 24 of its 144 cells hold more than one
+    block child, and the SNP PIP column read `0.7980.15` for two values -- which
+    also flipped the column's dtype from number to mixed and cost it its
+    min/max/median."""
+    body = ('<sec><title>Results</title><table-wrap><label>Table 1</label><table>'
+            '<tr><th>Locus</th><th>SNP PIP</th><th>Supporting SNPs</th></tr>'
+            '<tr><td><p>1p13</p></td><td><p>0.798</p><p>0.15</p></td>'
+            '<td><p>rs1906615</p><p>rs7689774</p></td></tr>'
+            '</table></table-wrap></sec>')
+    blocks, _, _ = jats.blocks_from_jats(jats_article(body), "f.nxml", L)
+    rows = next(b for b in blocks if b.kind == TABLE).table
+    assert "0.798; 0.15" in next(b for b in blocks if b.kind == TABLE).text
+    assert rows["header"] == ["Locus", "SNP PIP", "Supporting SNPs"]
+
+
+def test_a_prose_paragraph_with_inline_markup_is_unchanged():
+    """The separator is a table-cell rule. Inline elements are not block-level and
+    must not gain one."""
+    body = ('<sec><title>Results</title><p>The <italic>Tp53</italic> locus and the '
+            '<sup>3</sup>H label were <bold>both</bold> measured.</p></sec>')
+    blocks, _, _ = jats.blocks_from_jats(jats_article(body), "f.nxml", L)
+    text = next(b.text for b in blocks if b.kind == PARAGRAPH and "Tp53" in b.text)
+    assert text == "The Tp53 locus and the 3H label were both measured."
+
+
+def test_a_single_paragraph_cell_gains_no_separator():
+    body = ('<sec><title>Results</title><table-wrap><table>'
+            '<tr><th>Donor</th><th>Sex</th></tr>'
+            '<tr><td><p>D1</p></td><td>M</td></tr>'
+            '</table></table-wrap></sec>')
+    blocks, _, _ = jats.blocks_from_jats(jats_article(body), "f.nxml", L)
+    card = next(b for b in blocks if b.kind == TABLE)
+    assert card.table["header"] == ["Donor", "Sex"]
+    assert "; " not in card.table["columns"][0]["values"][0]
+
+
 def test_image_only_table_yields_its_caption():
     body = ('<sec><title>Results</title><table-wrap><label>Table 2</label>'
             '<caption><p>Primer sequences</p></caption>'
