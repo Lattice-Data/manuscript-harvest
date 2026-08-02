@@ -510,6 +510,24 @@ def build_card(
         notes.append("header row detected without type-change confirmation; it may "
                      "be a first data row")
 
+    # A column holding its own header name is a sheet whose later table got read
+    # as data. This is a safety net behind `split_blocks`, not a substitute for
+    # it: before that splitter landed it fired on exactly 7 column-instances
+    # across 5 cards of this corpus -- Figure 4 x2, Figure 6, Figure 7,
+    # Figure S6 x2, Figure S9 -- all of them `high`, with no false positives.
+    # Exact match, not substring: the substring variant fires on 50 columns here,
+    # including legitimate ones.
+    self_named = [column["name"] for column in columns
+                  if column["name"].lower() in
+                  {str(v).lower() for v in (column.get("values") or [])
+                   + (column.get("examples") or [])}]
+    if self_named:
+        confidence = "low"
+        shown = ", ".join(repr(n) for n in self_named[:3])
+        more = f" and {len(self_named) - 3} more" if len(self_named) > 3 else ""
+        notes.append(f"column {shown}{more} contains its own header name as a value; "
+                     f"the sheet probably holds more than one table")
+
     return TableCard(
         source_file=source_file,
         locator=locator,

@@ -379,6 +379,28 @@ def test_header_confidence_is_low_without_a_type_change():
     assert any("type-change" in note for note in card.notes)
 
 
+def test_a_column_holding_its_own_header_name_is_never_high_confidence():
+    """The safety net behind `split_blocks`, for a sheet whose second table is
+    not separated by a blank row. Before the splitter landed this fired on
+    exactly 7 column-instances across 5 cards of this corpus, all of them `high`,
+    with no false positives."""
+    rows = [("timepoint", "value"), ("0", "1.2"), ("24", "3.4"),
+            ("timepoint", "value"), ("0", "5.6")]
+    card = tables.build_card(rows, "x.xlsx", "s", L)
+    assert card.header_confidence == "low"
+    assert any("its own header name" in note for note in card.notes)
+    assert not any("type-change" in note for note in card.notes), \
+        "the type-change note would be false: there was one"
+
+
+def test_an_ordinary_column_is_not_accused_of_holding_its_header_name():
+    """Exact match, not substring: `gene` inside `gene_id` fires on 50 columns of
+    this corpus, most of them legitimate."""
+    rows = [("gene", "gene_id"), ("TP53", "gene_00001"), ("MYC", "gene_00002")]
+    card = tables.build_card(rows, "x.xlsx", "s", L)
+    assert not any("its own header name" in note for note in card.notes)
+
+
 def test_trailing_empty_columns_are_dropped():
     rows = [("a", "b", None, None), (1, 2, None, None)]
     card = tables.build_card(rows, "x.xlsx", "s", L)
