@@ -555,10 +555,37 @@ def test_a_sheet_with_more_panels_than_the_cap_says_how_many_it_dropped():
 
 def test_card_does_not_copy_the_data_it_points_at_it():
     """Duplicating a 2.4 GB corpus to paraphrase it would be the wrong trade: the
-    card records where to re-read the real values instead."""
-    card = tables.build_card([("a",), (1,)], "x.xlsx", "sheet 'S1'", L,
-                             data_ref={"file": "x.xlsx", "sheet": "S1"})
-    assert card.data_ref == {"file": "x.xlsx", "sheet": "S1"}
+    card records where to re-read the real values instead -- and it has to record
+    enough to actually do it, which for a while it did not: no scan window and no
+    file hash, so the rows a card described could not be re-read reproducibly."""
+    card = tables.build_card([("a",), (1,), (2,)], "x.xlsx", "sheet 'S1'", L,
+                             data_ref={"file": "x.xlsx", "sheet": "S1",
+                                       "sha256": "abc123"})
+    assert card.data_ref == {"file": "x.xlsx", "locator": "sheet 'S1'",
+                             "sheet": "S1", "sha256": "abc123",
+                             "header_row": 1, "first_data_row": 2, "last_data_row": 3}
+
+
+def test_a_split_panels_data_ref_carries_absolute_row_numbers():
+    """A panel's card is built from a slice of the sheet, so its own row indices
+    start at zero; `data_ref` has to say where that slice sat."""
+    data = make_xlsx({"Figure 6": [list(r) for r in STACKED_PANELS]})
+    cards, _, _ = spreadsheet.cards_from_xlsx(data, "s1.xlsx", L)
+    # Each panel is a title row, a header row and three data rows.
+    assert [c.data_ref["header_row"] for c in cards] == [2, 8, 14]
+    assert [c.data_ref["first_data_row"] for c in cards] == [3, 9, 15]
+    assert [c.data_ref["last_data_row"] for c in cards] == [5, 11, 17]
+    assert len({c.data_ref["sha256"] for c in cards}) == 1
+
+
+@pytest.mark.parametrize("name,payload,ref", [
+    ("s.csv", b"donor,age\nD1,44\nD2,61\nD3,7\n",
+     {"delimiter": ",", "header_row": 1, "first_data_row": 2, "last_data_row": 4}),
+])
+def test_read_rows_reprints_the_rows_the_card_describes(name, payload, ref):
+    header, rows = spreadsheet.read_rows(payload, ref, ".csv", limit=2)
+    assert header == ["donor", "age"]
+    assert rows == [(2, ["D1", "44"]), (3, ["D2", "61"])]
 
 
 # -- spreadsheets ------------------------------------------------------------

@@ -12,6 +12,7 @@ are `.csv`. Two things this module refuses to do, both learned from the corpus:
 """
 
 import csv
+import hashlib
 import io
 import warnings
 from typing import Any, List, Sequence, Tuple
@@ -71,8 +72,8 @@ def _load(data: bytes):
 
 
 def _cards_from_sheet(rows: List[Sequence[Any]], source_file: str, title: str,
-                      limits: Limits, total, truncated: bool,
-                      meta: dict) -> List[tables.TableCard]:
+                      limits: Limits, total, truncated: bool, meta: dict,
+                      sha256: str = "") -> List[tables.TableCard]:
     """One sheet's cards: normally one, but one per panel when it holds several.
 
     A sheet of stacked panels used to become a single card that pooled them --
@@ -84,7 +85,7 @@ def _cards_from_sheet(rows: List[Sequence[Any]], source_file: str, title: str,
         card = tables.build_card(
             rows, source_file=source_file, locator=f"sheet {title!r}", limits=limits,
             title=title, n_rows_total=total, truncated=truncated,
-            data_ref={"file": source_file, "sheet": title},
+            data_ref={"file": source_file, "sheet": title, "sha256": sha256},
         )
         return [card] if card is not None else []
 
@@ -100,8 +101,9 @@ def _cards_from_sheet(rows: List[Sequence[Any]], source_file: str, title: str,
             # Only the part that runs to the end of the scanned window is the one
             # the cap actually cut; the panels above it were read in full.
             truncated=truncated and end == len(rows),
-            data_ref={"file": source_file, "sheet": title,
+            data_ref={"file": source_file, "sheet": title, "sha256": sha256,
                       "row_start": start + 1, "row_end": end},
+            row_offset=start,
         )
         if card is None:
             continue
@@ -131,6 +133,8 @@ def _cards_from_xlsx(
         workbook, relaxed = _load(data)
     except Exception as e:
         return [], UNREADABLE, {"reason": f"{type(e).__name__}: {e}"}
+
+    sha256 = hashlib.sha256(data).hexdigest()
 
     cards: List[tables.TableCard] = []
     meta: dict = {"sheets": 0, "sheets_skipped": 0}
@@ -167,7 +171,7 @@ def _cards_from_xlsx(
                 continue
 
             cards.extend(_cards_from_sheet(rows, source_file, sheet.title, limits,
-                                           total, truncated, meta))
+                                           total, truncated, meta, sha256))
             if len(cards) >= limits.max_tables_per_file:
                 cards = cards[: limits.max_tables_per_file]
                 meta["tables_capped"] = True
@@ -206,11 +210,12 @@ def cards_from_xls(
 
     cards: List[tables.TableCard] = []
     meta: dict = {"sheets": book.nsheets}
+    sha256 = hashlib.sha256(data).hexdigest()
     for sheet in book.sheets()[: limits.max_sheets]:
         limit = min(sheet.nrows, limits.max_scan_rows)
         rows = [tuple(sheet.row_values(index)) for index in range(limit)]
         cards.extend(_cards_from_sheet(rows, source_file, sheet.name, limits,
-                                       sheet.nrows, sheet.nrows > limit, meta))
+                                       sheet.nrows, sheet.nrows > limit, meta, sha256))
         if len(cards) >= limits.max_tables_per_file:
             cards = cards[: limits.max_tables_per_file]
             meta["tables_capped"] = True
@@ -221,6 +226,68 @@ def cards_from_xls(
     if not cards:
         return [], NO_TEXT, meta
     return cards, OK, meta
+
+
+def _source_rows(data: bytes, data_ref: dict, extension: str):
+    """Yield `(row_number, cells)` from the source a `data_ref` points at.
+
+    Row numbers are 1-based, matching the numbers `build_card` writes.
+    """
+    if extension in {".xls"}:
+        import xlrd
+        book = xlrd.open_workbook(file_contents=data)
+        sheet = book.sheet_by_name(data_ref["sheet"])
+        for index in range(sheet.nrows):
+            yield index + 1, list(sheet.row_values(index))
+        return
+    if data_ref.get("sheet"):
+        with warnings.catch_warnings():
+            _silence_openpyxl()
+            workbook, _ = _load(data)
+            try:
+                sheet = workbook[data_ref["sheet"]]
+                try:
+                    sheet.reset_dimensions()
+                except (AttributeError, TypeError, ValueError):
+                    pass
+                for number, row in enumerate(sheet.iter_rows(values_only=True), start=1):
+                    yield number, list(row)
+            finally:
+                workbook.close()
+        return
+    text = data.decode("utf-8-sig", errors="replace")
+    delimiter = data_ref.get("delimiter") or _sniff_delimiter(text[:8192])
+    for number, row in enumerate(csv.reader(io.StringIO(text), delimiter=delimiter),
+                                 start=1):
+        yield number, list(row)
+
+
+def read_rows(data: bytes, data_ref: dict, extension: str,
+              limit: int = 20) -> Tuple[List[str], List[Tuple[int, List[str]]]]:
+    """Re-read the header and data rows a card describes. `([], [])` when it cannot.
+
+    This is what makes `data_ref` a contract rather than a comment: the module
+    docstring has always said a card "records `data_ref` -- file, sheet, header
+    row -- so code that wants the real values re-reads the original file at the
+    exact offset", and until `manuscript-extract table` existed nothing did.
+    """
+    first = data_ref.get("first_data_row")
+    if not first:
+        return [], []
+    last = data_ref.get("last_data_row") or first
+    header_at = data_ref.get("header_row")
+    stop = min(last, first + limit - 1)
+
+    header: List[str] = []
+    found: List[Tuple[int, List[str]]] = []
+    for number, cells in _source_rows(data, data_ref, extension):
+        if number == header_at:
+            header = [tables.clean_cell(c) or "" for c in cells]
+        elif first <= number <= stop:
+            found.append((number, [tables.clean_cell(c) or "" for c in cells]))
+        if number >= stop and (header or header_at is None):
+            break
+    return header, found
 
 
 def _sniff_delimiter(sample: str) -> str:
@@ -264,7 +331,8 @@ def cards_from_csv(
         limits=limits,
         n_rows_total=total,
         truncated=truncated,
-        data_ref={"file": source_file, "delimiter": delimiter},
+        data_ref={"file": source_file, "delimiter": delimiter,
+                  "sha256": hashlib.sha256(data).hexdigest()},
     )
     meta = {"delimiter": delimiter}
     if card is None:

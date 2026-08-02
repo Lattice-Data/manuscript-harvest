@@ -424,8 +424,15 @@ def build_card(
     n_rows_total: Optional[int] = None,
     truncated: bool = False,
     data_ref: Optional[dict] = None,
+    row_offset: int = 0,
 ) -> Optional[TableCard]:
-    """Build a card from already-read rows. None when the table holds no values."""
+    """Build a card from already-read rows. None when the table holds no values.
+
+    `row_offset` is where `rows[0]` sits in the source, 0-based, which is nonzero
+    when a sheet was split into panels. It only affects `data_ref`, whose row
+    numbers are absolute and 1-based so `manuscript-extract table` can re-open
+    the file at the exact offset the card was built from.
+    """
     if not rows:
         return None
 
@@ -440,7 +447,7 @@ def build_card(
     header_rows: Optional[List[int]] = None
     if header_row is None:
         header_names = _unique_names([None] * min(width, limits.max_columns))
-        data_rows = [r for r in rows if any(clean_cell(v) is not None for v in r)]
+        data_start = 0
         notes.append("no header row identified; columns are positional")
     else:
         header_cells = _row_cells(rows[header_row], width)
@@ -460,7 +467,7 @@ def build_card(
                          f"the upper row's labels are forward-filled rightwards, "
                          f"which is how a merged cell reads in read-only mode")
         header_names = _unique_names(header_cells)
-        data_rows = rows[header_row + 1:]
+        data_start = header_row + 1
 
     columns_dropped = 0
     if len(header_names) > limits.max_columns:
@@ -472,11 +479,16 @@ def build_card(
     columns_values: List[List[Optional[str]]] = [[] for _ in range(kept)]
     sample_rows: List[List[str]] = []
     n_rows = 0
-    for row in data_rows:
-        cells = _row_cells(row, kept)
+    first_data: Optional[int] = None
+    last_data: Optional[int] = None
+    for index in range(data_start, len(rows)):
+        cells = _row_cells(rows[index], kept)
         if all(c is None for c in cells):
             continue
         n_rows += 1
+        if first_data is None:
+            first_data = index
+        last_data = index
         for position in range(kept):
             columns_values[position].append(cells[position])
         if len(sample_rows) < limits.max_sample_rows:
@@ -544,8 +556,17 @@ def build_card(
         columns=columns,
         sample_rows=sample_rows,
         columns_dropped=columns_dropped,
-        data_ref=data_ref or {"file": source_file, "locator": locator,
-                              "header_row": header_row},
+        data_ref={
+            **{"file": source_file, "locator": locator},
+            **(data_ref or {}),
+            # Absolute, 1-based, and enough on their own to re-read the rows this
+            # card describes. Before this the module docstring promised a
+            # re-readable offset and `data_ref` carried no scan window and no
+            # file hash, so nothing could act on the promise.
+            "header_row": None if header_row is None else row_offset + header_row + 1,
+            "first_data_row": None if first_data is None else row_offset + first_data + 1,
+            "last_data_row": None if last_data is None else row_offset + last_data + 1,
+        },
         notes=notes,
     )
 

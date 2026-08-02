@@ -5,6 +5,7 @@
     manuscript-extract status
     manuscript-extract show 10.1038/s41467-023-40505-5 --section methods
     manuscript-extract show <doi> --kind table --full
+    manuscript-extract table <doi> --file mmc7.xlsx --locator "Table S6"
 
 Everything here is offline: it reads what the fetch stage already put in the
 corpus. `all` is safe to re-run -- an article whose manifest has not changed and
@@ -12,6 +13,7 @@ whose extraction was made by this extractor version is skipped.
 """
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -21,7 +23,7 @@ import yaml
 from ..fetch import store
 from ..fetch.cli import _merge
 from ..fetch.identifiers import doi_slug, normalize_doi
-from . import extractor
+from . import extractor, spreadsheet
 from .blocks import BLOCKS_NAME, read_blocks
 from .limits import Limits
 
@@ -211,6 +213,66 @@ def cmd_show(args) -> int:
     return 0
 
 
+def cmd_table(args) -> int:
+    """Re-read and print the real rows a table card describes.
+
+    This is the command that makes `data_ref` a contract: the card says which
+    file, which sheet and which rows it was built from, and this re-opens the
+    source at that offset so a curator can check the card against the bytes.
+    """
+    corpus_dir, limits, _ = _settings(args)
+    directory = _resolve(corpus_dir, args.article)
+    path = directory / extractor.EXTRACT_DIR / BLOCKS_NAME
+    if not path.exists():
+        print(f"not extracted yet: {path}", file=sys.stderr)
+        return 2
+
+    matches = [b for b in read_blocks(path)
+               if b.get("table")
+               and (not args.file or args.file in b.get("source_file", ""))
+               and (not args.locator or args.locator in (b.get("locator") or ""))]
+    if not matches:
+        print("no table card matched; try `show <article> --kind table`", file=sys.stderr)
+        return 2
+    if len(matches) > 1 and not args.all:
+        for block in matches[:20]:
+            print(f"  {block['source_file']}  {block.get('locator')}", file=sys.stderr)
+        print(f"{len(matches)} cards matched; narrow with --file/--locator or pass --all",
+              file=sys.stderr)
+        return 2
+
+    failures = 0
+    for block in matches:
+        card = block["table"]
+        data_ref = card.get("data_ref") or {}
+        source = directory / (data_ref.get("file") or block["source_file"])
+        print(f"\n{block['source_file']}  {block.get('locator')}")
+        if not source.exists():
+            print("  source file is not on disk", file=sys.stderr)
+            failures += 1
+            continue
+        data = source.read_bytes()
+        recorded = data_ref.get("sha256")
+        if recorded and hashlib.sha256(data).hexdigest() != recorded:
+            print("  ! the source file has changed since this card was built",
+                  file=sys.stderr)
+        header, rows = spreadsheet.read_rows(
+            data, data_ref, Path(source).suffix.lower(), limit=args.rows)
+        if not rows:
+            print("  this card records no re-readable row range", file=sys.stderr)
+            failures += 1
+            continue
+        if header:
+            print(f"  header (row {data_ref.get('header_row')}): "
+                  + " | ".join(header))
+        for number, cells in rows:
+            print(f"  {number:>7}: " + " | ".join(cells))
+        remaining = (data_ref.get("last_data_row") or 0) - (rows[-1][0] if rows else 0)
+        if remaining > 0:
+            print(f"  ... {remaining} further row(s); pass --rows to see more")
+    return 1 if failures else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="manuscript-extract",
@@ -252,6 +314,19 @@ def build_parser() -> argparse.ArgumentParser:
     show.add_argument("--full", action="store_true", help="do not truncate block text")
     add_common(show)
     show.set_defaults(func=cmd_show)
+
+    table = subparsers.add_parser(
+        "table", help="reprint the real rows a table card was built from")
+    table.add_argument("article")
+    table.add_argument("--file", default=None,
+                       help="only cards whose source path contains this")
+    table.add_argument("--locator", default=None,
+                       help="only cards whose locator contains this, e.g. \"sheet 'S1'\"")
+    table.add_argument("--rows", type=int, default=20)
+    table.add_argument("--all", action="store_true",
+                       help="print every matching card instead of requiring one")
+    add_common(table)
+    table.set_defaults(func=cmd_table)
 
     return parser
 

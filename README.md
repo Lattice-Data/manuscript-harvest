@@ -377,6 +377,7 @@ than re-running.
     manuscript-extract status             # coverage across the corpus
     manuscript-extract show <doi> --section methods
     manuscript-extract show <doi> --kind table --full
+    manuscript-extract table <doi> --file mmc7.xlsx   # the card's real rows
 
 Offline: it reads only what the acquisition stage already wrote. Output lands
 beside the article, so an eviction removes it along with the rest of the payload:
@@ -472,10 +473,15 @@ of `{0, 6, 24}` says "these are the timepoints". Numeric columns get a lower
 enumeration bar than text ones, because 22 patient ages say nothing a range does
 not, at ten times the length.
 
-**The card does not copy the data.** It records `data_ref` — file, sheet, header
-row — so code that wants the real values re-reads the original file at the exact
-offset the card was built from. Duplicating a 2.4 GB corpus to paraphrase it would
-be the wrong trade.
+**The card does not copy the data.** It records `data_ref` — file, sheet, sha256,
+header row, first and last data row — so code that wants the real values re-reads
+the original file at the exact offset the card was built from. Duplicating a
+2.4 GB corpus to paraphrase it would be the wrong trade.
+
+`manuscript-extract table <doi> --file <path>` is that code, and it is what makes
+`data_ref` a contract rather than a comment: it reads the reference off the card
+in `blocks.jsonl`, re-opens the source, prints the rows, and says so if the file
+has changed since the card was built.
 
 Header detection is the crux. `41591_2018_269_MOESM1_ESM.xlsx` puts a title on
 row 1, a caption on row 2, a blank on row 3, and the real header on **row 4**;

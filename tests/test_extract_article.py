@@ -570,6 +570,42 @@ def test_cli_one_and_show_run_offline(tmp_path, capsys):
     assert "1/1 articles extracted" in capsys.readouterr().err
 
 
+def test_the_table_command_reprints_the_rows_the_card_describes(tmp_path, capsys):
+    """`data_ref` is a contract, not a comment: the card says which file, which
+    sheet and which rows, and this re-opens the source at that offset. Nothing in
+    the repo could do that before, and `data_ref` was not sufficient to -- no
+    scan window and no file hash."""
+    _article(tmp_path, xml=jats_article(METHODS_BODY),
+             supplements=[("s1.xlsx", make_xlsx({"Donors": [
+                 ["donor", "age", "sex"], ["D1", 44, "F"], ["D2", 61, "M"]]}))])
+    config = tmp_path / "config.yaml"
+    config.write_text(f"extract:\n  corpus_dir: {tmp_path}\n")
+    assert main(["--config", str(config), "one", DOI]) == 0
+    capsys.readouterr()
+
+    assert main(["--config", str(config), "table", DOI, "--file", "s1.xlsx"]) == 0
+    out = capsys.readouterr().out
+    assert "header (row 1): donor | age | sex" in out
+    assert "2: D1 | 44 | F" in out
+    assert "3: D2 | 61 | M" in out
+
+
+def test_the_table_command_says_when_the_source_changed_under_the_card(tmp_path, capsys):
+    directory = _article(
+        tmp_path, xml=jats_article(METHODS_BODY),
+        supplements=[("s1.xlsx", make_xlsx({"D": [["a", "b"], [1, 2]]}))])
+    config = tmp_path / "config.yaml"
+    config.write_text(f"extract:\n  corpus_dir: {tmp_path}\n")
+    main(["--config", str(config), "one", DOI])
+    record = store.read_manifest(directory)
+    (directory / record["supplementary"][0]["path"]).write_bytes(
+        make_xlsx({"D": [["a", "b"], [9, 9]]}))
+    capsys.readouterr()
+
+    main(["--config", str(config), "table", DOI, "--file", "s1.xlsx"])
+    assert "the source file has changed" in capsys.readouterr().err
+
+
 def test_cli_reports_an_unknown_article(tmp_path, capsys):
     config = tmp_path / "config.yaml"
     config.write_text(f"extract:\n  corpus_dir: {tmp_path}\n")
