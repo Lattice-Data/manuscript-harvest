@@ -103,8 +103,14 @@ def write_blocks(path, blocks: List[Block]) -> dict:
     lines = 0
     with target.open("wb") as handle:
         for block in blocks:
-            line = (json.dumps(block.to_dict(), ensure_ascii=False, sort_keys=True)
-                    + "\n").encode("utf-8")
+            # allow_nan=False: `Infinity` and `NaN` are Python's JSON dialect,
+            # not JSON. A card built from a column holding Inf wrote
+            # `"max": Infinity` into a line that serde_json, Go's encoding/json,
+            # PostgreSQL jsonb and DuckDB all reject. Raising here means a future
+            # path that produces one fails at write time instead of shipping an
+            # artifact that is not what its extension says it is.
+            line = (json.dumps(block.to_dict(), ensure_ascii=False, sort_keys=True,
+                               allow_nan=False) + "\n").encode("utf-8")
             handle.write(line)
             digest.update(line)
             lines += 1

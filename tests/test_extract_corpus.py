@@ -137,6 +137,21 @@ def test_no_card_value_is_only_citation_punctuation():
     assert not offenders, offenders[:10]
 
 
+def test_every_blocks_line_is_json_that_is_not_only_pythons_dialect():
+    """Line 520 of 10.1038/s41467-023-40505-5's blocks.jsonl carried
+    `"max": Infinity`, from `float("Inf")` in the `neg. log10-pval` column of
+    sheet `Supplementary Data 3`. Python reads it; serde_json, Go's
+    encoding/json, PostgreSQL jsonb and DuckDB do not."""
+    _extractions()
+    for path in sorted(CORPUS.glob("*/extracted/blocks.jsonl")):
+        with path.open(encoding="utf-8") as handle:
+            for number, line in enumerate(handle, start=1):
+                if not line.strip():
+                    continue
+                json.loads(line, parse_constant=lambda c: pytest.fail(
+                    f"{path}:{number} is not JSON: {c}"))
+
+
 # -- the specific files that taught this stage its rules ---------------------
 
 def test_the_strict_ooxml_supplement_still_reads():

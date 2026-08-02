@@ -7,6 +7,7 @@ workbook, a header on row 4, and a bot-check landing page all look like "there
 was nothing there" unless something checks.
 """
 
+import json
 import sys
 import types
 from unittest import mock
@@ -286,6 +287,28 @@ def test_mostly_numeric_column_with_na_strings_is_still_numeric():
     rows = [("value",)] + [(v,) for v in [1, 2, 3, 4, 5, 6, 7, 8, 9, "NA"]]
     card = tables.build_card(rows, "x.xlsx", "s", L)
     assert card.columns[0]["dtype"] == tables.NUMBER
+
+
+def test_an_infinite_cell_does_not_make_an_invalid_json_line(tmp_path):
+    """`float("inf")` succeeds, so line 520 of
+    10.1038/s41467-023-40505-5's blocks.jsonl carried `"max": Infinity` -- which
+    Python's json.loads accepts by default and serde_json, Go's encoding/json,
+    PostgreSQL jsonb and DuckDB all reject."""
+    values = [1.5, 2.5, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0,
+              "Inf", "-inf", "NaN"]
+    card = tables.build_card([("neg. log10-pval",)] + [(v,) for v in values], "x.xlsx", "s", L)
+    column = card.columns[0]
+    assert column["dtype"] == tables.NUMBER
+    assert column["max"] == 13.0 and column["min"] == 1.5
+    assert column["n_non_finite"] == 3
+    assert any("non-finite" in note for note in card.notes)
+
+    path = tmp_path / "blocks.jsonl"
+    write_blocks(path, [Block(kind=TABLE, text=tables.render(card, L),
+                              source_file="x.xlsx", origin="xlsx",
+                              table=card.to_dict())])
+    for line in path.read_text().splitlines():
+        json.loads(line, parse_constant=lambda c: pytest.fail(f"not JSON: {c}"))
 
 
 def test_headerless_matrix_is_reported_not_guessed():

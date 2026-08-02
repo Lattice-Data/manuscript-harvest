@@ -25,6 +25,7 @@ would be the wrong trade.
 """
 
 import datetime as _datetime
+import math
 import re
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -111,10 +112,28 @@ def _value_kind(text: str) -> str:
 
 
 def _as_number(text: str) -> Optional[float]:
+    """The cell as a float, or None -- including for Inf and NaN.
+
+    `float("inf")` succeeds, so a column holding `Inf` put `"max": Infinity` into
+    `blocks.jsonl`: line 520 of 10.1038/s41467-023-40505-5, sheet
+    `Supplementary Data 3`, column `neg. log10-pval`. Python's `json.loads`
+    accepts that by default; `serde_json`, Go's `encoding/json`, PostgreSQL
+    `jsonb` and DuckDB all reject the line, so the artifact was not JSON.
+    """
     try:
-        return float(text.rstrip("% "))
+        value = float(text.rstrip("% "))
     except ValueError:
         return None
+    return value if math.isfinite(value) else None
+
+
+#: Spellings `float()` accepts and JSON does not. Counted so a range that leaves
+#: them out can say it did.
+_NON_FINITE_RX = re.compile(r"^[+-]?(?:inf(?:inity)?|nan)$", re.IGNORECASE)
+
+
+def _looks_non_finite(text: str) -> bool:
+    return bool(_NON_FINITE_RX.match(text.rstrip("% ").strip()))
 
 
 # -- header detection --------------------------------------------------------
@@ -244,6 +263,10 @@ def profile_column(name: str, values: List[Optional[str]], limits: Limits) -> di
 
     if dtype == NUMBER:
         numbers = sorted(n for n in (_as_number(v) for v in present) if n is not None)
+        non_finite = sum(1 for v in present
+                         if _as_number(v) is None and _looks_non_finite(v))
+        if non_finite:
+            profile["n_non_finite"] = non_finite
         if numbers:
             profile["min"] = numbers[0]
             profile["max"] = numbers[-1]
@@ -316,6 +339,11 @@ def build_card(
     while columns and columns[-1]["dtype"] == EMPTY:
         columns.pop()
         header_names.pop()
+
+    non_finite = sum(c.get("n_non_finite", 0) for c in columns)
+    if non_finite:
+        notes.append(f"{non_finite} non-finite value(s) (Inf/NaN) were not counted "
+                     f"in the range")
 
     if truncated:
         notes.append(f"scan stopped at {limits.max_scan_rows} rows; profile covers "
