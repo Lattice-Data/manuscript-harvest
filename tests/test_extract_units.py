@@ -675,6 +675,46 @@ def test_citation_markers_are_dropped_but_other_cross_references_kept():
     assert "Fig. 1a" in text
 
 
+@pytest.mark.parametrize("body,expected", [
+    ('<p>We report <xref ref-type="bibr" rid="b1">1</xref>.</p>', "We report."),
+    ('<p>severe symptoms (<xref ref-type="bibr" rid="b1">1</xref>; '
+     '<xref ref-type="bibr" rid="b2">2</xref>, '
+     '<xref ref-type="bibr" rid="b3">3</xref>). While recent studies</p>',
+     "severe symptoms. While recent studies"),
+    ('<p>LD blocks using LDetect<xref ref-type="bibr" rid="b1">7</xref>,'
+     '<xref ref-type="bibr" rid="b2">8</xref>.</p>', "LD blocks using LDetect."),
+    # The lookbehind is what keeps a function call intact.
+    ('<p>we ran the susie_rss() function on each locus</p>',
+     "we ran the susie_rss() function on each locus"),
+    ('<p>the HarmonyMatrix() call and a negative (-) gate</p>',
+     "the HarmonyMatrix() call and a negative (-) gate"),
+])
+def test_dropping_a_citation_does_not_leave_its_punctuation(body, expected):
+    """35 literal `()` and 12 more `(` followed by a separator over the JATS
+    blocks of 10.1016/j.cell.2021.01.053. One block read
+    `...severe symptoms (; ; ; ; , ). While recent studies...`."""
+    blocks, _, _ = jats.blocks_from_jats(
+        jats_article(f"<sec><title>Results</title>{body}</sec>"), "f.nxml", L)
+    assert next(b.text for b in blocks if b.kind == PARAGRAPH
+                and b.section == "results") == expected
+
+
+def test_a_citation_in_a_table_cell_is_the_value_and_stays():
+    """10 of the 29 SOURCE cells in 10.1016/j.cell.2021.01.053's key resources
+    table were destroyed: `(Korsunsky et al., 2019)` became `()`, and the card
+    read `SOURCE [text, 11 distinct, 11 empty] = () | 10x Genomics | ; | ...`."""
+    body = ('<sec><title>Methods</title><table-wrap><label>Key resources</label>'
+            '<table><tr><th>REAGENT</th><th>SOURCE</th></tr>'
+            '<tr><td>Harmony</td><td>(<xref ref-type="bibr" rid="b1">Korsunsky '
+            'et al., 2019</xref>)</td></tr>'
+            '<tr><td>Scanpy</td><td><xref ref-type="bibr" rid="b2">Wolf et al., '
+            '2018</xref></td></tr></table></table-wrap></sec>')
+    blocks, _, _ = jats.blocks_from_jats(jats_article(body), "f.nxml", L)
+    source = next(c for c in next(b for b in blocks if b.kind == TABLE)
+                  .table["columns"] if c["name"] == "SOURCE")
+    assert source["values"] == ["(Korsunsky et al., 2019)", "Wolf et al., 2018"]
+
+
 def test_reference_list_is_not_extracted():
     """A model asked for perturbations will happily take one from a reference
     title."""

@@ -13,11 +13,16 @@ supplement's `original_name`; JATS records the publisher's label for the same
 name. Joining them is free and it is the difference between a model seeing a
 filename and seeing "Supplementary Table 3: per-cell metadata".
 
-Citation markers are dropped. Left in, `<xref ref-type="bibr">` turns "as shown
-previously" into "as shown previously12,13", which is noise in a quote and worse
-in an evidence check. References themselves are dropped for the same reason:
-they are other people's findings, and a model asked for perturbations will
-happily take one from a reference title.
+Citation markers are dropped from prose. Left in, `<xref ref-type="bibr">` turns
+"as shown previously" into "as shown previously12,13", which is noise in a quote
+and worse in an evidence check. References themselves are dropped for the same
+reason: they are other people's findings, and a model asked for perturbations
+will happily take one from a reference title.
+
+They are *not* dropped from a table cell. In prose a citation is noise; in a cell
+it is the value. 10 of the 29 SOURCE cells in 10.1016/j.cell.2021.01.053's key
+resources table -- the one table this pipeline exists to read -- were destroyed
+by the same rule: `(Korsunsky et al., 2019)` became `()`.
 """
 
 import re
@@ -85,8 +90,41 @@ _BLOCK_LEVEL = frozenset({"p", "list-item", "disp-quote", "sec", "title", "def",
 _SEP = "\x1f"
 _SEP_RUN = re.compile(r"\s*\x1f+\s*")
 
+#: What is left of `(<xref/>; <xref/>; <xref/>)` once the citations are gone.
+#: The lookbehind is load-bearing: it keeps `susie_rss()` and `HarmonyMatrix()`
+#: intact while removing `report ()`.
+_CITATION_HUSK = re.compile(r"(?<=\s)\(([,;&\s–—-]*)\)")
+_SPACE_BEFORE_PUNCT = re.compile(r"\s+([,;.)])")
+_DOUBLED_SEPARATOR = re.compile(r"([,;])(\s*[,;])+")
+_SEPARATOR_BEFORE_STOP = re.compile(r"[,;]+(?=[.)])")
 
-def _inline_text(element, block_sep: str = " ") -> str:
+
+def _drop_citation_husk(match: "re.Match") -> str:
+    inside = match.group(1)
+    # `(-)` and `(–)` are real markers -- a negative gate, an absent value. An
+    # empty pair, or one holding only the separators between grouped citations,
+    # is not: it is what a dropped `<xref ref-type="bibr">` left behind.
+    if inside.strip() and not any(c in inside for c in ",;&"):
+        return match.group(0)
+    return ""
+
+
+def _tidy_citation_punctuation(text: str) -> str:
+    """Remove the punctuation a dropped citation group left behind.
+
+    Measured over the JATS blocks of 10.1016/j.cell.2021.01.053: 35 literal
+    `()`, 12 more `(` followed by a separator. One block read
+    `...severe symptoms (; ; ; ; , ). While recent studies...`. In
+    10.1038/s41467-023-40505-5: `into LD blocks using LDetect,.`
+    """
+    text = _CITATION_HUSK.sub(_drop_citation_husk, text)
+    text = _SPACE_BEFORE_PUNCT.sub(r"\1", text)
+    text = _DOUBLED_SEPARATOR.sub(r"\1", text)
+    text = _SEPARATOR_BEFORE_STOP.sub("", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _inline_text(element, block_sep: str = " ", keep_citations: bool = False) -> str:
     """All text under `element`, minus citation markers.
 
     `block_sep` is what separates block-level children. It is `"; "` for a table
@@ -94,11 +132,18 @@ def _inline_text(element, block_sep: str = " ") -> str:
     one block child, and Table 1's SNP PIP column read `0.7980.15` for two
     values, which also flipped the column's dtype from number to mixed and cost
     it its min/max/median.
+
+    `keep_citations` is True for a table cell. In prose a citation marker is
+    noise -- "as shown previously12,13" is worse in an evidence check than in a
+    quote -- but in a cell it *is* the value: 10 of the 29 SOURCE cells in
+    10.1016/j.cell.2021.01.053's key resources table were destroyed by dropping
+    it, `(Korsunsky et al., 2019)` becoming `()`.
     """
     parts: List[str] = []
 
     def walk(node, is_root: bool) -> None:
-        if _tag(node) == "xref" and (node.get("ref-type") or "") == "bibr":
+        if not keep_citations and _tag(node) == "xref" \
+                and (node.get("ref-type") or "") == "bibr":
             if node.tail:
                 parts.append(node.tail)
             return
@@ -116,7 +161,8 @@ def _inline_text(element, block_sep: str = " ") -> str:
 
     walk(element, True)
     text = _SEP_RUN.sub(_SEP, "".join(parts).replace("\xa0", " ")).strip(_SEP)
-    return re.sub(r"\s+", " ", text.replace(_SEP, block_sep)).strip()
+    text = re.sub(r"\s+", " ", text.replace(_SEP, block_sep)).strip()
+    return text if keep_citations else _tidy_citation_punctuation(text)
 
 
 _WRAPPERS = {"media", "graphic", "alternatives", "inline-supplementary-material"}
@@ -180,7 +226,7 @@ def _table_rows(table_element) -> List[List[str]]:
     for row in table_element.iter():
         if _tag(row) != "tr":
             continue
-        cells = [_inline_text(cell, block_sep="; ")
+        cells = [_inline_text(cell, block_sep="; ", keep_citations=True)
                  for cell in row if _tag(cell) in {"th", "td"}]
         if cells:
             rows.append(cells)

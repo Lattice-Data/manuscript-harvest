@@ -121,6 +121,22 @@ def test_no_table_card_fuses_two_numbers_into_one_value():
     assert not offenders, offenders[:10]
 
 
+def test_no_card_value_is_only_citation_punctuation():
+    """The key resources table of 10.1016/j.cell.2021.01.053 is the one table
+    this pipeline exists to read, and 10 of its 29 SOURCE cells were reduced to
+    `()` or `;` by the rule that drops citation markers from prose."""
+    _extractions()
+    offenders = []
+    for path in sorted(CORPUS.glob("*/extracted/blocks.jsonl")):
+        for block in read_blocks(path):
+            for column in ((block.get("table") or {}).get("columns") or []):
+                for value in (column.get("values") or []) + (column.get("examples") or []):
+                    if str(value).strip() in {"()", ";", ",", "(;)", "(,)"}:
+                        offenders.append((path.parent.parent.name,
+                                          block.get("locator"), column["name"], value))
+    assert not offenders, offenders[:10]
+
+
 # -- the specific files that taught this stage its rules ---------------------
 
 def test_the_strict_ooxml_supplement_still_reads():
