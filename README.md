@@ -809,6 +809,19 @@ run on every commit.
   profiling of pancreatic islets" is as likely to be a Methods subsection as a
   Results one, and a wrong section is worse than none — it makes a filter silently
   drop the text it was looking for.
+- **PDF table structure is deliberately not attempted.** `page.find_tables()`
+  exists, but a table found in a PDF has no stable `data_ref` to re-read, and the
+  card contract is built on one — see `manuscript-extract table`.
+- **PDF reading order is deliberately left in insertion order.** Sorting is the
+  obvious fix and is measurably worse; pinned by a test rather than argued about.
+- **A model-facing "evidence pack" is deliberately not built here.** The boundary
+  in "Not in this repository" is `blocks.jsonl`, and it is the right one: an index
+  over the blocks — `review_signals` plus `main_text.section_labelling` — gives a
+  caller what it needs to select without this repo taking a position on prompts or
+  budgets.
+- **A reviewer's answer is scoped to bytes, not to the parser.** A re-fetch drops
+  it; a parser change keeps it and re-asks the question. There is deliberately no
+  way to record an answer that outlives a change to the file it was about.
 - The PMC OA tarball route (`oa.fcgi` → `oa_package/*.tar.gz`) is advertised by
   NCBI but currently 404s over both HTTPS and FTP; that FTP tree now lists only
   `deprecated/`. It is off by default (`fetch.try_oa_package`) and the tier runs
