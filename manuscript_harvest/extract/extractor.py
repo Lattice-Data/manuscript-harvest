@@ -256,7 +256,7 @@ class FileResult:
                     "hyphens_kept", "hyphens_joined",
                     "running_lines_dropped", "running_lines",
                     "tables_skipped", "tables_capped", "reopens_refused",
-                    "label_source"):
+                    "label_source", "reference_list_dropped"):
             if key in self.meta:
                 record[key] = self.meta[key]
         return record

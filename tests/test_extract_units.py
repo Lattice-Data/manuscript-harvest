@@ -1089,15 +1089,45 @@ def test_a_citation_in_a_table_cell_is_the_value_and_stays():
     assert source["values"] == ["(Korsunsky et al., 2019)", "Wolf et al., 2018"]
 
 
-def test_reference_list_is_not_extracted():
+def test_reference_list_is_not_extracted_and_the_drop_is_recorded():
     """A model asked for perturbations will happily take one from a reference
-    title."""
+    title. But the drop left no trace, so `meta["sections"]` disagreed with the
+    sections actually in the file and nothing said why."""
     back = ('<ref-list><title>References</title><ref><element-citation>'
             '<article-title>CRISPR knockout of TP53 in mice</article-title>'
             '</element-citation></ref></ref-list>')
     blocks, _, meta = jats.blocks_from_jats(jats_article("", back=back), "f.nxml", L)
     assert not any("CRISPR knockout of TP53" in b.text for b in blocks)
     assert "references" not in meta["sections"]
+    assert meta["reference_list_dropped"] is True
+
+
+def test_the_jats_parser_says_when_it_hits_a_cap():
+    """`pdf.py` and `docxfile.py` both flag this; the JATS walker stopped
+    silently, so a capped article read as a short one."""
+    body = "<sec><title>Results</title>" + "<p>a paragraph of text</p>" * 20 + "</sec>"
+    _, _, meta = jats.blocks_from_jats(jats_article(body), "f.nxml",
+                                       Limits(max_blocks_per_file=5))
+    assert meta["blocks_capped"] is True
+
+    tables_body = "<sec><title>Results</title>" + (
+        "<table-wrap><label>T</label><table><tr><th>a</th><th>b</th></tr>"
+        "<tr><td>1</td><td>2</td></tr></table></table-wrap>" * 4) + "</sec>"
+    _, _, meta = jats.blocks_from_jats(jats_article(tables_body), "f.nxml",
+                                       Limits(max_tables_per_file=2))
+    assert meta["tables_capped"] is True and meta["tables"] == 2
+
+
+def test_a_table_wrapped_in_a_paragraph_is_emitted_once():
+    """`walk_children` handles the nested float and the generic branch could then
+    handle it again, giving two blocks with the same locator."""
+    body = ('<sec><title>Results</title><p>Text before.<table-wrap><label>T1</label>'
+            '<table><tr><th>a</th><th>b</th></tr><tr><td>1</td><td>2</td></tr>'
+            '</table></table-wrap></p></sec>')
+    blocks, _, _ = jats.blocks_from_jats(jats_article(body), "f.nxml", L)
+    assert sum(1 for b in blocks if b.kind == TABLE) == 1
+    locators = [(b.source_file, b.locator, b.kind) for b in blocks]
+    assert len(locators) == len(set(locators))
 
 
 def test_jats_table_becomes_a_card():

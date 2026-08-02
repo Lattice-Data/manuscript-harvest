@@ -241,7 +241,14 @@ class _Walker:
         self.blocks: List[Block] = []
         self.supplement_labels: Dict[str, dict] = {}
         self.tables_seen = 0
+        self.blocks_capped = False
+        self.tables_capped = False
+        self.reference_list_dropped = False
         self.section_names: List[str] = []
+        self._visited: set = set()
+        """Elements already emitted, by `id()`. A `<p>` wrapping a `<table-wrap>`
+        is handled by the `p` branch and could then be handled again by the
+        generic float branch, giving two blocks with the same locator."""
         self.title_stack: List[str] = []
         """The headings enclosing whatever is being walked, outermost first.
 
@@ -253,7 +260,12 @@ class _Walker:
 
     def add(self, kind: str, text: str, section: Optional[str], locator: str,
             label: Optional[str] = None, table: Optional[dict] = None) -> None:
-        if not text or len(self.blocks) >= self.limits.max_blocks_per_file:
+        if not text:
+            return
+        if len(self.blocks) >= self.limits.max_blocks_per_file:
+            # `pdf.py` and `docxfile.py` both flag this; this parser stopped
+            # silently, so a capped article read as a short one.
+            self.blocks_capped = True
             return
         self.blocks.append(Block(kind=kind, text=text, source_file=self.source_file,
                                  origin="jats", locator=locator, section=section,
@@ -266,6 +278,7 @@ class _Walker:
         title = _inline_text(title_element) if title_element is not None else None
         section = sections_mod.normalize(title, element.get("sec-type")) or inherited
         if section in sections_mod.LOW_VALUE:
+            self.reference_list_dropped = True
             return
         if section and section not in self.section_names:
             self.section_names.append(section)
@@ -308,9 +321,16 @@ class _Walker:
                           "sec-meta", "notes", "fn-group", "def-list"}:
                 self.walk_children_one(child, section, child_path)
             elif name in {"ref-list", "back-ref-list"}:
+                # Deliberate: a model asked for perturbations will take one from
+                # a reference title. But `meta["sections"]` then disagrees with
+                # the sections actually in the file, so say it happened.
+                self.reference_list_dropped = True
                 continue
 
     def walk_children_one(self, child, section: Optional[str], path: str) -> None:
+        if id(child) in self._visited:
+            return
+        self._visited.add(id(child))
         name = _tag(child)
         if name == "table-wrap":
             self.add_table(child, section, path)
@@ -349,6 +369,7 @@ class _Walker:
             self.add(CAPTION, text, section, path, label=label)
             return
         if self.tables_seen >= self.limits.max_tables_per_file:
+            self.tables_capped = True
             return
         self.tables_seen += 1
         card = tables.build_card(
@@ -462,6 +483,12 @@ def blocks_from_jats(
     meta["sections"] = walker.section_names
     meta["supplement_labels"] = walker.supplement_labels
     meta["tables"] = walker.tables_seen
+    if walker.blocks_capped:
+        meta["blocks_capped"] = True
+    if walker.tables_capped:
+        meta["tables_capped"] = True
+    if walker.reference_list_dropped:
+        meta["reference_list_dropped"] = True
     if not walker.blocks:
         return [], NO_TEXT, meta
     return walker.blocks, OK, meta
