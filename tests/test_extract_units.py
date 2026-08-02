@@ -445,6 +445,16 @@ def test_card_render_respects_the_character_budget():
     assert "further column(s) not shown" in text
 
 
+def test_the_renderer_says_when_it_dropped_sample_rows():
+    """Nothing a cap drops may be silent, and the column line has always said so
+    while the sample-row loop just broke out."""
+    limits = Limits(max_card_chars=700, max_sample_rows=3)
+    rows = [("a", "b", "c")] + [tuple(f"{c}_value_{r}" * 4 for c in "abc")
+                                for r in range(5)]
+    text = tables.render(tables.build_card(rows, "x.xlsx", "s", limits), limits)
+    assert "further sample row(s) not shown" in text
+
+
 def test_card_states_when_the_scan_was_capped():
     limits = Limits(max_scan_rows=10)
     rows = [("a", "b")] + [(i, i * 2) for i in range(9)]

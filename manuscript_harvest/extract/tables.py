@@ -654,6 +654,7 @@ def render(card: TableCard, limits: Limits) -> str:
     tail: List[str] = []
     if card.sample_rows and sample_budget > 0:
         tail.append("Sample rows:")
+        rows_shown = 0
         for position, row in enumerate(card.sample_rows, start=1):
             pairs = [f"{card.header[i]}={row[i]}"
                      for i in range(min(len(row), len(card.header))) if row[i]]
@@ -661,8 +662,15 @@ def render(card: TableCard, limits: Limits) -> str:
             if len(line) > sample_budget:
                 line = line[: max(0, sample_budget - 4)] + " ..."
             tail.append(line)
+            rows_shown += 1
             sample_budget -= len(line)
             if sample_budget <= 0:
                 break
+        # The column line has always said how many it hid; this one broke out of
+        # the loop and said nothing, in the module whose docstring promises the
+        # opposite.
+        if rows_shown < len(card.sample_rows):
+            tail.append(f"  ... {len(card.sample_rows) - rows_shown} further sample "
+                        f"row(s) not shown")
 
     return "\n".join([fixed] + body + tail)
