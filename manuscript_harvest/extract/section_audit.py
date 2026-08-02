@@ -14,6 +14,14 @@ handful of hand-read runs because nothing could say whether a change helped.
 This can.
 
     python -m manuscript_harvest.extract.section_audit --corpus-dir corpus
+    python -m manuscript_harvest.extract.section_audit --fail-under 0.85
+
+`--fail-under` is what makes it a gate rather than something someone remembers to
+run, and `tests/expected_section_scores.json` holds the per-slug baseline so a
+regression in one article cannot hide behind an improvement in another. Articles
+with no XML/PDF pair are named before the headline: they used to vanish from the
+report entirely, so a 91% figure read as corpus coverage when it was the accuracy
+over whichever articles happened to have both renditions.
 
 Two things it deliberately does not do:
 
@@ -162,6 +170,55 @@ def audit(jats_blocks, pdf_blocks, size: int = SHINGLE_WORDS) -> dict:
     }
 
 
+def reading_order_score(jats_blocks, pdf_texts: List[str],
+                        size: int = SHINGLE_WORDS) -> dict:
+    """How closely a sequence of PDF paragraphs follows the XML's own order.
+
+    Exists to settle a recurring temptation. PyMuPDF's `get_text("blocks",
+    sort=True)` looks like the obvious fix for two-column reading order and is
+    measurably worse on both articles here:
+
+        10.1016/j.cell.2021.01.053   backward steps 10 -> 23, inverted 11.2% -> 12.0%
+        10.1038/s41467-023-40505-5   backward steps  4 -> 38, inverted  2.5% ->  3.9%
+
+    Pinned by `test_pdf_reading_order_is_not_improved_by_sorting`.
+
+    A paragraph's reference position is the ordinal of the XML paragraph it
+    aligns to. `backward_steps` counts consecutive pairs that go backwards;
+    `inverted_pairs` is the fraction of all ordered pairs out of order, which is
+    the same statistic a rank correlation is built on and does not care how far
+    apart the offenders are.
+    """
+    positions: Dict[Tuple[str, ...], int] = {}
+    ordinal = 0
+    for block in jats_blocks:
+        if block.kind != PARAGRAPH:
+            continue
+        ordinal += 1
+        for shingle in shingles(block.text, size):
+            positions.setdefault(shingle, ordinal)
+
+    order: List[int] = []
+    for text in pdf_texts:
+        votes = Counter(positions[s] for s in shingles(text, size) if s in positions)
+        if votes:
+            order.append(votes.most_common(1)[0][0])
+
+    backward = sum(1 for a, b in zip(order, order[1:]) if b < a)
+    pairs = inverted = 0
+    for i, left in enumerate(order):
+        for right in order[i + 1:]:
+            pairs += 1
+            if right < left:
+                inverted += 1
+    return {
+        "aligned": len(order),
+        "backward_steps": backward,
+        "backward_fraction": round(backward / (len(order) - 1), 3) if len(order) > 1 else None,
+        "inverted_pairs": round(inverted / pairs, 3) if pairs else None,
+    }
+
+
 def audit_article(directory, limits: Optional[Limits] = None) -> Optional[dict]:
     """Audit one article directory, or None when it has no XML/PDF pair."""
     directory = Path(directory)
@@ -223,6 +280,8 @@ def main(argv=None) -> int:
     parser.add_argument("--article", default=None,
                         help="one slug or directory; default is every article with both renditions")
     parser.add_argument("--json", default=None, help="write the reports here as JSON")
+    parser.add_argument("--fail-under", type=float, default=None,
+                        help="exit 1 when overall agreement is below this fraction")
     args = parser.parse_args(argv)
 
     root = Path(args.corpus_dir).expanduser()
@@ -232,9 +291,12 @@ def main(argv=None) -> int:
         candidates = sorted(p for p in root.glob("*") if p.is_dir())
 
     reports = []
+    no_pair = []
     for directory in candidates:
         report = audit_article(directory)
         if report is None:
+            if (directory / store.MANIFEST_NAME).exists():
+                no_pair.append(directory.name)
             continue
         reports.append(report)
         print(format_report(report))
@@ -245,15 +307,30 @@ def main(argv=None) -> int:
               file=sys.stderr)
         return 2
 
+    # Before the headline, not after: an article with no XML/PDF pair vanished
+    # from this report entirely, so a 91% figure read as corpus coverage when it
+    # was the accuracy over whichever articles happened to have both renditions.
+    if no_pair:
+        print(f"\n{len(no_pair)} article(s) had no XML/PDF pair and were not scored: "
+              f"{', '.join(no_pair)}")
+
     scored = [r for r in reports if not r.get("skipped")]
+    accuracy = None
     if scored:
         aligned = sum(r["aligned"] for r in scored)
         correct = sum(r["correct"] for r in scored)
+        accuracy = correct / aligned if aligned else None
         print(f"\n{len(scored)} article(s): {correct}/{aligned} aligned paragraphs agree"
-              + (f" = {correct / aligned:.1%}" if aligned else ""))
+              + (f" = {accuracy:.1%}" if accuracy is not None else ""))
     if args.json:
-        Path(args.json).write_text(json.dumps(reports, indent=2), encoding="utf-8")
+        Path(args.json).write_text(
+            json.dumps({"reports": reports, "skipped": no_pair}, indent=2),
+            encoding="utf-8")
         print(f"wrote {args.json}", file=sys.stderr)
+    if args.fail_under is not None and (accuracy is None or accuracy < args.fail_under):
+        print(f"agreement {accuracy} is below --fail-under {args.fail_under}",
+              file=sys.stderr)
+        return 1
     return 0
 
 

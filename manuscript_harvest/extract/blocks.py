@@ -37,6 +37,12 @@ METADATA = "metadata"
 # -- roles -------------------------------------------------------------------
 MAIN_TEXT = "main_text"
 SUPPLEMENT = "supplement"
+NON_EVIDENCE = "non_evidence"
+"""A file a human marked as not article evidence: a peer-review file, a reporting
+summary, a description-of-files stub. Its text is kept and readable, but
+`cmd_show --role` and every downstream filter now see three values, not two."""
+
+ROLES = frozenset({MAIN_TEXT, SUPPLEMENT, NON_EVIDENCE})
 
 
 @dataclass
@@ -56,16 +62,43 @@ class Block:
     `zip:<member>` for something read out of an archive."""
     role: str = MAIN_TEXT
     locator: str = ""
-    """Where inside the file: `p.7`, `sheet 'Table S6'`, `para 42`, `table-wrap 3`."""
+    """Where inside the file: `p.7`, `sheet 'Table S6'`, `para 42`,
+    `body/sec[4]/p[2]`. A JATS locator is real XPath: `[n]` counts children of
+    that tag, which it did not until 153 of one article's 168 body locators were
+    found to point at a different element."""
+    locator_ref: Optional[dict] = None
+    """Machine-readable provenance where the locator alone is too coarse. For a
+    PDF: `{"page": n, "bbox": [x0, y0, x1, y1], "block_no": n}`. PyMuPDF hands
+    over the rectangle and this module kept two of the seven fields, so a PDF
+    block was locatable only to a page -- which is not enough to point a human at
+    a paragraph on it."""
     section: Optional[str] = None
+    section_path: Optional[List[str]] = None
+    """The heading path down to this block, verbatim, e.g.
+    `["Methods", "Nuclei isolation"]`. Set only where the tree is real: JATS
+    declares it and `walk_section` already knows it. A PDF's tree is a guess, and
+    a guessed path is exactly what this package refuses to produce."""
     label: Optional[str] = None
-    """The publisher's name for this item, e.g. "Supplementary Table 3"."""
+    """The publisher's name for this item, e.g. "Supplementary Table 3".
+
+    Not the fetch transport's name for it. `label: "Download"` was on 1,989 of
+    the 2,076 blocks of 10.1126/science.aat5031 and
+    `label: "Europe PMC supplementary archive"` on 347 of 536 in
+    10.1038/s41467-023-40505-5, both straight from the manifest entry."""
+    caption: Optional[str] = None
+    """The publisher's description of the file this block came from, e.g.
+    "Table S7. Cytokine analysis, related to Figure 6". `extract_bytes` accepted
+    one and passed it only to the file-level record, so it reached
+    `extraction.json` and none of that file's blocks."""
     table: Optional[dict] = None
     index: int = 0
+    block_id: str = ""
+    """An identity that survives a parser change. Assigned by `number_blocks`."""
 
     def to_dict(self) -> dict:
         record = {
             "index": self.index,
+            "block_id": self.block_id,
             "kind": self.kind,
             "role": self.role,
             "origin": self.origin,
@@ -77,25 +110,87 @@ class Block:
             "text_sha256": hashlib.sha256(self.text.encode("utf-8")).hexdigest(),
             "text": self.text,
         }
+        if self.section_path:
+            record["section_path"] = list(self.section_path)
+        if self.caption:
+            record["caption"] = self.caption
+        if self.locator_ref:
+            record["locator_ref"] = self.locator_ref
         if self.table is not None:
             record["table"] = self.table
         return record
 
 
 def number_blocks(blocks: List[Block], start: int = 0) -> List[Block]:
-    """Assign stable, contiguous indices in document order."""
+    """Assign contiguous indices, and a `block_id` that survives a parser change.
+
+    `index` is positional: insert one block and every downstream reference moves.
+    That is the prerequisite for a review layer -- a human confirmation recorded
+    against index 148 must not silently become a statement about a different
+    paragraph.
+
+    The identity is content plus provenance plus an occurrence ordinal. The
+    ordinal is not optional: `(source_file, locator, text_sha256)` alone collides
+    416 times in the 2,076 blocks of 10.1126/science.aat5031 (`p.79` /
+    "Developing nephron" occurs 22 times), 128 of 1,050 in aba4163 and 11 of 536
+    in the Nature paper, because a PDF locator is only a page.
+
+    **`section` is deliberately excluded.** It is the most-revised heuristic in
+    this package, and a confirmed fact about donor age has to survive a relabel.
+    Measured across the real `6a54ff7^ -> HEAD` parser change: including it would
+    have changed 21 of 1,717 ids in aat5031 and 2 of 882 in aba4163.
+
+    Ids are assigned here because this is the one place indices are assigned, so
+    no caller can forget one and not the other.
+    """
+    ordinals: dict = {}
     for offset, block in enumerate(blocks):
         block.index = start + offset
+        key = "\x00".join([
+            block.role, block.origin, block.source_file, block.locator, block.kind,
+            hashlib.sha256(block.text.encode("utf-8")).hexdigest(),
+        ])
+        ordinal = ordinals.get(key, 0)
+        ordinals[key] = ordinal + 1
+        block.block_id = hashlib.sha256(
+            f"{key}\x00{ordinal}".encode("utf-8")).hexdigest()[:16]
     return blocks
 
 
-def write_blocks(path, blocks: List[Block]) -> Path:
+def write_blocks(path, blocks: List[Block]) -> dict:
+    """Write the block list and describe what landed: `{path, sha256, lines}`.
+
+    The sha and the line count go into `extraction.json` so the cache can check
+    the file it is about to trust. Emptying a real 475 KB `blocks.jsonl` and
+    re-running used to give `cached: True, status: complete, totals.blocks: 532`
+    over zero lines on disk.
+    """
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    with target.open("w", encoding="utf-8") as handle:
+    digest = hashlib.sha256()
+    lines = 0
+    with target.open("wb") as handle:
         for block in blocks:
-            handle.write(json.dumps(block.to_dict(), ensure_ascii=False, sort_keys=True) + "\n")
-    return target
+            # allow_nan=False: `Infinity` and `NaN` are Python's JSON dialect,
+            # not JSON. A card built from a column holding Inf wrote
+            # `"max": Infinity` into a line that serde_json, Go's encoding/json,
+            # PostgreSQL jsonb and DuckDB all reject. Raising here means a future
+            # path that produces one fails at write time instead of shipping an
+            # artifact that is not what its extension says it is.
+            line = (json.dumps(block.to_dict(), ensure_ascii=False, sort_keys=True,
+                               allow_nan=False) + "\n").encode("utf-8")
+            handle.write(line)
+            digest.update(line)
+            lines += 1
+    return {"path": target, "sha256": digest.hexdigest(), "lines": lines}
+
+
+def blocks_sha256(path) -> Optional[str]:
+    """The sha of a `blocks.jsonl` on disk, or `None` when it is not there."""
+    target = Path(path)
+    if not target.exists():
+        return None
+    return hashlib.sha256(target.read_bytes()).hexdigest()
 
 
 def read_blocks(path) -> Iterator[dict]:

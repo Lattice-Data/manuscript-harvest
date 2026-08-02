@@ -34,6 +34,10 @@ class Limits:
     # -- files
     max_sheets: int = 30
     max_tables_per_file: int = 60
+    max_tables_per_sheet: int = 20
+    """One sheet can hold many blank-row-separated panels: `Figure 6` of
+    10.1126/sciimmunol.aba4163's data file holds ten. Beyond this the sheet's
+    later tables are counted in `tables_skipped` rather than dropped quietly."""
     max_blocks_per_file: int = 20000
     max_file_mb: int = 200
     min_paragraph_chars: int = 2
@@ -59,10 +63,26 @@ class Limits:
     min_main_text_chars: int = 2000
     """Below this a JATS extraction is treated as too thin and the PDF is used
     instead. Some deposited XML carries only front matter."""
+    # -- review
+    max_review_cards_per_article: int = 25
+    """Low-confidence table cards queued for a human per article. Beyond this the
+    overflow is counted in `review.queue_truncated` rather than dropped quietly:
+    "there were 25 to check" and "there were 25 of 60" are different facts."""
+
     min_pdf_text_chars: int = 200
     """Matches manuscript_harvest.fetch.validate: less than this means scanned images."""
     running_header_min_pages: int = 3
-    """A short line repeated on this many pages is a running head, not content."""
+    """A short line repeated in a page margin on this many pages is a running
+    head, not content."""
+    max_bounded_section_chars: int = 6000
+    """How far a heading that names a *statement* -- abstract, conclusions, data
+    availability -- may carry before `SectionTracker` abandons it.
+
+    Chosen against measurement rather than taste. The longest legitimate run seen
+    over the ground-truth papers is 4,653 characters (a Cell Press abstract plus
+    its highlights and eTOC blurb, 10.1016/j.xgen.2026.101304); the shortest
+    pathological one is 6,294. This sits between them. It decided a third of one
+    article's labels while being a module constant with no config key."""
 
     def to_dict(self) -> dict:
         return asdict(self)

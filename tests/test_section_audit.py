@@ -161,7 +161,34 @@ def test_the_cli_writes_json_when_asked(tmp_path, monkeypatch):
     (tmp_path / "10.1_x").mkdir()
     out = tmp_path / "report.json"
     assert section_audit.main(["--corpus-dir", str(tmp_path), "--json", str(out)]) == 0
-    assert json.loads(out.read_text())[0]["slug"] == "x"
+    written = json.loads(out.read_text())
+    assert written["reports"][0]["slug"] == "x"
+    assert written["skipped"] == []
+
+
+def test_articles_with_no_pair_are_named_before_the_headline(tmp_path, capsys):
+    """`if report is None: continue` made an article with no XML vanish from the
+    report, so the headline percentage read as corpus coverage when it was the
+    accuracy over whichever articles happened to have both renditions."""
+    from manuscript_harvest.fetch import store as store_mod
+
+    for name in ("10.1_scored", "10.1_nopair"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / store_mod.MANIFEST_NAME).write_text("{}")
+    real = section_audit.audit_article
+    section_audit.audit_article = lambda d, limits=None: (
+        None if d.name == "10.1_nopair" else
+        {"slug": d.name, "aligned": 4, "correct": 3, "accuracy": 0.75, "unaligned": 0,
+         "unaligned_chars": 0, "too_short_to_align": 0, "sections": {},
+         "confusions": [], "jats_paragraphs": 4, "pdf_paragraphs": 4})
+    try:
+        code = section_audit.main(["--corpus-dir", str(tmp_path), "--fail-under", "0.9"])
+    finally:
+        section_audit.audit_article = real
+    out = capsys.readouterr().out
+    assert "1 article(s) had no XML/PDF pair and were not scored: 10.1_nopair" in out
+    assert out.index("no XML/PDF pair") < out.index("aligned paragraphs agree")
+    assert code == 1, "--fail-under must fail the run, not just print"
 
 
 @pytest.mark.parametrize("size", [4, 8, 12])

@@ -13,15 +13,21 @@ supplement's `original_name`; JATS records the publisher's label for the same
 name. Joining them is free and it is the difference between a model seeing a
 filename and seeing "Supplementary Table 3: per-cell metadata".
 
-Citation markers are dropped. Left in, `<xref ref-type="bibr">` turns "as shown
-previously" into "as shown previously12,13", which is noise in a quote and worse
-in an evidence check. References themselves are dropped for the same reason:
-they are other people's findings, and a model asked for perturbations will
-happily take one from a reference title.
+Citation markers are dropped from prose. Left in, `<xref ref-type="bibr">` turns
+"as shown previously" into "as shown previously12,13", which is noise in a quote
+and worse in an evidence check. References themselves are dropped for the same
+reason: they are other people's findings, and a model asked for perturbations
+will happily take one from a reference title.
+
+They are *not* dropped from a table cell. In prose a citation is noise; in a cell
+it is the value. 10 of the 29 SOURCE cells in 10.1016/j.cell.2021.01.053's key
+resources table -- the one table this pipeline exists to read -- were destroyed
+by the same rule: `(Korsunsky et al., 2019)` became `()`.
 """
 
 import re
 import xml.etree.ElementTree as ET
+from collections import Counter
 from html.entities import name2codepoint
 from typing import Dict, List, Optional, Tuple
 
@@ -73,24 +79,91 @@ def _normalize_ws(text: str) -> str:
     return re.sub(r"\s+", " ", text.replace("\xa0", " ")).strip()
 
 
-def _inline_text(element) -> str:
-    """All text under `element`, minus citation markers."""
+#: Children that end a run of text. Without a boundary between them a `<td>`
+#: holding three `<p>`s reads as one value.
+_BLOCK_LEVEL = frozenset({"p", "list-item", "disp-quote", "sec", "title", "def",
+                          "term", "tr"})
+
+#: The boundary marker, carried through the whitespace collapse and swapped for
+#: the caller's separator at the end. A plain "; " inserted during the walk
+#: leaves `'; 0.798; ; 0.15;'` once the empty runs collapse; a sentinel does not.
+#: XML 1.0 forbids this codepoint in content, so no publisher file carries one.
+_SEP = "\x1f"
+_SEP_RUN = re.compile(r"\s*\x1f+\s*")
+
+#: What is left of `(<xref/>; <xref/>; <xref/>)` once the citations are gone.
+#: The lookbehind is load-bearing: it keeps `susie_rss()` and `HarmonyMatrix()`
+#: intact while removing `report ()`.
+_CITATION_HUSK = re.compile(r"(?<=\s)\(([,;&\s–—-]*)\)")
+_SPACE_BEFORE_PUNCT = re.compile(r"\s+([,;.)])")
+_DOUBLED_SEPARATOR = re.compile(r"([,;])(\s*[,;])+")
+_SEPARATOR_BEFORE_STOP = re.compile(r"[,;]+(?=[.)])")
+
+
+def _drop_citation_husk(match: "re.Match") -> str:
+    inside = match.group(1)
+    # `(-)` and `(–)` are real markers -- a negative gate, an absent value. An
+    # empty pair, or one holding only the separators between grouped citations,
+    # is not: it is what a dropped `<xref ref-type="bibr">` left behind.
+    if inside.strip() and not any(c in inside for c in ",;&"):
+        return match.group(0)
+    return ""
+
+
+def _tidy_citation_punctuation(text: str) -> str:
+    """Remove the punctuation a dropped citation group left behind.
+
+    Measured over the JATS blocks of 10.1016/j.cell.2021.01.053: 35 literal
+    `()`, 12 more `(` followed by a separator. One block read
+    `...severe symptoms (; ; ; ; , ). While recent studies...`. In
+    10.1038/s41467-023-40505-5: `into LD blocks using LDetect,.`
+    """
+    text = _CITATION_HUSK.sub(_drop_citation_husk, text)
+    text = _SPACE_BEFORE_PUNCT.sub(r"\1", text)
+    text = _DOUBLED_SEPARATOR.sub(r"\1", text)
+    text = _SEPARATOR_BEFORE_STOP.sub("", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _inline_text(element, block_sep: str = " ", keep_citations: bool = False) -> str:
+    """All text under `element`, minus citation markers.
+
+    `block_sep` is what separates block-level children. It is `"; "` for a table
+    cell: 24 of the 144 `td`/`th` in 10.1038/s41467-023-40505-5 hold more than
+    one block child, and Table 1's SNP PIP column read `0.7980.15` for two
+    values, which also flipped the column's dtype from number to mixed and cost
+    it its min/max/median.
+
+    `keep_citations` is True for a table cell. In prose a citation marker is
+    noise -- "as shown previously12,13" is worse in an evidence check than in a
+    quote -- but in a cell it *is* the value: 10 of the 29 SOURCE cells in
+    10.1016/j.cell.2021.01.053's key resources table were destroyed by dropping
+    it, `(Korsunsky et al., 2019)` becoming `()`.
+    """
     parts: List[str] = []
 
     def walk(node, is_root: bool) -> None:
-        if _tag(node) == "xref" and (node.get("ref-type") or "") == "bibr":
+        if not keep_citations and _tag(node) == "xref" \
+                and (node.get("ref-type") or "") == "bibr":
             if node.tail:
                 parts.append(node.tail)
             return
         if node.text:
             parts.append(node.text)
         for child in node:
-            walk(child, False)
+            if _tag(child) in _BLOCK_LEVEL:
+                parts.append(_SEP)
+                walk(child, False)
+                parts.append(_SEP)
+            else:
+                walk(child, False)
         if not is_root and node.tail:
             parts.append(node.tail)
 
     walk(element, True)
-    return _normalize_ws("".join(parts))
+    text = _SEP_RUN.sub(_SEP, "".join(parts).replace("\xa0", " ")).strip(_SEP)
+    text = re.sub(r"\s+", " ", text.replace(_SEP, block_sep)).strip()
+    return text if keep_citations else _tidy_citation_punctuation(text)
 
 
 _WRAPPERS = {"media", "graphic", "alternatives", "inline-supplementary-material"}
@@ -145,32 +218,59 @@ def _table_rows(table_element) -> List[List[str]]:
     `colspan` is not expanded. A spanning header cell therefore lands in one
     column rather than being repeated, which shifts nothing because the card
     profiles columns by position within each row as read.
+
+    A cell's block-level children are joined with `"; "`. In prose the boundary
+    between two paragraphs is a space; in a cell it is the boundary between two
+    values, and 10.1038/s41467-023-40505-5 Table 1 read `0.7980.15` without it.
     """
     rows: List[List[str]] = []
     for row in table_element.iter():
         if _tag(row) != "tr":
             continue
-        cells = [_inline_text(cell) for cell in row if _tag(cell) in {"th", "td"}]
+        cells = [_inline_text(cell, block_sep="; ", keep_citations=True)
+                 for cell in row if _tag(cell) in {"th", "td"}]
         if cells:
             rows.append(cells)
     return rows
 
 
 class _Walker:
-    def __init__(self, source_file: str, limits: Limits):
+    def __init__(self, source_file: str, limits: Limits, overrides=None):
         self.source_file = source_file
         self.limits = limits
+        self.overrides = overrides
         self.blocks: List[Block] = []
         self.supplement_labels: Dict[str, dict] = {}
         self.tables_seen = 0
+        self.blocks_capped = False
+        self.tables_capped = False
+        self.reference_list_dropped = False
         self.section_names: List[str] = []
+        self._visited: set = set()
+        """Elements already emitted, by `id()`. A `<p>` wrapping a `<table-wrap>`
+        is handled by the `p` branch and could then be handled again by the
+        generic float branch, giving two blocks with the same locator."""
+        self.title_stack: List[str] = []
+        """The headings enclosing whatever is being walked, outermost first.
+
+        `walk_section` has always known the full path and thrown it away, leaving
+        `section` -- one canonical name out of eleven -- as the only structure a
+        consumer could filter on. The tree is declared here, so recording it costs
+        nothing and is not a guess.
+        """
 
     def add(self, kind: str, text: str, section: Optional[str], locator: str,
             label: Optional[str] = None, table: Optional[dict] = None) -> None:
-        if not text or len(self.blocks) >= self.limits.max_blocks_per_file:
+        if not text:
+            return
+        if len(self.blocks) >= self.limits.max_blocks_per_file:
+            # `pdf.py` and `docxfile.py` both flag this; this parser stopped
+            # silently, so a capped article read as a short one.
+            self.blocks_capped = True
             return
         self.blocks.append(Block(kind=kind, text=text, source_file=self.source_file,
                                  origin="jats", locator=locator, section=section,
+                                 section_path=list(self.title_stack) or None,
                                  label=label, table=table))
 
     # -- containers
@@ -179,20 +279,32 @@ class _Walker:
         title = _inline_text(title_element) if title_element is not None else None
         section = sections_mod.normalize(title, element.get("sec-type")) or inherited
         if section in sections_mod.LOW_VALUE:
+            self.reference_list_dropped = True
             return
         if section and section not in self.section_names:
             self.section_names.append(section)
         if title:
-            self.add(HEADING, title, section, path)
-        self.walk_children(element, section, path, skip_title=True)
+            self.title_stack.append(title)
+        try:
+            if title:
+                self.add(HEADING, title, section, path)
+            self.walk_children(element, section, path, skip_title=True)
+        finally:
+            if title:
+                self.title_stack.pop()
 
     def walk_children(self, element, section: Optional[str], path: str,
                       skip_title: bool = False) -> None:
-        index = 0
+        # `[n]` in XPath counts children *of that tag*, not all children. Counting
+        # every child made 153 of the 168 body/back locators in
+        # 10.1038/s41467-023-40505-5 point at a different element, and only 76 of
+        # them resolve at all.
+        seen: Counter = Counter()
         for child in element:
             name = _tag(child)
-            index += 1
-            child_path = f"{path}/{name}[{index}]" if path else f"{name}[{index}]"
+            seen[name] += 1
+            child_path = (f"{path}/{name}[{seen[name]}]" if path
+                          else f"{name}[{seen[name]}]")
             if name == "title" and skip_title:
                 continue
             if name == "sec":
@@ -210,9 +322,16 @@ class _Walker:
                           "sec-meta", "notes", "fn-group", "def-list"}:
                 self.walk_children_one(child, section, child_path)
             elif name in {"ref-list", "back-ref-list"}:
+                # Deliberate: a model asked for perturbations will take one from
+                # a reference title. But `meta["sections"]` then disagrees with
+                # the sections actually in the file, so say it happened.
+                self.reference_list_dropped = True
                 continue
 
     def walk_children_one(self, child, section: Optional[str], path: str) -> None:
+        if id(child) in self._visited:
+            return
+        self._visited.add(id(child))
         name = _tag(child)
         if name == "table-wrap":
             self.add_table(child, section, path)
@@ -251,12 +370,20 @@ class _Walker:
             self.add(CAPTION, text, section, path, label=label)
             return
         if self.tables_seen >= self.limits.max_tables_per_file:
+            self.tables_capped = True
             return
         self.tables_seen += 1
+        forced = {}
+        if self.overrides is not None:
+            answer = self.overrides.header_for(self.source_file, path)
+            if answer is not None:
+                row = (answer.get("override") or {}).get("header_row")
+                forced = {"forced_header_row": row, "forced_headerless": row is None,
+                          "review_note": self.overrides.note_for(answer)}
         card = tables.build_card(
             rows, source_file=self.source_file, locator=path, limits=self.limits,
             title=label or "Table", caption=caption,
-            data_ref={"file": self.source_file, "xpath": path},
+            data_ref={"file": self.source_file, "xpath": path}, **forced,
         )
         if card is None:
             return
@@ -316,19 +443,30 @@ def _front_metadata(article, walker: "_Walker") -> dict:
     if lines:
         walker.add(METADATA, "\n".join(lines), None, "front/article-meta")
 
+    # Enumerated, not hard-coded: a Cell Press article carries a summary abstract
+    # and a graphical one, and `front/abstract` named both.
+    abstracts = 0
     for element in article_meta:
         if _tag(element) == "abstract":
-            walker.walk_children_one(element, sections_mod.ABSTRACT, "front/abstract")
+            abstracts += 1
+            walker.walk_children_one(element, sections_mod.ABSTRACT,
+                                     f"front/article-meta/abstract[{abstracts}]")
     return meta
 
 
 def blocks_from_jats(
-    data: bytes, source_file: str, limits: Limits
+    data: bytes, source_file: str, limits: Limits, overrides=None
 ) -> Tuple[List[Block], str, dict]:
-    """Parse one JATS/NXML file. Returns `(blocks, status, meta)`."""
+    """Parse one JATS/NXML file. Returns `(blocks, status, meta)`.
+
+    The walk is recursive and the depth of a publisher's `<sec>` tree is not
+    something this module gets to choose, so `RecursionError` is caught here and
+    reported as an unreadable file. `extractor.extract_bytes` has a generic guard
+    behind this one; the point of catching here is that the reason names XML.
+    """
     try:
         root = ET.fromstring(_prepare(data))
-    except ET.ParseError as e:
+    except (ET.ParseError, ValueError) as e:
         return [], UNREADABLE, {"reason": f"XML parse error: {e}"}
 
     article = root if _tag(root) == "article" else next(
@@ -336,21 +474,29 @@ def blocks_from_jats(
     if article is None:
         return [], UNREADABLE, {"reason": "no <article> element"}
 
-    walker = _Walker(source_file, limits)
-    meta = _front_metadata(article, walker)
-
-    for child in article:
-        name = _tag(child)
-        if name == "body":
-            walker.walk_children(child, None, "body")
-        elif name == "back":
-            walker.walk_children(child, sections_mod.BACK_MATTER, "back")
-        elif name == "floats-group":
-            walker.walk_children(child, None, "floats-group")
+    walker = _Walker(source_file, limits, overrides)
+    try:
+        meta = _front_metadata(article, walker)
+        for child in article:
+            name = _tag(child)
+            if name == "body":
+                walker.walk_children(child, None, "body")
+            elif name == "back":
+                walker.walk_children(child, sections_mod.BACK_MATTER, "back")
+            elif name == "floats-group":
+                walker.walk_children(child, None, "floats-group")
+    except (ValueError, RecursionError) as e:
+        return [], UNREADABLE, {"reason": f"{type(e).__name__}: {e}"}
 
     meta["sections"] = walker.section_names
     meta["supplement_labels"] = walker.supplement_labels
     meta["tables"] = walker.tables_seen
+    if walker.blocks_capped:
+        meta["blocks_capped"] = True
+    if walker.tables_capped:
+        meta["tables_capped"] = True
+    if walker.reference_list_dropped:
+        meta["reference_list_dropped"] = True
     if not walker.blocks:
         return [], NO_TEXT, meta
     return walker.blocks, OK, meta

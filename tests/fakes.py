@@ -777,13 +777,18 @@ def make_article(directory, fulltext=None, xml=None, supplements=(), landing=Non
         "fulltext": {"status": "not_found", "path": None},
         "fulltext_xml": None, "supplementary": [],
     }
+    def sha(data: bytes) -> str:
+        import hashlib
+        return hashlib.sha256(data).hexdigest()
+
     if fulltext is not None:
         (directory / store.FULLTEXT_PDF).write_bytes(fulltext)
         record["fulltext"] = {"path": store.FULLTEXT_PDF, "status": "ok",
-                             "bytes": len(fulltext)}
+                             "bytes": len(fulltext), "sha256": sha(fulltext)}
     if xml is not None:
         (directory / store.FULLTEXT_XML).write_bytes(xml)
-        record["fulltext_xml"] = {"path": store.FULLTEXT_XML, "bytes": len(xml)}
+        record["fulltext_xml"] = {"path": store.FULLTEXT_XML, "bytes": len(xml),
+                                  "sha256": sha(xml)}
     if landing is not None:
         (directory / store.LANDING_HTML).write_bytes(landing)
     for index, entry in enumerate(supplements, start=1):
@@ -794,8 +799,8 @@ def make_article(directory, fulltext=None, xml=None, supplements=(), landing=Non
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content)
         record["supplementary"].append({
-            "path": stored, "bytes": len(content), "index": index,
-            "original_name": original, "content_type": "",
+            "path": stored, "bytes": len(content), "sha256": sha(content),
+            "index": index, "original_name": original, "content_type": "",
         })
     store.write_manifest(directory, record)
     return directory

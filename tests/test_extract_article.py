@@ -7,6 +7,8 @@ emptiness it cannot account for: a figure image has no text, a scanned PDF needs
 OCR, and a bot-check landing page is not an article.
 """
 
+import json
+
 import pytest
 
 from manuscript_harvest.extract import extractor
@@ -93,6 +95,68 @@ def test_landing_page_only_is_never_complete(tmp_path):
     assert "not the article" in record["main_text"]["note"]
 
 
+def test_a_thin_main_text_is_not_complete_and_says_there_was_no_fallback(tmp_path):
+    """`main_usable` was `status == ok and chars > 0`, so an article with only a
+    thin JATS body and no PDF came out `complete` with `main_text.chars: 185` --
+    and carried the note "fell back to the PDF", about a PDF that does not
+    exist, because that note was set before anything checked. The four complete
+    articles in this corpus carry 89,151 / 88,262 / 43,746 / 94,014 characters,
+    so the gate flips none of them."""
+    directory = _article(tmp_path, xml=jats_article(
+        "<sec><title>Results</title><p>Short.</p></sec>"))
+    record = extract_article(directory, limits=L)
+    assert record["main_text"]["source"] == "jats"
+    assert record["main_text"]["thin"] is True
+    assert record["main_text"]["chars"] < L.min_main_text_chars
+    assert record["status"] == "partial"
+    assert "no PDF to fall back to" in record["main_text"]["note"]
+    assert "fell back to the PDF" not in record["main_text"]["note"]
+
+
+def test_a_substantial_main_text_is_not_marked_thin(tmp_path):
+    directory = _article(tmp_path, xml=jats_article(METHODS_BODY))
+    record = extract_article(directory, limits=L)
+    assert record["main_text"]["thin"] is False
+    assert record["status"] == "complete"
+
+
+def test_a_fetch_verdict_of_lost_supplements_blocks_complete(tmp_path):
+    """`extract_article` copied `record["status"]` into `fetch_status` and never
+    read `record["supplementary_status"]`. An article whose manifest says
+    `expected_but_missing` -- with a problem line saying a tier listed
+    supplementary material and no tier retrieved it -- extracted as
+    `status: complete, supplementary: [], suppl[-]`."""
+    directory = _article(tmp_path, xml=jats_article(METHODS_BODY))
+    record = store.read_manifest(directory)
+    record["supplementary_status"] = "expected_but_missing"
+    store.write_manifest(directory, record)
+
+    result = extract_article(directory, limits=L, force=True)
+    assert result["fetch_supplementary_status"] == "expected_but_missing"
+    assert extractor.SUPPLEMENTS_MISSING in result["caveats"]
+    assert result["status"] == "partial"
+    assert "caveats[supplements_expected_but_missing]" in extractor.summarize(result)
+
+
+def test_an_unverified_supplement_set_is_a_caveat_not_a_defect(tmp_path):
+    """`fetched_unverified` is 2 of the 6 articles in this corpus. It is worth
+    saying and it is not a reason to withhold `complete`."""
+    directory = _article(tmp_path, xml=jats_article(METHODS_BODY))
+    record = store.read_manifest(directory)
+    record["supplementary_status"] = "fetched_unverified"
+    store.write_manifest(directory, record)
+
+    result = extract_article(directory, limits=L, force=True)
+    assert result["caveats"] == [extractor.SUPPLEMENTS_UNVERIFIED]
+    assert result["status"] == "complete"
+
+
+def test_every_caveat_is_in_the_closed_vocabulary(tmp_path):
+    directory = _article(tmp_path, landing=LANDING_INTERSTITIAL)
+    for name in extract_article(directory, limits=L)["caveats"]:
+        assert name in extractor.CAVEATS
+
+
 def test_bot_check_landing_page_gives_a_failed_article(tmp_path):
     """Nine Elsevier articles in this corpus are in exactly this state."""
     directory = _article(tmp_path, landing=LANDING_INTERSTITIAL)
@@ -176,6 +240,56 @@ def test_supplement_labels_are_joined_from_the_jats(tmp_path):
     labelled = [b for b in read_blocks(directory / EXTRACT_DIR / BLOCKS_NAME)
                 if b["source_file"].endswith("MOESM3_ESM.xlsx")]
     assert labelled and all(b["label"] for b in labelled)
+
+
+def test_a_shared_manifest_label_is_rejected_and_a_unique_one_survives(tmp_path):
+    """`label: "Download"` was on 1,989 of the 2,076 blocks of
+    10.1126/science.aat5031 and `label: "Europe PMC supplementary archive"` on
+    347 of 536 in 10.1038/s41467-023-40505-5, straight from the manifest. Both
+    are the fetch transport's name for the request, and a label used by two
+    entries of the same article cannot be a per-file name."""
+    directory = _article(
+        tmp_path, xml=jats_article(METHODS_BODY),
+        supplements=[("a.xlsx", make_xlsx({"S": [["a"], [1]]})),
+                     ("b.xlsx", make_xlsx({"S": [["b"], [2]]})),
+                     ("c.xlsx", make_xlsx({"S": [["c"], [3]]}))])
+    manifest = store.read_manifest(directory)
+    manifest["supplementary"][0]["label"] = "Download"
+    manifest["supplementary"][1]["label"] = "Download"
+    manifest["supplementary"][2]["label"] = "Table S1. Primer sequences"
+    store.write_manifest(directory, manifest)
+
+    record = extract_article(directory, limits=L, force=True)
+    assert record["supplement_label_rejected"] == ["Download"]
+    by_path = {e["path"]: e for e in record["supplementary"]}
+    entries = [by_path[e["path"]] for e in manifest["supplementary"]]
+    assert [e["label_source"] for e in entries] == ["none", "none", "manifest"]
+    assert [e.get("label") for e in entries] == [None, None, "Table S1. Primer sequences"]
+    labels = {b.get("label") for b in read_blocks(directory / EXTRACT_DIR / BLOCKS_NAME)}
+    assert "Download" not in labels
+
+
+def test_a_jats_caption_becomes_the_label_and_reaches_the_blocks(tmp_path):
+    """`extract_bytes` accepted a caption and passed it only to `FileResult`, so
+    "Table S7. Cytokine analysis, related to Figure 6" reached extraction.json
+    and none of that file's blocks. 12 of the 25 ok supplements here carry one."""
+    springer = SPRINGER_SUPPLEMENT.replace(
+        "Supplementary Table 3",
+        "Table S7. Cytokine analysis, related to Figure 6")
+    directory = _article(
+        tmp_path, xml=jats_article(METHODS_BODY + springer),
+        supplements=[("41467_2023_40505_MOESM3_ESM.xlsx",
+                      make_xlsx({"cytokine_analysis": [["cell", "IL17"], ["c1", 3]]}))])
+    record = extract_article(directory, limits=L)
+    entry = record["supplementary"][0]
+    assert entry["label_source"] == "jats_caption"
+    assert entry["label"] == "Table S7"
+    block = next(b for b in read_blocks(directory / EXTRACT_DIR / BLOCKS_NAME)
+                 if b["kind"] == TABLE)
+    # The label beats the sheet name, and the caption is in the card a model reads.
+    assert block["label"] == "Table S7"
+    assert block["caption"] == "Table S7. Cytokine analysis, related to Figure 6"
+    assert "Caption: Table S7. Cytokine analysis" in block["text"]
 
 
 def test_a_missing_recorded_file_is_reported(tmp_path):
@@ -319,6 +433,74 @@ def test_a_runaway_paragraph_is_truncated_and_the_note_says_so(tmp_path):
     assert "probably data rather than prose" in entry["reason"]
 
 
+# -- a parser that dies must cost one file, not the run ----------------------
+
+#: 4,000 nested `<sec>` elements. The walker is recursive, so this defeats it
+#: well before CPython's limit is anywhere near the article's real depth.
+DEEP_XML = (b"<article><body>" + b"<sec>" * 4000
+            + b"<p>Nuclei were isolated from frozen tissue.</p>"
+            + b"</sec>" * 4000 + b"</body></article>")
+
+
+def test_a_deeply_nested_xml_is_unreadable_not_a_crash(tmp_path):
+    """Measured: this supplement raised RecursionError straight out of
+    `extract_article`, leaving neither extraction.json nor blocks.jsonl on disk."""
+    directory = _article(tmp_path, xml=jats_article(METHODS_BODY),
+                         supplements=[("deep.xml", DEEP_XML)])
+    record = extract_article(directory, limits=L)
+    entry = record["supplementary"][0]
+    assert entry["status"] == "unreadable"
+    assert "RecursionError" in entry["note"]
+    assert (directory / EXTRACT_DIR / BLOCKS_NAME).exists()
+
+
+def test_a_supplement_that_raises_becomes_parser_error_not_a_crash(tmp_path, monkeypatch):
+    """The backstop behind the per-parser guards: whatever a parser does, the
+    article still gets a record that names the file it happened in."""
+    def explode(*args, **kwargs):
+        raise KeyError("no such glyph")
+
+    monkeypatch.setattr(extractor.docxfile, "blocks_from_docx", explode)
+    directory = _article(tmp_path, xml=jats_article(METHODS_BODY),
+                         supplements=[("legends.docx",
+                                       make_docx([("paragraph", "Figure S1.")]))])
+    record = extract_article(directory, limits=L)
+    entry = record["supplementary"][0]
+    assert entry["status"] == extractor.PARSER_ERROR
+    assert entry["note"] == "KeyError: 'no such glyph'"
+    # Not benign: a file that crashed the parser is a file whose text is missing.
+    assert entry["path"] in record["unextracted_text_files"]
+    assert record["status"] == "partial"
+
+
+def test_cmd_all_survives_one_crashing_article(tmp_path, capsys):
+    """`cmd_all` calls the extractor in a bare loop; one bad article took the
+    whole corpus run with it."""
+    make_article(tmp_path / "a", xml=jats_article(METHODS_BODY))
+    make_article(tmp_path / "b", xml=jats_article(METHODS_BODY), doi="10.9999/second")
+    config = tmp_path / "config.yaml"
+    config.write_text(f"extract:\n  corpus_dir: {tmp_path}\n")
+
+    real = extractor.extract_article
+    calls = {"n": 0}
+
+    def flaky(directory, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("boom")
+        return real(directory, **kwargs)
+
+    extractor.extract_article = flaky
+    try:
+        assert main(["--config", str(config), "all"]) == 1
+    finally:
+        extractor.extract_article = real
+    err = capsys.readouterr().err
+    assert "crashed: RuntimeError: boom" in err
+    assert "crashed=1" in err
+    assert calls["n"] == 2, "the second article was never reached"
+
+
 # -- the record and the artifacts -------------------------------------------
 
 def test_extraction_writes_blocks_markdown_and_a_record(tmp_path):
@@ -368,6 +550,131 @@ def test_a_changed_manifest_invalidates_the_cache(tmp_path):
     record = store.read_manifest(directory)
     record["fetched_at"] = "2026-08-01T00:00:00+00:00"
     store.write_manifest(directory, record)
+    assert extract_article(directory, limits=L).get("cached") is None
+
+
+def test_an_unlabelled_body_is_reported_even_when_the_article_is_complete(tmp_path):
+    """10.1126/science.aat5031 is `complete` with 52 of its 87 main-text blocks
+    carrying no section, the whole Results and Discussion among them, while
+    `totals.sections` lists `methods` because every methods block comes from a
+    supplementary PDF. A filter for `section == methods` over that main text
+    returns nothing and the record used to say nothing was wrong."""
+    page = ("Tissue-resident immune cells are important for organ homeostasis. "
+            "We profiled the mature and developing human kidney. ") * 20
+    directory = _article(tmp_path, fulltext=make_pdf_pages([[page]]))
+    record = extract_article(directory, limits=L)
+    report = record["main_text"]["section_labelling"]
+    assert record["status"] == "complete"
+    assert report["method"] == "heuristic"
+    assert report["confidence"] == "none"
+    assert report["body_sections_missing"] == ["methods", "results"]
+    assert "no body section label" in report["why"]
+
+
+def test_declared_sections_are_not_scored_as_a_heuristic(tmp_path):
+    directory = _article(tmp_path, xml=jats_article(METHODS_BODY))
+    report = extract_article(directory, limits=L)["main_text"]["section_labelling"]
+    assert report["method"] == "declared" and report["confidence"] == "declared"
+    assert "methods" in report["body_sections_found"]
+
+
+def test_cli_prints_the_section_labelling_warning(tmp_path, capsys):
+    page = ("Tissue-resident immune cells are important for organ homeostasis. "
+            "We profiled the mature and developing human kidney. ") * 20
+    _article(tmp_path, fulltext=make_pdf_pages([[page]]))
+    config = tmp_path / "config.yaml"
+    config.write_text(f"extract:\n  corpus_dir: {tmp_path}\n")
+    main(["--config", str(config), "one", DOI])
+    assert "section labelling is none" in capsys.readouterr().err
+    main(["--config", str(config), "status"])
+    err = capsys.readouterr().err
+    assert "sect=none" in err
+    assert "main-text section labelling: none=1" in err
+
+
+def test_the_record_carries_the_counts_a_review_queue_needs(tmp_path):
+    """The strongest triage signal -- `header_confidence == "low"` -- lived only
+    inside blocks.jsonl, so no queue could be computed from the record at all."""
+    directory = _article(
+        tmp_path, xml=jats_article(METHODS_BODY),
+        supplements=[("s1.xlsx", make_xlsx({"S": [["gene", "symbol"],
+                                                  ["TP53", "p53"]]})),
+                     ("url", make_xlsx({"T": [["a", "b"], [1, 2]]}))])
+    signals = extract_article(directory, limits=L)["review_signals"]
+    assert signals["tables_total"] == 2
+    assert signals["tables_header_low"] == 1, "all-text under all-text headers"
+    assert signals["main_text_blocks"] > 0
+    assert signals["jats_reference_available"] is True
+    assert signals["supplements_sniffed"] == \
+        [next(e["path"] for e in store.read_manifest(directory)["supplementary"]
+              if e["path"].endswith("_url"))]
+
+
+def test_the_record_names_the_running_lines_it_deleted(tmp_path):
+    """`meta["running_lines_dropped"]` was set by the parser but was missing from
+    the allow-list, so it never reached extraction.json and nothing outside one
+    test could see that a third of a file's blocks had been deleted."""
+    body = ("Nuclei were isolated from frozen tissue and sequenced on a NovaSeq "
+            "6000 instrument at the core facility. ")
+    directory = _article(tmp_path, fulltext=make_pdf_pages(
+        [["SCIENCE IMMUNOLOGY | RESEARCH ARTICLE", body * 3]] * 4))
+    record = extract_article(directory, limits=L)
+    main = record["main_text"]
+    assert main["running_lines_dropped"] >= 4
+    assert main["running_lines"][0]["text"] == "SCIENCE IMMUNOLOGY | RESEARCH ARTICLE"
+    assert main["running_lines"][0]["pages"] == 4
+
+
+def test_a_truncated_blocks_file_is_re_extracted_not_trusted(tmp_path):
+    """The cache used to test only that blocks.jsonl existed. Emptying a real
+    475 KB one and re-running gave `cached: True, status: complete,
+    totals.blocks: 532` over zero lines on disk."""
+    directory = _article(tmp_path, xml=jats_article(METHODS_BODY))
+    first = extract_article(directory, limits=L)
+    assert first["blocks_lines"] == first["totals"]["blocks"]
+    blocks_file = directory / EXTRACT_DIR / BLOCKS_NAME
+    blocks_file.write_text("")
+
+    again = extract_article(directory, limits=L)
+    assert again.get("cached") is None
+    assert again["problems"] == [f"{BLOCKS_NAME} did not match the hash in "
+                                 f"{extractor.EXTRACTION_NAME}; re-extracted"]
+    assert len(list(read_blocks(blocks_file))) == again["totals"]["blocks"] > 0
+    # Once repaired, the article goes back to being cached rather than looping.
+    assert extract_article(directory, limits=L).get("cached") is True
+
+
+def test_a_record_without_a_blocks_hash_is_re_extracted_once(tmp_path):
+    """Every extraction written before this check has no `blocks_sha256`. That
+    counts as a mismatch, so the corpus repairs itself on the next run."""
+    directory = _article(tmp_path, xml=jats_article(METHODS_BODY))
+    extract_article(directory, limits=L)
+    path = directory / EXTRACT_DIR / extractor.EXTRACTION_NAME
+    stale = json.loads(path.read_text())
+    stale.pop("blocks_sha256")
+    path.write_text(json.dumps(stale))
+    assert extract_article(directory, limits=L).get("cached") is None
+    assert extract_article(directory, limits=L).get("cached") is True
+
+
+def test_a_changed_limit_invalidates_the_cache(tmp_path):
+    """`limits` was recorded in the record but was not part of the key, so
+    editing `max_scan_rows` in config.yaml reused an extraction made under the
+    old cap."""
+    directory = _article(tmp_path, xml=jats_article(METHODS_BODY))
+    extract_article(directory, limits=Limits(max_scan_rows=5000))
+    assert extract_article(directory, limits=Limits(max_scan_rows=5000)).get("cached") is True
+    assert extract_article(directory, limits=Limits(max_scan_rows=10)).get("cached") is None
+
+
+def test_a_changed_parser_source_invalidates_the_cache(tmp_path, monkeypatch):
+    """`sections.py` changed materially twice under the same `"0.1.0"`, and 21
+    blocks of 10.1126/science.aat5031 got a different section out of it. Until
+    this key moved with the source, `--force` was the only way to see a fix."""
+    directory = _article(tmp_path, xml=jats_article(METHODS_BODY))
+    extract_article(directory, limits=L)
+    assert extract_article(directory, limits=L).get("cached") is True
+    monkeypatch.setattr(extractor, "source_fingerprint", lambda: "0123456789abcdef")
     assert extract_article(directory, limits=L).get("cached") is None
 
 
@@ -430,6 +737,42 @@ def test_cli_one_and_show_run_offline(tmp_path, capsys):
 
     assert main(["--config", str(config), "status", "--quiet"]) == 0
     assert "1/1 articles extracted" in capsys.readouterr().err
+
+
+def test_the_table_command_reprints_the_rows_the_card_describes(tmp_path, capsys):
+    """`data_ref` is a contract, not a comment: the card says which file, which
+    sheet and which rows, and this re-opens the source at that offset. Nothing in
+    the repo could do that before, and `data_ref` was not sufficient to -- no
+    scan window and no file hash."""
+    _article(tmp_path, xml=jats_article(METHODS_BODY),
+             supplements=[("s1.xlsx", make_xlsx({"Donors": [
+                 ["donor", "age", "sex"], ["D1", 44, "F"], ["D2", 61, "M"]]}))])
+    config = tmp_path / "config.yaml"
+    config.write_text(f"extract:\n  corpus_dir: {tmp_path}\n")
+    assert main(["--config", str(config), "one", DOI]) == 0
+    capsys.readouterr()
+
+    assert main(["--config", str(config), "table", DOI, "--file", "s1.xlsx"]) == 0
+    out = capsys.readouterr().out
+    assert "header (row 1): donor | age | sex" in out
+    assert "2: D1 | 44 | F" in out
+    assert "3: D2 | 61 | M" in out
+
+
+def test_the_table_command_says_when_the_source_changed_under_the_card(tmp_path, capsys):
+    directory = _article(
+        tmp_path, xml=jats_article(METHODS_BODY),
+        supplements=[("s1.xlsx", make_xlsx({"D": [["a", "b"], [1, 2]]}))])
+    config = tmp_path / "config.yaml"
+    config.write_text(f"extract:\n  corpus_dir: {tmp_path}\n")
+    main(["--config", str(config), "one", DOI])
+    record = store.read_manifest(directory)
+    (directory / record["supplementary"][0]["path"]).write_bytes(
+        make_xlsx({"D": [["a", "b"], [9, 9]]}))
+    capsys.readouterr()
+
+    main(["--config", str(config), "table", DOI, "--file", "s1.xlsx"])
+    assert "the source file has changed" in capsys.readouterr().err
 
 
 def test_cli_reports_an_unknown_article(tmp_path, capsys):

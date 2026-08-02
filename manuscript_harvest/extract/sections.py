@@ -22,6 +22,8 @@ was looking for while reporting a confident answer.
 import re
 from typing import List, Optional, Tuple
 
+from .limits import Limits
+
 ABSTRACT = "abstract"
 INTRODUCTION = "introduction"
 METHODS = "methods"
@@ -61,10 +63,18 @@ _ALIASES: List[Tuple[str, str]] = [
     # Methods section of both went unrecognised, leaving 69 and 51 main-text blocks
     # unlabelled -- and in a STAR Methods paper the key resources table, which is
     # where the library kit and every antibody are written down, sits under it.
-    (METHODS, r"(?:online|extended|supplementar\w+|detailed|expanded)?\s*"
+    # Every addition below is a real top-level heading from a file in this corpus
+    # that `normalize` returned None for.
+    (METHODS, r"(?:online|extended|supplement(?:al|ary)|detailed|expanded)?\s*"
               r"(?:star\s*" + _STAR + r"?\s*)?(?:materials?\s+and\s+)?methods?"
               r"|methods?\s+and\s+materials?"
               r"|experimental\s+(?:procedures?|methods?|design|model)"
+              # Cell Press STAR Methods sub-headings, 10.1016/j.cell.2021.01.053 p.18
+              r"|experimental\s+model(?:\s+and\s+subject\s+details?)?"
+              r"|quantification\s+and\s+statistical\s+analysis"
+              r"|supplement(?:al|ary)\s+experimental\s+procedures?"
+              # Nature's short methods block, e.g. 10.1038/s41586-020-2157-4
+              r"|methods?\s+summary"
               r"|materials?\s+and\s+methods?"
               r"|method\s+details?"
               r"|star\s*" + _STAR + r"?\s*methods?"),
@@ -73,12 +83,20 @@ _ALIASES: List[Tuple[str, str]] = [
     (CONCLUSIONS, r"conclusions?|concluding\s+remarks"),
     (FIGURE_LEGENDS, r"(?:supplementary\s+|extended\s+data\s+)?figure\s+legends?"
                      r"|legends?\s+(?:to|for)\s+figures?"),
-    (SUPPLEMENTARY, r"supplementary\s+(?:information|material|data|notes?|methods?|results?)"
+    # Cell Press writes "Supplemental Information", not "Supplementary".
+    (SUPPLEMENTARY, r"supplement(?:al|ary)\s+"
+                    r"(?:information|material|data|notes?|methods?|results?)"
                     r"|extended\s+data|supporting\s+information"),
-    (DATA_AVAILABILITY, r"(?:data|code|materials?|software)\s+(?:and\s+\w+\s+)?availability"
-                        r"|availability\s+of\s+(?:data|code)"
+    (DATA_AVAILABILITY, r"(?:(?:data|code|materials?|software)\s+(?:and\s+\w+\s+)?availability"
+                        r"|availability\s+of\s+(?:data|code)(?:\s+and\s+materials?)?)"
+                        r"(?:\s+statements?)?"
                         r"|accession\s+(?:codes?|numbers?)"),
-    (REFERENCES, r"references?|bibliography|literature\s+cited|works\s+cited"),
+    # `references and notes` must come first: `normalize` would backtrack past a
+    # bad ordering because of the `$` anchor, but `_leading_patterns` has no
+    # anchor, so with the bare `references?` first a glued Science bibliography
+    # splits as heading "REFERENCES" and rest "AND NOTES 1. K. W. Wucherpfennig".
+    (REFERENCES, r"references?\s+and\s+notes"
+                 r"|references?|bibliography|literature\s+cited|works\s+cited"),
     (BACK_MATTER, r"acknowledge?ments?|author\s+contributions?|competing\s+interests?"
                   r"|conflicts?\s+of\s+interest|funding|ethics\s+\w+|declarations?"
                   r"|additional\s+information|reporting\s+summary|abbreviations"),
@@ -101,13 +119,22 @@ _MAX_HEADING_CHARS = 120
 """Longer than this and it is a sentence that happens to start with a keyword."""
 
 
+#: Optional section numbering ("2.", "2.1)", "IV.") or a bullet glyph. The bare
+#: `d` is Cell Press's bullet as PyMuPDF renders it: page 18 of
+#: 10.1016/j.cell.2021.01.053 emits `d KEY RESOURCES TABLE`,
+#: `d EXPERIMENTAL MODEL AND SUBJECT DETAILS`, `d METHOD DETAILS` and
+#: `d QUANTIFICATION AND STATISTICAL ANALYSIS` -- 9 such blocks in that file. It
+#: is safe only because the body must still match in full afterwards, so the four
+#: bulleted highlight lines on page 2 ("d Detailed COVID-19 immune landscape
+#: depicted by") are still not headings.
+_HEADING_PREFIX = r"(?:(?:\d+(?:\.\d+)*|[IVXLC]+|[d●▪•⁃])\s*[.)]?\s*)?"
+
+
 def _compiled() -> List[Tuple[str, re.Pattern]]:
     out = []
     for name, body in _ALIASES:
-        # Optional section numbering ("2.", "2.1)", "IV."), optional trailing colon.
         out.append((name, re.compile(
-            rf"^\s*(?:(?:\d+(?:\.\d+)*|[IVXLC]+)\s*[.)]?\s*)?(?:{body})\s*[:.]?\s*$",
-            re.IGNORECASE)))
+            rf"^\s*{_HEADING_PREFIX}(?:{body})\s*[:.]?\s*$", re.IGNORECASE)))
     return out
 
 
@@ -165,7 +192,13 @@ def _leading_patterns() -> List[Tuple[str, re.Pattern]]:
         # The heading itself is case-insensitive, the lookahead deliberately is
         # NOT: under a global re.IGNORECASE, `[A-Z]` also matches lower case, and
         # the "followed by a capital" guard silently stops guarding anything.
-        out.append((name, re.compile(rf"^\s*(?i:{body})\b\s*[:.]?\s+(?=[A-Z])")))
+        #
+        # A digit counts as the start of what follows, because a reference list
+        # starts with one. With `[A-Z]` alone, `REFERENCES AND NOTES 1. K. W.
+        # Wucherpfennig...` on page 83 of 10.1126/science.aat5031's supplement
+        # could only split as heading `REFERENCES` and rest `AND NOTES 1. K. W.`,
+        # leaving 19,265 characters of bibliography glued to the first citation.
+        out.append((name, re.compile(rf"^\s*(?i:{body})\b\s*[:.]?\s+(?=[A-Z0-9])")))
     return out
 
 
@@ -230,13 +263,13 @@ def looks_like_citation(text: str) -> bool:
     return bool(_CITATION.search(text))
 
 
-MAX_BOUNDED_SECTION_CHARS = 6000
+MAX_BOUNDED_SECTION_CHARS = Limits().max_bounded_section_chars
 """How far a `BOUNDED_SECTIONS` heading may carry before it is abandoned.
 
-Chosen against measurement rather than taste. The longest *legitimate* run seen
-over the ground-truth papers is 4,653 characters -- a Cell Press abstract plus its
-highlights and eTOC blurb, in 10.1016/j.xgen.2026.101304 -- and the shortest
-pathological one is 6,294. This sits between them.
+The number itself lives in `Limits.max_bounded_section_chars`, with the
+measurement that chose it, so it is configurable and so it is recorded in every
+extraction's `limits` block. This alias is the default for a `SectionTracker`
+constructed without one.
 """
 
 
@@ -286,7 +319,10 @@ class SectionTracker:
     genuine citation after a stray line is still labelled.
     """
 
-    def __init__(self, max_bounded_chars: int = MAX_BOUNDED_SECTION_CHARS):
+    def __init__(self, max_bounded_chars: Optional[int] = None,
+                 limits: Optional[Limits] = None):
+        if max_bounded_chars is None:
+            max_bounded_chars = (limits or Limits()).max_bounded_section_chars
         self.max_bounded_chars = max_bounded_chars
         self.current: Optional[str] = None
         self.seen: List[str] = []
@@ -295,10 +331,27 @@ class SectionTracker:
         """Bounded sections that ran too long to keep claiming."""
         self.withheld = 0
         """Blocks under a LOW_VALUE heading that did not look like its content."""
+        self.reopens_refused: List[str] = []
+        """Abandoned sections a later heading of the same name tried to reopen."""
         self._carried = 0
 
     def heading(self, name: str) -> Optional[str]:
-        """Open `name` as the current section, and return it for the heading block."""
+        """Open `name` as the current section, and return it for the heading block.
+
+        An abandoned section stays abandoned. Measured on 10.1126/science.aat5031:
+        `abstract` runs past its budget at block 33, and then block 70 -- the
+        heading `One Sentence Summary`, an ABSTRACT alias -- reopened it, so
+        blocks 70-85 came back labelled `abstract`: 16 blocks and 6,272
+        characters, including four figure legends totalling 2,844 characters
+        beginning "Fig. 1. Mapping the spatial and temporal architecture of the
+        mature and developing human kidney". Meanwhile the record said "the
+        blocks after it are left unlabelled", which was false for 16 of them.
+        """
+        if name in self.abandoned:
+            self.current = None
+            if name not in self.reopens_refused:
+                self.reopens_refused.append(name)
+            return None
         self.current = name
         self._carried = 0
         if name not in self.seen:
@@ -344,4 +397,8 @@ class SectionTracker:
             parts.append(
                 f"{self.withheld} block(s) under a low-value heading did not look like "
                 f"its content and were left unlabelled rather than dropped with it")
+        if self.reopens_refused:
+            parts.append(
+                f"a later heading tried to reopen {', '.join(self.reopens_refused)} "
+                f"after it had been abandoned; it was left unlabelled instead")
         return "; ".join(parts) or None

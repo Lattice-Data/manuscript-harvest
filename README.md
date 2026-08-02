@@ -377,6 +377,7 @@ than re-running.
     manuscript-extract status             # coverage across the corpus
     manuscript-extract show <doi> --section methods
     manuscript-extract show <doi> --kind table --full
+    manuscript-extract table <doi> --file mmc7.xlsx   # the card's real rows
 
 Offline: it reads only what the acquisition stage already wrote. Output lands
 beside the article, so an eviction removes it along with the rest of the payload:
@@ -412,6 +413,20 @@ Two things a single concatenated blob cannot do:
 same bytes twice produces a byte-identical file. That makes an extraction safe to
 hash and lets a parser change be reviewed as a diff.
 
+### What makes `all` re-extract
+
+`extraction.json` carries an `extraction_key`: a hash over the manifest sha, the
+extractor version, a fingerprint of this package's own `*.py` source, the
+effective `limits`, and the PyMuPDF/openpyxl/Python versions. `all` reuses a
+cached extraction only when that key still matches, so a parser edit or a
+`config.yaml` cap change invalidates the corpus by itself. The pieces stay in the
+record separately, so a human can see which of them moved.
+
+Before this key existed, `extractor_version` had been bumped once — by a rename —
+while `sections.py` changed materially twice. Extracting 10.1126/science.aat5031
+across those changes gives 21 blocks a different `section` at the same version, so
+`--force` was the only thing that had ever picked up a parser fix.
+
 ### JATS XML first, PDF second, landing page last
 
 40 of the 63 articles here carry Europe PMC's `fulltext.nxml` next to the PDF, and
@@ -420,6 +435,17 @@ happens to sit alone, tables are real tables, and `<supplementary-material>`
 labels turn an opaque `41467_2023_40505_MOESM3_ESM.xlsx` into "Supplementary
 Table 3" by joining on the manifest's `original_name`. 271 such labels were
 recovered across 36 files.
+
+A block's `label` is the *publisher's* name for the file, never the fetch
+transport's: a manifest label used by two or more entries of the same article is
+rejected and recorded in `supplement_label_rejected`. That measurement, rather
+than a denylist, is what caught `Download` on 1,989 of 2,076 blocks of
+10.1126/science.aat5031 and `Europe PMC supplementary archive` on 347 of 536 in
+10.1038/s41467-023-40505-5. Each supplement records where its label came from in
+`label_source` (`jats`, `jats_caption`, `manifest`, `review`, `none`), and where
+JATS gave a caption but no label the leading identifier becomes the label:
+`Table S7. Cytokine analysis, related to Figure 6` → `Table S7`, with the full
+caption carried on the block and printed in the table card.
 
 Only one source is used per article — extracting both the XML and the PDF would
 double every paragraph and leave a model to guess which copy to quote. XML that
@@ -458,10 +484,15 @@ of `{0, 6, 24}` says "these are the timepoints". Numeric columns get a lower
 enumeration bar than text ones, because 22 patient ages say nothing a range does
 not, at ten times the length.
 
-**The card does not copy the data.** It records `data_ref` — file, sheet, header
-row — so code that wants the real values re-reads the original file at the exact
-offset the card was built from. Duplicating a 2.4 GB corpus to paraphrase it would
-be the wrong trade.
+**The card does not copy the data.** It records `data_ref` — file, sheet, sha256,
+header row, first and last data row — so code that wants the real values re-reads
+the original file at the exact offset the card was built from. Duplicating a
+2.4 GB corpus to paraphrase it would be the wrong trade.
+
+`manuscript-extract table <doi> --file <path>` is that code, and it is what makes
+`data_ref` a contract rather than a comment: it reads the reference off the card
+in `blocks.jsonl`, re-opens the source, prints the rows, and says so if the file
+has changed since the card was built.
 
 Header detection is the crux. `41591_2018_269_MOESM1_ESM.xlsx` puts a title on
 row 1, a caption on row 2, a blank on row 3, and the real header on **row 4**;
@@ -489,11 +520,38 @@ stage as much as the blocks are: a thin extraction has to be legible.
 | `too_large` | over `max_file_mb`; recorded, not read |
 | `missing` | in the manifest but not on disk |
 | `unreadable` | corrupt, or a parser named its own failure |
+| `parser_error` | a parser raised; the file is named and the run continues |
 
 The article is `complete` when the main text is usable and every file that should
 have yielded text did; `partial` when something is missing; `failed` when there is
 nothing to ask a question of. Images and media carry no blame — an article whose
 only supplements are figures is still `complete`.
+
+A block's `role` is a **three**-value set: `main_text`, `supplement`, and
+`non_evidence` for a file a human marked as not article evidence — a peer-review
+file, a reporting summary, a description-of-files stub. Its text is kept and
+readable, but `manuscript-extract show --role` and every downstream filter now see
+three values, not two.
+
+### Caveats
+
+Beside the status, `extraction.json` carries a `caveats` list from a closed
+vocabulary — things that are true about an extraction without being a per-file
+failure:
+
+| caveat | meaning |
+| --- | --- |
+| `supplements_expected_but_missing` | the fetch stage says files were listed and not retrieved |
+| `supplement_set_unverified` | supplements were fetched, no tier could confirm the set is complete |
+| `main_text_thin` | shorter than `min_main_text_chars`: front matter, not an article |
+| `landing_page_only` | the main text is a saved publisher landing page |
+| `manifest_entry_without_a_path` | a supplementary entry has no file on disk to read |
+
+The first three block `complete`. `supplement_set_unverified` deliberately does
+not: it is common — 2 of the 6 articles on this machine — and it is a caveat, not
+a defect. Before this the fetch stage's own `supplementary_status` was recorded by
+the fetcher and never read by the extractor, so an article whose manifest said
+`expected_but_missing` extracted as `complete` with an empty supplement list.
 
 Across the 63 articles: 42 complete, 12 partial, 9 failed (all nine are the
 Elsevier landing-page-only articles), producing 23,477 blocks and 1,188 table
@@ -533,16 +591,58 @@ in `tests/test_extract_corpus.py`.
   metadata and less than `min_landing_chars` of text is named an interstitial, and
   `classify_denial` is reused to say which kind when it can tell.
 
+### The human review layer
+
+Some things this stage cannot decide for itself: whether a spreadsheet's first row
+is a header or a first data row, whether the body of the article is actually here,
+whether a `.pptx` nobody can parse holds the donor table. Those are cheap for a
+person and impossible for the parser, so they are asked:
+
+    manuscript-extract review <doi>                    # writes review-<slug>.html
+    manuscript-extract review <doi> --apply answers.json
+
+The sheet is one self-contained HTML page — stdlib `html.escape` and f-strings, no
+CDN, no server — with the card or block text verbatim, a `file://` link to open the
+source beside it, closed-set radios, and a Download button that produces the JSON
+`--apply` reads. Terminal and CSV were both considered: half of this corpus's 1,327
+table-card lines exceed 100 characters (longest 742), and a terminal gives a curator
+no way to open the spreadsheet next to the question, while CSV turns a multi-line
+card into one unreadable cell and every correction into free text.
+
+Questions are ordered by value per minute: table headers first (bounded, ~15
+seconds each, and a wrong one silently corrupts every metadata answer drawn from
+that sheet), then "is the article here", then unparseable files, then supplement
+labels, then section spans, then sign-off last. Figure images are never queued —
+76 of the 101 supplements here are figures and nobody can judge a `.jpg` by name.
+Measured over the six articles on this machine: 28 questions, about five per
+article, two thirds of them table headers.
+
+Answers live in `reviews/<doi_slug>.json` at the repo root, checked in, appended
+never rewritten. That location is forced: `store.evict_article` deletes everything
+but `manifest.json`, and `corpus/` is gitignored, so a review kept beside the
+article would die with a budget eviction and could never be committed.
+
+An applied answer changes the next extraction — `header_confidence` becomes
+`confirmed`, a cleared file stops blocking `complete` while staying listed in
+`unextracted_text_files` beside the human who cleared it, and the review file's sha
+is part of the extraction key so the first correction is not discarded by the next
+`manuscript-extract all`. A re-fetch drops the answer (`stale_bytes`: it was about
+bytes that are gone); a parser change keeps it but re-asks the question
+(`stale_shape`: the claim was about the bytes, not about the parser).
+
+`manuscript-extract status --needs-review` lists only what is queued or stale.
+
 ### Caps
 
-Every file and table cap lives in `manuscript_harvest/extract/limits.py`, each with a
-comment saying why it exists, and any of them can be overridden under
-`extract.limits` in `config.yaml`. The one exception is the 6,000-character
-section-abandonment bound described above: it is a constant in
-`manuscript_harvest/extract/sections.py` and no config key reaches it.
-Nothing a cap drops is silent: it is recorded in `extraction.json` and in the
-affected table card's notes, so a thin result reads as "capped" rather than
-"empty".
+Every cap lives in `manuscript_harvest/extract/limits.py`, each with a comment
+saying why it exists, and any of them can be overridden under `extract.limits` in
+`config.yaml` — including the 6,000-character section-abandonment bound described
+above, which used to be a constant in `sections.py` that no config key reached
+while deciding a third of one article's labels. Nothing a cap drops is silent: it
+is recorded in `extraction.json` and in the affected table card's notes, so a thin
+result reads as "capped" rather than "empty". Because `limits` is part of the
+extraction key, changing one re-extracts the corpus rather than reusing a
+result made under the old value.
 
 ## Tests
 
@@ -715,6 +815,19 @@ run on every commit.
   profiling of pancreatic islets" is as likely to be a Methods subsection as a
   Results one, and a wrong section is worse than none — it makes a filter silently
   drop the text it was looking for.
+- **PDF table structure is deliberately not attempted.** `page.find_tables()`
+  exists, but a table found in a PDF has no stable `data_ref` to re-read, and the
+  card contract is built on one — see `manuscript-extract table`.
+- **PDF reading order is deliberately left in insertion order.** Sorting is the
+  obvious fix and is measurably worse; pinned by a test rather than argued about.
+- **A model-facing "evidence pack" is deliberately not built here.** The boundary
+  in "Not in this repository" is `blocks.jsonl`, and it is the right one: an index
+  over the blocks — `review_signals` plus `main_text.section_labelling` — gives a
+  caller what it needs to select without this repo taking a position on prompts or
+  budgets.
+- **A reviewer's answer is scoped to bytes, not to the parser.** A re-fetch drops
+  it; a parser change keeps it and re-asks the question. There is deliberately no
+  way to record an answer that outlives a change to the file it was about.
 - The PMC OA tarball route (`oa.fcgi` → `oa_package/*.tar.gz`) is advertised by
   NCBI but currently 404s over both HTTPS and FTP; that FTP tree now lists only
   `deprecated/`. It is off by default (`fetch.try_oa_package`) and the tier runs
@@ -809,6 +922,14 @@ run on every commit.
   eight-word shingle and comparing labels paragraph by paragraph:
 
       python -m manuscript_harvest.extract.section_audit --corpus-dir corpus
+      python -m manuscript_harvest.extract.section_audit --fail-under 0.85
+
+  `--fail-under` makes it a gate, and `tests/expected_section_scores.json` holds a
+  per-slug baseline that `tests/test_extract_corpus.py` asserts against, so a
+  regression in one article cannot hide behind an improvement in another; a real
+  improvement updates that file in the same commit, and the diff shows the gain.
+  Articles with no XML/PDF pair are named before the headline rather than dropped
+  from it, so the percentage never reads as corpus coverage.
 
   Over the three open-access papers here, **309 of 337 alignable paragraphs agree
   (91.7%)**, and Methods — the label worth most — scores precision 1.00, 1.00 and
@@ -822,6 +943,12 @@ run on every commit.
   above; and `methods` at precision 0.50 on a Cell paper, which led to the
   `STAR★METHODS` glyph. Fixing those moved the same two papers from 90.0% and 87.7%
   to 93.0% and 89.8%, and Methods on the Cell paper from 0.50 to 0.88.
+- **Sorting PDF reading order is measurably worse, twice.** PyMuPDF's
+  `get_text("blocks", sort=True)` is the obvious fix for two-column layout and it
+  makes both articles here worse: backward steps 10 → 23 and inverted pairs
+  11.2% → 12.0% on `10.1016/j.cell.2021.01.053`, 4 → 38 and 2.5% → 3.9% on
+  `10.1038/s41467-023-40505-5`. Pinned by
+  `test_pdf_reading_order_is_not_improved_by_sorting`.
 - **A Cell Press heading is published with a star glyph, not an asterisk.**
   `STAR★METHODS` (U+2605) is what appears in both the XML and the PDF, and the
   alias matched only the ASCII `STAR*Methods` that people type when writing *about*
