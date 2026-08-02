@@ -17,7 +17,9 @@ from pathlib import Path
 
 import pytest
 
-from manuscript_harvest.extract import extractor, jats, section_audit, spreadsheet
+from manuscript_harvest.extract import blocks as blocks_mod
+from manuscript_harvest.extract import (extractor, jats, review, section_audit,
+                                        spreadsheet, tables)
 from manuscript_harvest.extract.blocks import read_blocks
 from manuscript_harvest.extract.limits import Limits
 from manuscript_harvest.fetch import store
@@ -86,6 +88,42 @@ def test_completed_articles_have_a_main_text_source():
     for record in _extractions():
         if record["status"] == "complete":
             assert (record["main_text"] or {}).get("source") in {"jats", "pdf"}
+
+
+def test_header_confidence_is_a_closed_set():
+    """A consumer treating `!= "high"` as suspect now sees a third value, and
+    `confirmed` is the one a human put there."""
+    _extractions()
+    for path in sorted(CORPUS.glob("*/extracted/blocks.jsonl")):
+        for block in read_blocks(path):
+            card = block.get("table")
+            if card:
+                assert card["header_confidence"] in tables.HEADER_CONFIDENCE, \
+                    (path.parent.parent.name, block.get("locator"))
+
+
+def test_role_is_a_closed_three_value_set():
+    """`non_evidence` is what a human's "this file is not article evidence"
+    checkbox writes, and it changes what `cmd_show --role` and every downstream
+    filter mean."""
+    _extractions()
+    for path in sorted(CORPUS.glob("*/extracted/blocks.jsonl")):
+        for block in read_blocks(path):
+            assert block["role"] in blocks_mod.ROLES, block["role"]
+
+
+def test_every_review_key_is_unique_over_the_corpus():
+    """An answer is matched to a question by its key. Two questions with one key
+    would let a human's judgement about one card silently apply to another."""
+    for directory in sorted(p for p in CORPUS.glob("*") if p.is_dir()):
+        extraction = extractor.read_extraction(directory)
+        if extraction is None:
+            continue
+        queue = review.queue_for(extraction,
+                                 directory / extractor.EXTRACT_DIR / "blocks.jsonl",
+                                 L, store.read_manifest(directory))
+        keys = [review.answer_key(i["kind"], i["key"]) for i in queue]
+        assert len(keys) == len(set(keys)), directory.name
 
 
 def test_no_extracted_block_carries_an_invisible_or_symbol_glyph():

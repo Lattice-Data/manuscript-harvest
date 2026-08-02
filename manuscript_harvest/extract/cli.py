@@ -6,6 +6,8 @@
     manuscript-extract show 10.1038/s41467-023-40505-5 --section methods
     manuscript-extract show <doi> --kind table --full
     manuscript-extract table <doi> --file mmc7.xlsx --locator "Table S6"
+    manuscript-extract review <doi>                   # writes review-<slug>.html
+    manuscript-extract review <doi> --apply answers.json
 
 Everything here is offline: it reads what the fetch stage already put in the
 corpus. `all` is safe to re-run -- an article whose manifest has not changed and
@@ -16,6 +18,7 @@ import argparse
 import hashlib
 import json
 import sys
+from collections import Counter
 from pathlib import Path
 
 import yaml
@@ -23,7 +26,7 @@ import yaml
 from ..fetch import store
 from ..fetch.cli import _merge
 from ..fetch.identifiers import doi_slug, normalize_doi
-from . import extractor, spreadsheet
+from . import extractor, review, reviewsheet, spreadsheet
 from .blocks import BLOCKS_NAME, read_blocks
 from .limits import Limits
 
@@ -109,7 +112,8 @@ def cmd_one(args) -> int:
     corpus_dir, limits, markdown = _settings(args)
     directory = _resolve(corpus_dir, args.article)
     extraction = extractor.extract_article(directory, limits=limits, force=args.force,
-                                           write_markdown=markdown)
+                                           write_markdown=markdown,
+                                           config=load_config(args.config))
     print(f"{extraction.get('slug')}  {extractor.summarize(extraction)}", file=sys.stderr)
     if extraction.get("cached"):
         print("    (cached; use --force to re-extract)", file=sys.stderr)
@@ -127,6 +131,7 @@ def cmd_one(args) -> int:
 
 
 def cmd_all(args) -> int:
+    config = load_config(args.config)
     corpus_dir, limits, markdown = _settings(args)
     directories = _article_dirs(corpus_dir)
     if not directories:
@@ -140,7 +145,8 @@ def cmd_all(args) -> int:
         try:
             extraction = extractor.extract_article(directory, limits=limits,
                                                    force=args.force,
-                                                   write_markdown=markdown)
+                                                   write_markdown=markdown,
+                                                   config=config)
         except Exception as e:
             # One article must not take the rest of the corpus with it. The
             # extractor guards each file; this guards everything above them.
@@ -171,6 +177,7 @@ def cmd_status(args) -> int:
     file_statuses: dict = {}
     sources: dict = {}
     labelling: dict = {}
+    reviews = {"signed": 0, "queued": 0, "answered": 0, "stale": 0}
     for directory in directories:
         totals["articles"] += 1
         extraction = extractor.read_extraction(directory)
@@ -188,6 +195,14 @@ def cmd_status(args) -> int:
             file_statuses[status] = file_statuses.get(status, 0) + count
         sect = _labelling(extraction).get("confidence", "?")
         labelling[sect] = labelling.get(sect, 0) + 1
+        reviewed = extraction.get("review") or {}
+        reviews["signed"] += 1 if reviewed.get("sign_off") else 0
+        reviews["queued"] += reviewed.get("queued") or 0
+        reviews["answered"] += reviewed.get("answered") or 0
+        reviews["stale"] += len(reviewed.get("stale") or [])
+        if getattr(args, "needs_review", False) \
+                and reviewed.get("state") not in {"queued", "stale"}:
+            continue
         if not args.quiet:
             print(f"{directory.name:38s} {extractor.summarize(extraction)} sect={sect}",
                   file=sys.stderr)
@@ -201,6 +216,9 @@ def cmd_status(args) -> int:
         file_statuses.items())), file=sys.stderr)
     print("main-text section labelling: " + "  ".join(f"{k}={v}" for k, v in sorted(
         labelling.items())), file=sys.stderr)
+    print(f"review: {reviews['signed']}/{totals['extracted']} signed off; "
+          f"{reviews['queued']} items queued, {reviews['answered']} answered, "
+          f"{reviews['stale']} stale", file=sys.stderr)
     return 0
 
 
@@ -300,6 +318,74 @@ def cmd_table(args) -> int:
     return 1 if failures else 0
 
 
+def cmd_review(args) -> int:
+    """Write the review sheet for an article, or apply the answers that came back.
+
+    Exit 0 when there is nothing queued and 1 when there is: a review sheet with
+    questions on it is a job that has not been done yet, and a CI run should be
+    able to say so.
+    """
+    config = load_config(args.config)
+    corpus_dir, limits, markdown = _settings(args)
+    directory = _resolve(corpus_dir, args.article)
+    extraction = extractor.read_extraction(directory)
+    if extraction is None:
+        print(f"not extracted yet: {directory}", file=sys.stderr)
+        return 2
+    manifest = store.read_manifest(directory)
+    slug = extraction.get("slug") or directory.name
+    stored_path = review.review_path(slug, config)
+    blocks_file = directory / extractor.EXTRACT_DIR / BLOCKS_NAME
+    queue = review.queue_for(extraction, blocks_file, limits, manifest)
+
+    if args.apply:
+        return _apply_review(args, config, directory, extraction, manifest,
+                             stored_path, limits, markdown)
+
+    _, stale = review.state_of(review.read_review(stored_path), extraction,
+                               manifest, queue)
+    out_dir = Path(args.out or ".")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    sheet = out_dir / f"review-{slug}.html"
+    sheet.write_text(
+        reviewsheet.render(extraction, queue, review.read_review(stored_path),
+                           article_dir=directory, stale=stale),
+        encoding="utf-8")
+    print(sheet)
+    queued = len([i for i in queue if i["kind"] != review.SIGN_OFF])
+    print(f"{queued} question(s) queued for {slug}", file=sys.stderr)
+    return 1 if queued else 0
+
+
+def _apply_review(args, config, directory, extraction, manifest, stored_path,
+                  limits, markdown) -> int:
+    """Merge answers into `reviews/<slug>.json` and re-extract with them applied."""
+    incoming = json.loads(Path(args.apply).read_text(encoding="utf-8"))
+    stored = review.read_review(stored_path) or review.empty_review(extraction)
+    # Append-only: the file is an audit log, and the last non-stale answer for a
+    # key wins. Rewriting would lose the record of what was believed before.
+    stored["answers"] = (stored.get("answers") or []) + (incoming.get("answers") or [])
+    if incoming.get("sign_off"):
+        if stored.get("sign_off"):
+            stored["previous_sign_off"] = stored["sign_off"]
+        stored["sign_off"] = incoming["sign_off"]
+        stored["signed_manifest_sha256"] = incoming.get("signed_manifest_sha256")
+    stored_path.parent.mkdir(parents=True, exist_ok=True)
+    stored_path.write_text(json.dumps(stored, indent=2, ensure_ascii=False) + "\n",
+                           encoding="utf-8")
+
+    after = extractor.extract_article(directory, limits=limits, force=True,
+                                      write_markdown=markdown, config=config)
+    applied = (after.get("review") or {}).get("overrides_applied", 0)
+    kinds = Counter(a["kind"] for a in incoming.get("answers") or []
+                    if a.get("override"))
+    detail = ", ".join(f"{n} {kind.replace('_', ' ')}" for kind, n in
+                       sorted(kinds.items())) or "none"
+    print(f"{applied} override(s) applied: {detail}", file=sys.stderr)
+    print(f"{stored_path}")
+    return _exit_code(after)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="manuscript-extract",
@@ -328,6 +414,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     status = subparsers.add_parser("status", help="report extraction coverage")
     status.add_argument("--quiet", action="store_true", help="totals only")
+    status.add_argument("--needs-review", action="store_true",
+                        help="list only articles whose review is queued or stale")
     add_common(status)
     status.set_defaults(func=cmd_status)
 
@@ -354,6 +442,15 @@ def build_parser() -> argparse.ArgumentParser:
                        help="print every matching card instead of requiring one")
     add_common(table)
     table.set_defaults(func=cmd_table)
+
+    reviewing = subparsers.add_parser(
+        "review", help="write a review sheet, or apply the answers that came back")
+    reviewing.add_argument("article")
+    reviewing.add_argument("--out", default=None, help="where to write the HTML sheet")
+    reviewing.add_argument("--apply", default=None,
+                           help="a downloaded answers JSON to merge and re-extract with")
+    add_common(reviewing)
+    reviewing.set_defaults(func=cmd_review)
 
     return parser
 

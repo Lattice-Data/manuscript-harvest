@@ -71,9 +71,21 @@ def _load(data: bytes):
         io.BytesIO(relaxed), read_only=True, data_only=True, keep_links=False), True
 
 
+def _forced(overrides, source_file: str, locator: str) -> dict:
+    """A human's answer about this card's header row, as build_card keywords."""
+    if overrides is None:
+        return {}
+    answer = overrides.header_for(source_file, locator)
+    if answer is None:
+        return {}
+    row = (answer.get("override") or {}).get("header_row")
+    return {"forced_header_row": row, "forced_headerless": row is None,
+            "review_note": overrides.note_for(answer)}
+
+
 def _cards_from_sheet(rows: List[Sequence[Any]], source_file: str, title: str,
                       limits: Limits, total, truncated: bool, meta: dict,
-                      sha256: str = "") -> List[tables.TableCard]:
+                      sha256: str = "", overrides=None) -> List[tables.TableCard]:
     """One sheet's cards: normally one, but one per panel when it holds several.
 
     A sheet of stacked panels used to become a single card that pooled them --
@@ -82,10 +94,12 @@ def _cards_from_sheet(rows: List[Sequence[Any]], source_file: str, title: str,
     """
     parts = tables.split_blocks(rows, limits)
     if not parts:
+        locator = f"sheet {title!r}"
         card = tables.build_card(
-            rows, source_file=source_file, locator=f"sheet {title!r}", limits=limits,
+            rows, source_file=source_file, locator=locator, limits=limits,
             title=title, n_rows_total=total, truncated=truncated,
             data_ref={"file": source_file, "sheet": title, "sha256": sha256},
+            **_forced(overrides, source_file, locator),
         )
         return [card] if card is not None else []
 
@@ -94,9 +108,10 @@ def _cards_from_sheet(rows: List[Sequence[Any]], source_file: str, title: str,
         meta["tables_skipped"] = meta.get("tables_skipped", 0) + len(parts) - len(kept)
     built: List[tables.TableCard] = []
     for start, end in kept:
+        locator = f"sheet {title!r} rows {start + 1}-{end}"
         card = tables.build_card(
             rows[start:end], source_file=source_file,
-            locator=f"sheet {title!r} rows {start + 1}-{end}", limits=limits,
+            locator=locator, limits=limits,
             title=title, n_rows_total=None,
             # Only the part that runs to the end of the scanned window is the one
             # the cap actually cut; the panels above it were read in full.
@@ -104,6 +119,7 @@ def _cards_from_sheet(rows: List[Sequence[Any]], source_file: str, title: str,
             data_ref={"file": source_file, "sheet": title, "sha256": sha256,
                       "row_start": start + 1, "row_end": end},
             row_offset=start,
+            **_forced(overrides, source_file, locator),
         )
         if card is None:
             continue
@@ -114,7 +130,7 @@ def _cards_from_sheet(rows: List[Sequence[Any]], source_file: str, title: str,
 
 
 def cards_from_xlsx(
-    data: bytes, source_file: str, limits: Limits
+    data: bytes, source_file: str, limits: Limits, overrides=None
 ) -> Tuple[List[tables.TableCard], str, dict]:
     try:
         import openpyxl  # noqa: F401
@@ -123,11 +139,11 @@ def cards_from_xlsx(
 
     with warnings.catch_warnings():
         _silence_openpyxl()
-        return _cards_from_xlsx(data, source_file, limits)
+        return _cards_from_xlsx(data, source_file, limits, overrides)
 
 
 def _cards_from_xlsx(
-    data: bytes, source_file: str, limits: Limits
+    data: bytes, source_file: str, limits: Limits, overrides=None
 ) -> Tuple[List[tables.TableCard], str, dict]:
     try:
         workbook, relaxed = _load(data)
@@ -171,7 +187,8 @@ def _cards_from_xlsx(
                 continue
 
             cards.extend(_cards_from_sheet(rows, source_file, sheet.title, limits,
-                                           total, truncated, meta, sha256))
+                                           total, truncated, meta, sha256,
+                                           overrides))
             if len(cards) >= limits.max_tables_per_file:
                 cards = cards[: limits.max_tables_per_file]
                 meta["tables_capped"] = True
@@ -189,7 +206,7 @@ def _cards_from_xlsx(
 
 
 def cards_from_xls(
-    data: bytes, source_file: str, limits: Limits
+    data: bytes, source_file: str, limits: Limits, overrides=None
 ) -> Tuple[List[tables.TableCard], str, dict]:
     """Legacy binary `.xls`. One file in this corpus needs it.
 
@@ -215,7 +232,8 @@ def cards_from_xls(
         limit = min(sheet.nrows, limits.max_scan_rows)
         rows = [tuple(sheet.row_values(index)) for index in range(limit)]
         cards.extend(_cards_from_sheet(rows, source_file, sheet.name, limits,
-                                       sheet.nrows, sheet.nrows > limit, meta, sha256))
+                                       sheet.nrows, sheet.nrows > limit, meta,
+                                       sha256, overrides))
         if len(cards) >= limits.max_tables_per_file:
             cards = cards[: limits.max_tables_per_file]
             meta["tables_capped"] = True
@@ -302,7 +320,7 @@ def _sniff_delimiter(sample: str) -> str:
 
 
 def cards_from_csv(
-    data: bytes, source_file: str, limits: Limits
+    data: bytes, source_file: str, limits: Limits, overrides=None
 ) -> Tuple[List[tables.TableCard], str, dict]:
     text = data.decode("utf-8-sig", errors="replace")
     if not text.strip():
@@ -333,6 +351,7 @@ def cards_from_csv(
         truncated=truncated,
         data_ref={"file": source_file, "delimiter": delimiter,
                   "sha256": hashlib.sha256(data).hexdigest()},
+        **_forced(overrides, source_file, "rows"),
     )
     meta = {"delimiter": delimiter}
     if card is None:

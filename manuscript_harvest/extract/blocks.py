@@ -37,6 +37,12 @@ METADATA = "metadata"
 # -- roles -------------------------------------------------------------------
 MAIN_TEXT = "main_text"
 SUPPLEMENT = "supplement"
+NON_EVIDENCE = "non_evidence"
+"""A file a human marked as not article evidence: a peer-review file, a reporting
+summary, a description-of-files stub. Its text is kept and readable, but
+`cmd_show --role` and every downstream filter now see three values, not two."""
+
+ROLES = frozenset({MAIN_TEXT, SUPPLEMENT, NON_EVIDENCE})
 
 
 @dataclass

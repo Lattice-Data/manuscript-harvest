@@ -11,8 +11,8 @@ import json
 
 import pytest
 
-from manuscript_harvest.extract import extractor, review
-from manuscript_harvest.extract.blocks import BLOCKS_NAME
+from manuscript_harvest.extract import review, reviewsheet
+from manuscript_harvest.extract.blocks import BLOCKS_NAME, read_blocks
 from manuscript_harvest.extract.extractor import EXTRACT_DIR, extract_article
 from manuscript_harvest.extract.limits import Limits
 from manuscript_harvest.fetch import store
@@ -224,3 +224,180 @@ def test_a_review_file_round_trips(tmp_path):
     assert review.read_review(tmp_path / "nope.json") is None
     (tmp_path / "bad.json").write_text("{not json")
     assert review.read_review(tmp_path / "bad.json") is None
+
+
+# -- feeding the answers back ------------------------------------------------
+
+def _write_review(tmp_path, record, answers, sign_off=None):
+    """A `reviews/<slug>.json` in a config-pointed directory, as the CLI writes it."""
+    directory = tmp_path / "reviews"
+    directory.mkdir(exist_ok=True)
+    payload = {**review.empty_review(record), "answers": answers}
+    if sign_off:
+        payload["sign_off"] = sign_off
+        payload["signed_manifest_sha256"] = record["source_manifest_sha256"]
+    (directory / f"{record['slug']}.json").write_text(json.dumps(payload))
+    return {"extract": {"review_dir": str(directory)}}
+
+
+def test_a_confirmed_header_row_changes_the_next_extraction(tmp_path):
+    """A correction that does not change the next extraction is a note, not a
+    correction."""
+    directory, record = _extracted(
+        tmp_path, xml=jats_article(METHODS_BODY),
+        supplements=[("s1.xlsx", make_xlsx(
+            {"S1": [["Supplementary Table 1", None], ["gene", "symbol"],
+                    ["TP53", "p53"], ["MYC", "myc"]]}))])
+    item = next(i for i in _queue(directory, record) if i["kind"] == review.TABLE_HEADER)
+    config = _write_review(tmp_path, record, [
+        _answer(item, "corrected", override={"header_row": 2},
+                note="row 1 is a title line")])
+
+    after = extract_article(directory, limits=L, force=True, config=config)
+    assert after["review"]["overrides_applied"] == 1
+    card = next(b["table"] for b in read_blocks(directory / EXTRACT_DIR / BLOCKS_NAME)
+                if b.get("table"))
+    assert card["header_confidence"] == "confirmed"
+    assert card["header"] == ["gene", "symbol"]
+    assert any("row 1 is a title line" in note for note in card["notes"])
+    # The note is an f-string over values read out of the review file, never
+    # datetime.now(), because it lands in blocks.jsonl.
+    assert "2026-08-01T10:14:00Z" in " ".join(card["notes"])
+
+
+def test_a_review_is_part_of_the_extraction_key(tmp_path):
+    """Otherwise the first correction is silently discarded by the next
+    `manuscript-extract all`."""
+    directory, record = _extracted(tmp_path, xml=jats_article(METHODS_BODY),
+                                   supplements=[("s1.xlsx", make_xlsx(AMBIGUOUS))])
+    config = {"extract": {"review_dir": str(tmp_path / "reviews")}}
+    assert extract_article(directory, limits=L, config=config).get("cached") is True
+    item = next(i for i in _queue(directory, record) if i["kind"] == review.TABLE_HEADER)
+    _write_review(tmp_path, record, [_answer(item, "corrected",
+                                             override={"header_row": 1})])
+    assert extract_article(directory, limits=L, config=config).get("cached") is None
+
+
+def test_a_cleared_file_stays_listed_and_the_article_can_be_complete(tmp_path):
+    """Nothing disappears: the file is still in `unextracted_text_files`, and one
+    key away is the human who cleared it. The per-file status does not move -- the
+    taxonomy stays closed and a .rtf stays `unsupported_format`."""
+    directory, record = _extracted(tmp_path, xml=jats_article(METHODS_BODY),
+                                   supplements=[("notes.rtf", b"{\\rtf1 text}")])
+    assert record["status"] == "partial"
+    path = record["supplementary"][0]["path"]
+    item = next(i for i in _queue(directory, record)
+                if i["kind"] == review.FILE_HAS_CONTENT)
+    config = _write_review(tmp_path, record, [
+        _answer(item, "confirmed", override={"has_content": False},
+                note="a licence notice")])
+
+    after = extract_article(directory, limits=L, force=True, config=config)
+    assert after["status"] == "complete"
+    assert after["unextracted_text_files"] == [path]
+    assert after["cleared_by_review"] == [path]
+    assert after["supplementary"][0]["status"] == "unsupported_format"
+
+
+def test_a_file_a_human_says_has_content_blocks_complete(tmp_path):
+    directory, record = _extracted(
+        tmp_path, xml=jats_article(METHODS_BODY),
+        supplements=[("figs.jpg", b"\xff\xd8x")])
+    assert record["status"] == "complete"
+    path = record["supplementary"][0]["path"]
+    config = _write_review(tmp_path, record, [
+        {"kind": review.FILE_HAS_CONTENT, "key": {"path": path},
+         "source_sha256": store.read_manifest(directory)["supplementary"][0]["sha256"],
+         "verdict": "corrected", "override": {"has_content": True},
+         "note": "this is a table rendered as an image",
+         "by": "x", "at": "2026-08-01T10:14:00Z"}])
+    after = extract_article(directory, limits=L, force=True, config=config)
+    assert after["unreachable_content"] == [path]
+    assert after["status"] == "partial"
+    # The status itself is untouched: an image with no text is still that.
+    assert after["supplementary"][0]["status"] == "image_no_text"
+
+
+def test_a_re_fetched_file_drops_its_override(tmp_path):
+    directory, record = _extracted(tmp_path, xml=jats_article(METHODS_BODY),
+                                   supplements=[("s1.xlsx", make_xlsx(AMBIGUOUS))])
+    item = next(i for i in _queue(directory, record) if i["kind"] == review.TABLE_HEADER)
+    config = _write_review(tmp_path, record, [
+        _answer(item, "corrected", override={"header_row": 1})])
+    manifest = store.read_manifest(directory)
+    manifest["supplementary"][0]["sha256"] = "f" * 64
+    store.write_manifest(directory, manifest)
+    after = extract_article(directory, limits=L, force=True, config=config)
+    assert after["review"]["overrides_applied"] == 0
+
+
+# -- the sheet ---------------------------------------------------------------
+
+def test_the_sheet_is_one_self_contained_page(tmp_path):
+    directory, record = _extracted(
+        tmp_path, xml=jats_article(METHODS_BODY),
+        supplements=[("s1.xlsx", make_xlsx(AMBIGUOUS)), ("notes.rtf", b"{\\rtf1 x}")])
+    queue = _queue(directory, record)
+    page = reviewsheet.render(record, queue, None, article_dir=directory)
+    assert "<script src" not in page and "http://" not in page
+    assert page.count('<section class="item"') == len(queue) - 1
+    assert "TABLE:" in page, "the card a curator is judging is in the page verbatim"
+    assert "file://" in page, "and so is a link to open the source beside it"
+    assert 'id="out"' in page and "Download the answers" in page
+
+
+def test_the_sheet_escapes_what_a_publisher_put_in_a_cell(tmp_path):
+    directory, record = _extracted(tmp_path, xml=jats_article(METHODS_BODY),
+                                   supplements=[("s1.xlsx", make_xlsx(
+                                       {"S1": [["gene", "<script>x</script>"],
+                                               ["TP53", "p53"]]}))])
+    page = reviewsheet.render(record, _queue(directory, record), None)
+    assert "<script>x</script>" not in page
+    assert "&lt;script&gt;x&lt;/script&gt;" in page
+
+
+# -- the command line --------------------------------------------------------
+
+def test_the_review_command_round_trips_a_sheet_into_an_extraction(tmp_path, capsys):
+    from manuscript_harvest.extract.cli import main
+
+    directory, record = _extracted(
+        tmp_path, xml=jats_article(METHODS_BODY),
+        supplements=[("s1.xlsx", make_xlsx(
+            {"S1": [["Supplementary Table 1", None], ["gene", "symbol"],
+                    ["TP53", "p53"]]}))])
+    config = tmp_path / "config.yaml"
+    config.write_text(f"extract:\n  corpus_dir: {tmp_path}\n"
+                      f"  review_dir: {tmp_path / 'reviews'}\n")
+
+    # A sheet with questions on it is a job that has not been done: exit 1.
+    assert main(["--config", str(config), "review", DOI, "--out", str(tmp_path)]) == 1
+    sheet = tmp_path / f"review-{record['slug']}.html"
+    assert sheet.exists() and "TABLE:" in sheet.read_text()
+    capsys.readouterr()
+
+    item = next(i for i in _queue(directory, record) if i["kind"] == review.TABLE_HEADER)
+    answers = tmp_path / "answers.json"
+    answers.write_text(json.dumps({
+        **review.empty_review(record),
+        "answers": [_answer(item, "corrected", override={"header_row": 2},
+                            note="row 1 is a title line")],
+        "sign_off": {"verdict": "fit", "by": "x", "at": "2026-08-01T10:15:00Z"},
+        "signed_manifest_sha256": record["source_manifest_sha256"]}))
+
+    assert main(["--config", str(config), "review", DOI,
+                 "--apply", str(answers)]) == 0
+    assert "1 override(s) applied: 1 table header" in capsys.readouterr().err
+
+    stored = json.loads((tmp_path / "reviews" / f"{record['slug']}.json").read_text())
+    assert len(stored["answers"]) == 1 and stored["sign_off"]["verdict"] == "fit"
+
+    after = json.loads((directory / EXTRACT_DIR / "extraction.json").read_text())
+    assert after["review"]["state"] == "reviewed"
+    assert after["review"]["overrides_applied"] == 1
+
+    # Answers are appended, never rewritten: the file is an audit log.
+    main(["--config", str(config), "review", DOI, "--apply", str(answers)])
+    stored = json.loads((tmp_path / "reviews" / f"{record['slug']}.json").read_text())
+    assert len(stored["answers"]) == 2
+    assert stored["previous_sign_off"]["verdict"] == "fit"

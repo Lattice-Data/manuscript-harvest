@@ -235,9 +235,10 @@ def _table_rows(table_element) -> List[List[str]]:
 
 
 class _Walker:
-    def __init__(self, source_file: str, limits: Limits):
+    def __init__(self, source_file: str, limits: Limits, overrides=None):
         self.source_file = source_file
         self.limits = limits
+        self.overrides = overrides
         self.blocks: List[Block] = []
         self.supplement_labels: Dict[str, dict] = {}
         self.tables_seen = 0
@@ -372,10 +373,17 @@ class _Walker:
             self.tables_capped = True
             return
         self.tables_seen += 1
+        forced = {}
+        if self.overrides is not None:
+            answer = self.overrides.header_for(self.source_file, path)
+            if answer is not None:
+                row = (answer.get("override") or {}).get("header_row")
+                forced = {"forced_header_row": row, "forced_headerless": row is None,
+                          "review_note": self.overrides.note_for(answer)}
         card = tables.build_card(
             rows, source_file=self.source_file, locator=path, limits=self.limits,
             title=label or "Table", caption=caption,
-            data_ref={"file": self.source_file, "xpath": path},
+            data_ref={"file": self.source_file, "xpath": path}, **forced,
         )
         if card is None:
             return
@@ -447,7 +455,7 @@ def _front_metadata(article, walker: "_Walker") -> dict:
 
 
 def blocks_from_jats(
-    data: bytes, source_file: str, limits: Limits
+    data: bytes, source_file: str, limits: Limits, overrides=None
 ) -> Tuple[List[Block], str, dict]:
     """Parse one JATS/NXML file. Returns `(blocks, status, meta)`.
 
@@ -466,7 +474,7 @@ def blocks_from_jats(
     if article is None:
         return [], UNREADABLE, {"reason": "no <article> element"}
 
-    walker = _Walker(source_file, limits)
+    walker = _Walker(source_file, limits, overrides)
     try:
         meta = _front_metadata(article, walker)
         for child in article:

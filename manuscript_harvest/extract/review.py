@@ -278,6 +278,99 @@ def queue_truncated(extraction: dict, blocks_path,
     return max(0, total - limits.max_review_cards_per_article)
 
 
+# -- feeding the answers back ------------------------------------------------
+
+class Overrides:
+    """The answers that apply to this extraction, indexed for the parsers.
+
+    A correction that does not change the next extraction is a note, not a
+    correction. This is the object every parser consults, threaded through as one
+    optional keyword so that omitting it anywhere shows a curator a card they
+    cannot answer.
+
+    `stale_bytes` answers are dropped on load -- the file they were about has
+    been re-fetched. `stale_shape` answers are kept: the human's claim is about
+    the bytes, and a parser change moving a header row does not unmake it.
+    """
+
+    def __init__(self, answers: Optional[Dict[str, dict]] = None):
+        self._answers = answers or {}
+        self._applied = 0
+
+    @classmethod
+    def load(cls, slug: str, manifest: Optional[dict],
+             config: Optional[dict] = None) -> "Overrides":
+        stored = read_review(review_path(slug, config))
+        if not stored:
+            return cls()
+        shas = _manifest_shas(manifest)
+        kept: Dict[str, dict] = {}
+        for answer in stored.get("answers") or []:
+            key = answer.get("key") or {}
+            path = key.get("path") or key.get("source_file")
+            recorded = answer.get("source_sha256")
+            if recorded and path and shas.get(path) and shas[path] != recorded:
+                continue
+            # Appended, never rewritten: the last answer for a key wins.
+            kept[answer_key(answer.get("kind", ""), key)] = answer
+        return cls(kept)
+
+    def __bool__(self) -> bool:
+        return bool(self._answers)
+
+    def applied(self) -> int:
+        return self._applied
+
+    def _take(self, kind: str, key: dict) -> Optional[dict]:
+        answer = self._answers.get(answer_key(kind, key))
+        if answer is None or not answer.get("override"):
+            return None
+        self._applied += 1
+        return answer
+
+    def note_for(self, answer: dict) -> str:
+        """The card note for an applied override.
+
+        A byte-stability trap: this is an f-string over values *read out of the
+        review file*, never `datetime.now()`, because it lands in `blocks.jsonl`.
+        """
+        return (f"header confirmed by review: {answer.get('note') or 'no note'} "
+                f"({answer.get('by')}, {answer.get('at')})")
+
+    def header_for(self, source_file: str, locator: str) -> Optional[dict]:
+        return self._take(TABLE_HEADER,
+                          {"source_file": source_file, "locator": locator})
+
+    def label_for(self, path: str) -> Optional[dict]:
+        return self._take(SUPPLEMENT_LABEL, {"path": path})
+
+    def content_expected(self, path: str) -> Optional[bool]:
+        answer = self._take(FILE_HAS_CONTENT, {"path": path})
+        return None if answer is None else answer["override"].get("has_content")
+
+    def section_for(self, source_file: str, locator: str, text_sha256: str,
+                    ordinal: int) -> Optional[str]:
+        answer = self._take(SECTION_SPAN, {"source_file": source_file,
+                                           "locator": locator,
+                                           "text_sha256": text_sha256,
+                                           "ordinal": ordinal})
+        return None if answer is None else answer["override"].get("section")
+
+    def main_text_source(self) -> Optional[str]:
+        for identity, answer in self._answers.items():
+            if answer.get("kind") == MAIN_TEXT_PRESENT and answer.get("override"):
+                self._applied += 1
+                return answer["override"].get("main_text_source")
+        return None
+
+    def evidence_denied(self) -> set:
+        """Paths a human marked as not article evidence, e.g. a reporting summary."""
+        return {a["key"].get("path") for a in self._answers.values()
+                if a.get("kind") in {SUPPLEMENT_LABEL, FILE_HAS_CONTENT}
+                and (a.get("override") or {}).get("evidence") is False
+                and a["key"].get("path")}
+
+
 # -- what has been answered, and what has gone stale -------------------------
 
 def state_of(review: Optional[dict], extraction: dict,

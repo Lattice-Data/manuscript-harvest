@@ -78,7 +78,7 @@ def _table_rows(element) -> List[List[str]]:
 
 
 def blocks_from_docx(
-    data: bytes, source_file: str, limits: Limits
+    data: bytes, source_file: str, limits: Limits, overrides=None
 ) -> Tuple[List[Block], str, dict]:
     """Parse one `.docx`. Returns `(blocks, status, meta)`."""
     try:
@@ -138,10 +138,19 @@ def blocks_from_docx(
             # The nearest preceding heading or paragraph is usually the caption.
             caption = next((b.text for b in reversed(blocks)
                             if b.kind in {HEADING, PARAGRAPH} and len(b.text) < 400), None)
+            locator = f"table {table_index}"
+            forced = {}
+            if overrides is not None:
+                answer = overrides.header_for(source_file, locator)
+                if answer is not None:
+                    row = (answer.get("override") or {}).get("header_row")
+                    forced = {"forced_header_row": row,
+                              "forced_headerless": row is None,
+                              "review_note": overrides.note_for(answer)}
             card = tables.build_card(
-                rows, source_file=source_file, locator=f"table {table_index}",
+                rows, source_file=source_file, locator=locator,
                 limits=limits, title=f"Table {table_index}", caption=caption,
-                data_ref={"file": source_file, "table_index": table_index},
+                data_ref={"file": source_file, "table_index": table_index}, **forced,
             )
             if card is None:
                 continue

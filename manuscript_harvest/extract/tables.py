@@ -39,6 +39,14 @@ TEXT = "text"
 MIXED = "mixed"
 EMPTY = "empty"
 
+#: How much to trust `header_row`. A closed set, mirroring how `extractor.py`
+#: declares its statuses: a consumer treating `!= "high"` as suspect now sees a
+#: third value, and `confirmed` is the one a human put there.
+LOW = "low"
+HIGH = "high"
+CONFIRMED = "confirmed"
+HEADER_CONFIDENCE = frozenset({LOW, HIGH, CONFIRMED})
+
 _TRUE_FALSE = {"true", "false", "yes", "no", "y", "n"}
 _NUMERIC_RX = re.compile(r"^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$")
 _PERCENT_RX = re.compile(r"^[+-]?\d+(?:\.\d+)?\s*%$")
@@ -58,7 +66,7 @@ class TableCard:
     """Both rows, 0-based, when the header spans two: a group label row above a
     sub-header row. `header_row` stays the sub-header, which is the one the data
     starts under."""
-    header_confidence: str = "low"
+    header_confidence: str = LOW
     n_columns: int = 0
     n_rows: int = 0
     """Data rows actually scanned."""
@@ -298,11 +306,11 @@ def detect_header(rows: List[Sequence[Any]], limits: Limits) -> Tuple[Optional[i
     is the evidence that separates a header from a first data row of gene names.
     """
     if not rows:
-        return None, [], "low"
+        return None, [], LOW
 
     width = max((sum(1 for v in row if clean_cell(v) is not None) for row in rows), default=0)
     if width == 0:
-        return None, [], "low"
+        return None, [], LOW
 
     captions: List[str] = []
     scan = rows[: limits.max_header_scan_rows]
@@ -316,7 +324,7 @@ def detect_header(rows: List[Sequence[Any]], limits: Limits) -> Tuple[Optional[i
             continue
         wide_enough = len(present) >= max(min(2, width), int(0.5 * width))
         if wide_enough and _looks_like_labels(cells, width):
-            confidence = "low"
+            confidence = LOW
             following = rows[index + 1: index + 4]
             for next_row in following:
                 next_cells = _row_cells(next_row, max(width, len(next_row)))
@@ -325,13 +333,13 @@ def detect_header(rows: List[Sequence[Any]], limits: Limits) -> Tuple[Optional[i
                 if next_kinds and header_kinds and (
                     NUMBER in next_kinds and NUMBER not in header_kinds
                 ):
-                    confidence = "high"
+                    confidence = HIGH
                     break
             return index, captions, confidence
 
     # Nothing read like labels: the table is probably headerless (a matrix of
     # numbers, or a single wide column of free text). Say so instead of picking.
-    return None, captions, "low"
+    return None, captions, LOW
 
 
 def _unique_names(header: List[Optional[str]]) -> List[str]:
@@ -425,6 +433,9 @@ def build_card(
     truncated: bool = False,
     data_ref: Optional[dict] = None,
     row_offset: int = 0,
+    forced_header_row: Optional[int] = None,
+    forced_headerless: bool = False,
+    review_note: Optional[str] = None,
 ) -> Optional[TableCard]:
     """Build a card from already-read rows. None when the table holds no values.
 
@@ -432,6 +443,11 @@ def build_card(
     when a sheet was split into panels. It only affects `data_ref`, whose row
     numbers are absolute and 1-based so `manuscript-extract table` can re-open
     the file at the exact offset the card was built from.
+
+    `forced_header_row` / `forced_headerless` come from a human answer via
+    `review.Overrides`. Either one skips `detect_header` outright and sets
+    `header_confidence` to `confirmed`, because there is no longer anything to
+    detect: someone looked at the sheet.
     """
     if not rows:
         return None
@@ -441,14 +457,29 @@ def build_card(
     if populated == 0:
         return None
 
-    header_row, caption_lines, confidence = detect_header(rows, limits)
+    reviewed = forced_headerless or forced_header_row is not None
+    if reviewed:
+        # 1-based and relative to this card, which is how the rendered `Shape:`
+        # line numbers rows and therefore what the human was looking at. A card
+        # built from a panel is a slice of its sheet, so an absolute number would
+        # mean something different from what the sheet showed.
+        header_row = None if forced_headerless else forced_header_row - 1
+        if header_row is not None and not 0 <= header_row < len(rows):
+            header_row = None
+        caption_lines, confidence = [], CONFIRMED
+    else:
+        header_row, caption_lines, confidence = detect_header(rows, limits)
     notes: List[str] = []
+    if review_note:
+        notes.append(review_note)
 
     header_rows: Optional[List[int]] = None
     if header_row is None:
         header_names = _unique_names([None] * min(width, limits.max_columns))
         data_start = 0
-        notes.append("no header row identified; columns are positional")
+        notes.append("this table has no header row; columns are positional"
+                     if reviewed else
+                     "no header row identified; columns are positional")
     else:
         header_cells = _row_cells(rows[header_row], width)
         repeat = repeating_header([c for c in header_cells if c is not None])
@@ -459,7 +490,9 @@ def build_card(
                 f"{times} tables side by side" if offset == 0 else
                 f"the column names repeat in {times} groups across the row, after "
                 f"{offset} leading column(s)")
-        composed = _compose_header(rows, header_row, width)
+        # A human who named a header row named that row, not that row joined to
+        # the one above it.
+        composed = None if reviewed else _compose_header(rows, header_row, width)
         if composed is not None:
             header_cells = composed
             header_rows = [header_row - 1, header_row]
@@ -518,7 +551,7 @@ def build_card(
         notes.append(f"scan stopped at {limits.max_scan_rows} rows{of_total}; the "
                      f"value sets below are examples from those rows only")
 
-    if header_row is not None and confidence == "low":
+    if header_row is not None and confidence == LOW:
         notes.append("header row detected without type-change confirmation; it may "
                      "be a first data row")
 
@@ -533,8 +566,8 @@ def build_card(
                   if column["name"].lower() in
                   {str(v).lower() for v in (column.get("values") or [])
                    + (column.get("examples") or [])}]
-    if self_named:
-        confidence = "low"
+    if self_named and not reviewed:
+        confidence = LOW
         shown = ", ".join(repr(n) for n in self_named[:3])
         more = f" and {len(self_named) - 3} more" if len(self_named) > 3 else ""
         notes.append(f"column {shown}{more} contains its own header name as a value; "

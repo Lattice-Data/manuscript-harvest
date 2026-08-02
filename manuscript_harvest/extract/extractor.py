@@ -30,9 +30,10 @@ from typing import Dict, List, Optional, Tuple
 
 from ..fetch import store
 from . import __version__, archive, docxfile, htmlfile, jats, pdf, spreadsheet
-from . import source_fingerprint
+from . import review, source_fingerprint
 from .blocks import (
     MAIN_TEXT,
+    NON_EVIDENCE,
     SUPPLEMENT,
     TABLE,
     Block,
@@ -262,8 +263,8 @@ class FileResult:
         return record
 
 
-def _plain_text_blocks(data: bytes, source_file: str, limits: Limits,
-                       role: str) -> Tuple[List[Block], str, dict]:
+def _plain_text_blocks(data: bytes, source_file: str, limits: Limits, role: str,
+                       overrides=None) -> Tuple[List[Block], str, dict]:
     """A `.txt` supplement: tabular if it looks tabular, paragraphs otherwise."""
     text = data.decode("utf-8", errors="replace")
     if not text.strip():
@@ -278,7 +279,8 @@ def _plain_text_blocks(data: bytes, source_file: str, limits: Limits,
         counts = Counter(line.count(delimiter) for line in lines)
         common, frequency = counts.most_common(1)[0]
         if common >= 1 and len(lines) >= 2 and frequency >= 0.7 * len(lines):
-            cards, status, meta = spreadsheet.cards_from_csv(data, source_file, limits)
+            cards, status, meta = spreadsheet.cards_from_csv(
+                data, source_file, limits, overrides)
             if status == OK:
                 meta["read_as"] = f"delimited text ({delimiter!r})"
                 blocks = [Block(kind=TABLE, text=render_card(card, limits),
@@ -335,6 +337,7 @@ def extract_bytes(
     origin_prefix: str = "",
     content_type: str = "",
     depth: int = 0,
+    overrides=None,
 ) -> FileResult:
     """Route one file's bytes to the right parser by extension.
 
@@ -383,22 +386,22 @@ def extract_bytes(
             return result(UNSUPPORTED, note=f"{extension} is not parsed by this stage")
 
         if extension in SPREADSHEET_EXTENSIONS:
-            cards, status, meta = spreadsheet.cards_from_xlsx(data, relative_path, limits)
+            cards, status, meta = spreadsheet.cards_from_xlsx(data, relative_path, limits, overrides)
             return result(status, _table_blocks(cards, relative_path, "xlsx", role,
                                                 limits, label, caption),
                           "xlsx", meta, note=meta.get("reason"))
         if extension in LEGACY_SPREADSHEET_EXTENSIONS:
-            cards, status, meta = spreadsheet.cards_from_xls(data, relative_path, limits)
+            cards, status, meta = spreadsheet.cards_from_xls(data, relative_path, limits, overrides)
             return result(status, _table_blocks(cards, relative_path, "xls", role,
                                                 limits, label, caption),
                           "xls", meta, note=meta.get("reason"))
         if extension in DELIMITED_EXTENSIONS:
-            cards, status, meta = spreadsheet.cards_from_csv(data, relative_path, limits)
+            cards, status, meta = spreadsheet.cards_from_csv(data, relative_path, limits, overrides)
             return result(status, _table_blocks(cards, relative_path, "csv", role,
                                                 limits, label, caption),
                           "csv", meta, note=meta.get("reason"))
         if extension in PLAIN_TEXT_EXTENSIONS:
-            blocks, status, meta = _plain_text_blocks(data, relative_path, limits, role)
+            blocks, status, meta = _plain_text_blocks(data, relative_path, limits, role, overrides)
             return result(status, blocks, "txt", meta)
         if extension == ".pdf":
             blocks, status, meta = pdf.blocks_from_pdf(data, relative_path, limits)
@@ -407,16 +410,17 @@ def extract_bytes(
                 note = "parses as a PDF but has almost no extractable text: scanned images"
             return result(status, blocks, "pdf", meta, note=note)
         if extension == ".docx":
-            blocks, status, meta = docxfile.blocks_from_docx(data, relative_path, limits)
+            blocks, status, meta = docxfile.blocks_from_docx(data, relative_path, limits, overrides)
             return result(status, blocks, "docx", meta, note=meta.get("reason"))
         if extension in XML_EXTENSIONS:
-            blocks, status, meta = jats.blocks_from_jats(data, relative_path, limits)
+            blocks, status, meta = jats.blocks_from_jats(data, relative_path, limits, overrides)
             return result(status, blocks, "jats", meta, note=meta.get("reason"))
         if extension in HTML_EXTENSIONS:
             blocks, status, meta = htmlfile.blocks_from_html(data, relative_path, limits)
             return result(status, blocks, "html", meta, note=meta.get("reason"))
         if extension == ".zip":
-            return _extract_zip(data, relative_path, limits, role, label, caption, depth)
+            return _extract_zip(data, relative_path, limits, role, label, caption,
+                                depth, overrides)
 
         return result(UNSUPPORTED,
                       note=f"no parser for {extension or 'files without an extension'}")
@@ -432,7 +436,8 @@ def extract_bytes(
 
 
 def _extract_zip(data: bytes, relative_path: str, limits: Limits, role: str,
-                 label: Optional[str], caption: Optional[str], depth: int) -> FileResult:
+                 label: Optional[str], caption: Optional[str], depth: int,
+                 overrides=None) -> FileResult:
     wanted = set(TEXT_BEARING_EXTENSIONS)
     if depth + 1 < limits.max_archive_depth:
         wanted.add(".zip")
@@ -443,7 +448,7 @@ def _extract_zip(data: bytes, relative_path: str, limits: Limits, role: str,
     for name, member_bytes in members:
         inner = extract_bytes(
             member_bytes, f"{relative_path}!{name}", limits, role=role,
-            label=label, origin_prefix="zip:", depth=depth + 1,
+            label=label, origin_prefix="zip:", depth=depth + 1, overrides=overrides,
         )
         statuses.append(inner.status)
         blocks.extend(inner.blocks)
@@ -475,7 +480,7 @@ def _extract_zip(data: bytes, relative_path: str, limits: Limits, role: str,
 
 def extract_path(path, relative_path: str, limits: Limits, role: str = SUPPLEMENT,
                  label: Optional[str] = None, caption: Optional[str] = None,
-                 content_type: str = "") -> FileResult:
+                 content_type: str = "", overrides=None) -> FileResult:
     """`extract_bytes` for a file on disk, with the existence and size checks."""
     target = Path(path)
     if not target.exists():
@@ -491,7 +496,8 @@ def extract_path(path, relative_path: str, limits: Limits, role: str = SUPPLEMEN
         return FileResult(relative_path, role, UNREADABLE, label=label, caption=caption,
                           note=f"{type(e).__name__}: {e}")
     return extract_bytes(data, relative_path, limits, role=role, label=label,
-                         caption=caption, content_type=content_type)
+                         caption=caption, content_type=content_type,
+                         overrides=overrides)
 
 
 # -- how much of the main text carries a section label -----------------------
@@ -593,7 +599,7 @@ def _parser_versions() -> Dict[str, str]:
             "python": "%d.%d" % sys.version_info[:2]}
 
 
-def extraction_key(manifest_sha: str, limits: Limits) -> str:
+def extraction_key(manifest_sha: str, limits: Limits, review_sha: str = "") -> str:
     """Everything that decides what an extraction contains, in one hash.
 
     The parts stay in the record separately as `source_manifest_sha256`,
@@ -607,6 +613,7 @@ def extraction_key(manifest_sha: str, limits: Limits) -> str:
         "source": source_fingerprint(),
         "limits": limits.to_dict(),
         "parsers": _parser_versions(),
+        "review": review_sha,
     }
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
@@ -659,8 +666,8 @@ def _shared_manifest_labels(record: dict) -> set:
     return {label for label, n in counts.items() if n >= 2}
 
 
-def _main_text(article_dir: Path, record: dict,
-               limits: Limits) -> Tuple[FileResult, Dict[str, dict], dict]:
+def _main_text(article_dir: Path, record: dict, limits: Limits,
+               overrides=None) -> Tuple[FileResult, Dict[str, dict], dict]:
     """Pick and extract the main text. Returns `(result, supplement_labels, info)`.
 
     `info["thin"]` is set here for whichever rendition won, whatever its source.
@@ -671,19 +678,22 @@ def _main_text(article_dir: Path, record: dict,
     """
     info: dict = {}
     labels: Dict[str, dict] = {}
-    result = _choose_main_text(article_dir, record, limits, info, labels)
+    result = _choose_main_text(article_dir, record, limits, info, labels, overrides)
     info["thin"] = result.chars < limits.min_main_text_chars
     return result, labels, info
 
 
 def _choose_main_text(article_dir: Path, record: dict, limits: Limits,
-                      info: dict, labels: Dict[str, dict]) -> FileResult:
+                      info: dict, labels: Dict[str, dict],
+                      overrides=None) -> FileResult:
     """JATS if it is there and substantial, else the PDF, else the landing page."""
+    forced = overrides.main_text_source() if overrides is not None else None
     xml_entry = record.get("fulltext_xml") or {}
     xml_path = xml_entry.get("path")
     xml_result: Optional[FileResult] = None
     if xml_path and (article_dir / xml_path).exists():
-        xml_result = extract_path(article_dir / xml_path, xml_path, limits, role=MAIN_TEXT)
+        xml_result = extract_path(article_dir / xml_path, xml_path, limits,
+                                  role=MAIN_TEXT, overrides=overrides)
         labels.update(xml_result.meta.get("supplement_labels") or {})
         info["jats_chars"] = xml_result.chars
 
@@ -691,6 +701,16 @@ def _choose_main_text(article_dir: Path, record: dict, limits: Limits,
     pdf_path = pdf_entry.get("path")
     pdf_available = bool(pdf_path and (article_dir / pdf_path).exists())
     info["pdf_available"] = pdf_available
+
+    if forced == "jats" and xml_result is not None:
+        info["source"] = "jats"
+        info["source_forced_by_review"] = True
+        return xml_result
+    if forced == "pdf" and pdf_available:
+        info["source"] = "pdf"
+        info["source_forced_by_review"] = True
+        return extract_path(article_dir / pdf_path, pdf_path, limits,
+                            role=MAIN_TEXT, overrides=overrides)
 
     if xml_result is not None and xml_result.status == OK and \
             xml_result.chars >= limits.min_main_text_chars:
@@ -703,7 +723,8 @@ def _choose_main_text(article_dir: Path, record: dict, limits: Limits,
         if xml_result is not None and xml_result.status == OK:
             info["note"] = (f"JATS XML yielded only {xml_result.chars} characters "
                             f"(under {limits.min_main_text_chars}); fell back to the PDF")
-        pdf_result = extract_path(article_dir / pdf_path, pdf_path, limits, role=MAIN_TEXT)
+        pdf_result = extract_path(article_dir / pdf_path, pdf_path, limits,
+                                  role=MAIN_TEXT, overrides=overrides)
         if pdf_result.status == OK or xml_result is None:
             info["source"] = "pdf"
             return pdf_result
@@ -726,7 +747,8 @@ def _choose_main_text(article_dir: Path, record: dict, limits: Limits,
 
     landing = (record.get("landing_html") or {}).get("path") or store.LANDING_HTML
     if (article_dir / landing).exists():
-        result = extract_path(article_dir / landing, landing, limits, role=MAIN_TEXT)
+        result = extract_path(article_dir / landing, landing, limits, role=MAIN_TEXT,
+                              overrides=overrides)
         info["source"] = "landing_html"
         info["landing_page_only"] = True
         info["note"] = ("no PDF and no XML: main text is the saved publisher landing "
@@ -739,8 +761,13 @@ def _choose_main_text(article_dir: Path, record: dict, limits: Limits,
 
 
 def extract_article(article_dir, limits: Optional[Limits] = None, force: bool = False,
-                    write_markdown: bool = True) -> dict:
-    """Extract one corpus article. Returns the extraction record it wrote."""
+                    write_markdown: bool = True, config: Optional[dict] = None) -> dict:
+    """Extract one corpus article. Returns the extraction record it wrote.
+
+    A human review of this article, if there is one, is loaded from
+    `reviews/<slug>.json` and threaded into every parser: a correction that does
+    not change the next extraction is a note, not a correction.
+    """
     limits = limits or Limits()
     article_dir = Path(article_dir)
     manifest_path = article_dir / store.MANIFEST_NAME
@@ -750,7 +777,14 @@ def extract_article(article_dir, limits: Optional[Limits] = None, force: bool = 
                 "problems": [f"no readable {store.MANIFEST_NAME} in {article_dir}"]}
 
     manifest_sha = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
-    key = extraction_key(manifest_sha, limits)
+    slug = record.get("slug") or article_dir.name
+    review_file = review.review_path(slug, config)
+    # In the key, so the first correction is not silently discarded by the next
+    # `manuscript-extract all`.
+    review_sha = (hashlib.sha256(review_file.read_bytes()).hexdigest()
+                  if review_file.exists() else "")
+    overrides = review.Overrides.load(slug, record, config)
+    key = extraction_key(manifest_sha, limits, review_sha)
     output_dir = article_dir / EXTRACT_DIR
     existing_path = output_dir / EXTRACTION_NAME
     problems: List[str] = []
@@ -772,7 +806,7 @@ def extract_article(article_dir, limits: Optional[Limits] = None, force: bool = 
             problems.append(f"{BLOCKS_NAME} did not match the hash in "
                             f"{EXTRACTION_NAME}; re-extracted")
 
-    main_result, labels, main_info = _main_text(article_dir, record, limits)
+    main_result, labels, main_info = _main_text(article_dir, record, limits, overrides)
     results: List[FileResult] = [main_result]
 
     entries_without_path = 0
@@ -788,7 +822,11 @@ def extract_article(article_dir, limits: Optional[Limits] = None, force: bool = 
         # JATS beats a synthesised name, which beats the manifest, which is
         # rejected outright when two entries share it: that is the transport's
         # name for the request, not the publisher's name for the file.
-        if (matched or {}).get("label"):
+        reviewed = overrides.label_for(path) if overrides is not None else None
+        if reviewed and (reviewed.get("override") or {}).get("label"):
+            label, label_source = reviewed["override"]["label"], "review"
+            caption = reviewed["override"].get("caption") or caption
+        elif (matched or {}).get("label"):
             label, label_source = matched["label"], "jats"
         elif caption and _label_from_caption(caption):
             label, label_source = _label_from_caption(caption), "jats_caption"
@@ -798,9 +836,28 @@ def extract_article(article_dir, limits: Optional[Limits] = None, force: bool = 
             label, label_source = None, "none"
         result = extract_path(article_dir / path, path, limits,
                               role=SUPPLEMENT, label=label, caption=caption,
-                              content_type=entry.get("content_type") or "")
+                              content_type=entry.get("content_type") or "",
+                              overrides=overrides)
         result.meta["label_source"] = label_source
         results.append(result)
+
+    # A human's answer about whether a file carries content never changes the
+    # file's status -- the taxonomy stays closed and a .pptx stays
+    # `unsupported_format`. It changes what the article's status is computed
+    # from, and nothing disappears from the record either way.
+    unreachable_content: List[str] = []
+    cleared_by_review: List[str] = []
+    denied_evidence = overrides.evidence_denied() if overrides is not None else set()
+    for result in results[1:]:
+        expected = overrides.content_expected(result.path) if overrides is not None \
+            else None
+        if expected is True and result.status not in _PRODUCTIVE:
+            unreachable_content.append(result.path)
+        elif expected is False:
+            cleared_by_review.append(result.path)
+        if result.path in denied_evidence:
+            for block in result.blocks:
+                block.role = NON_EVIDENCE
 
     all_blocks: List[Block] = []
     for result in results:
@@ -816,10 +873,12 @@ def extract_article(article_dir, limits: Optional[Limits] = None, force: bool = 
     for result in results[1:]:
         by_status[result.status] = by_status.get(result.status, 0) + 1
 
-    text_bearing_failures = [
-        r.path for r in results[1:]
-        if r.status not in _PRODUCTIVE | _BENIGN
-    ]
+    text_bearing_failures = sorted({
+        r.path for r in results[1:] if r.status not in _PRODUCTIVE | _BENIGN
+    } | set(unreachable_content))
+    # Nothing disappears: a file a human cleared stays listed, and one key away
+    # is the human who cleared it.
+    blocking = [p for p in text_bearing_failures if p not in cleared_by_review]
     main_usable = main_result.status == OK and main_result.chars > 0
     main_info["usable"] = main_usable
     supplement_text = any(r.blocks for r in results[1:])
@@ -840,7 +899,7 @@ def extract_article(article_dir, limits: Optional[Limits] = None, force: bool = 
     if entries_without_path:
         caveats.append(MANIFEST_ENTRY_WITHOUT_PATH)
 
-    if main_usable and not text_bearing_failures \
+    if main_usable and not blocking \
             and not _BLOCKING_CAVEATS & set(caveats):
         status = "complete"
     elif main_usable or supplement_text:
@@ -873,6 +932,8 @@ def extract_article(article_dir, limits: Optional[Limits] = None, force: bool = 
             "sections": sorted({b.section for b in all_blocks if b.section}),
         },
         "unextracted_text_files": text_bearing_failures,
+        "unreachable_content": unreachable_content,
+        "cleared_by_review": cleared_by_review,
         "supplement_label_rejected": sorted(shared_labels),
         "review_signals": _review_signals(
             all_blocks, main_result, results[1:],
@@ -884,6 +945,22 @@ def extract_article(article_dir, limits: Optional[Limits] = None, force: bool = 
         "blocks_path": f"{EXTRACT_DIR}/{BLOCKS_NAME}",
         "blocks_sha256": written["sha256"],
         "blocks_lines": written["lines"],
+    }
+    # Always present, so a reviewed extraction is visibly different from an
+    # unreviewed one without anyone having to open the review file.
+    blocks_file = output_dir / BLOCKS_NAME
+    queue = review.queue_for(extraction, blocks_file, limits, record)
+    state, stale = review.state_of(review.read_review(review_file), extraction,
+                                   record, queue)
+    stored = review.read_review(review_file) or {}
+    extraction["review"] = {
+        "state": state,
+        "queued": sum(1 for i in queue if i["kind"] != review.SIGN_OFF),
+        "answered": len(stored.get("answers") or []),
+        "stale": [i["kind"] for i in stale],
+        "overrides_applied": overrides.applied(),
+        "sign_off": stored.get("sign_off"),
+        "queue_truncated": review.queue_truncated(extraction, blocks_file, limits),
     }
     existing_path.write_text(
         json.dumps(extraction, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -907,9 +984,14 @@ def summarize(extraction: dict) -> str:
     by_status = extraction.get("supplementary_by_status") or {}
     supplements = "  ".join(f"{k}={v}" for k, v in sorted(by_status.items())) or "-"
     caveats = extraction.get("caveats") or []
+    reviewed = extraction.get("review") or {}
+    state = reviewed.get("state", "unreviewed")
+    detail = {"queued": reviewed.get("queued"), "stale": len(reviewed.get("stale") or [])}
+    token = f"{state}({detail[state]})" if state in detail and detail[state] else state
     return (
         f"{extraction.get('status', '?'):8s} main={str(main.get('source')):13s} "
         f"blocks={totals.get('blocks', 0):<5d} tables={totals.get('tables', 0):<4d} "
         f"chars={totals.get('chars', 0):<8d} suppl[{supplements}]"
         + (f" caveats[{' '.join(caveats)}]" if caveats else "")
+        + f" rev={token}"
     )
