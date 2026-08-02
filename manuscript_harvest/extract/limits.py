@@ -34,6 +34,10 @@ class Limits:
     # -- files
     max_sheets: int = 30
     max_tables_per_file: int = 60
+    max_tables_per_sheet: int = 20
+    """One sheet can hold many blank-row-separated panels: `Figure 6` of
+    10.1126/sciimmunol.aba4163's data file holds ten. Beyond this the sheet's
+    later tables are counted in `tables_skipped` rather than dropped quietly."""
     max_blocks_per_file: int = 20000
     max_file_mb: int = 200
     min_paragraph_chars: int = 2

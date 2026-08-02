@@ -136,6 +136,53 @@ def _looks_non_finite(text: str) -> bool:
     return bool(_NON_FINITE_RX.match(text.rstrip("% ").strip()))
 
 
+# -- splitting a sheet that holds more than one table ------------------------
+
+def split_blocks(rows: List[Sequence[Any]], limits: Limits) -> List[Tuple[int, int]]:
+    """Blank-row-separated parts of a sheet, as `(start, end_exclusive)`.
+
+    Returns `[]` when the sheet is one table, so the caller keeps its single-card
+    path. 16 of the 56 xlsx sheets in this corpus hold two or more such groups.
+    `01_aba4163_data_file_s1.xlsx` sheet `Figure 6` holds ten stacked panels;
+    `detect_header` found the first one's header on row 2 and `build_card` read
+    every later panel's title, units and header row as data, giving
+    `Figure 6C [text, 23 distinct, 63 empty] = % Crescents | [% of CD3+] | ... |
+    Figure 6D | Figure 6E | ...` at `header_confidence: high` with no note.
+
+    The guard is what makes it safe, and "every part must be at least 2 rows"
+    is the wrong guard -- it disables the split on `STable 4.4` (parts
+    `[1, 13, 13, 13]`, a title row above three stacked tables) and on
+    `Figure S7` (`[9, 1, 9, 10]`). Instead a 1-row part is merged into the part
+    below it, because a lone row above a table is a panel title and
+    `detect_header` already consumes it as a caption line; a trailing 1-row part
+    is dropped; and the split happens only if two parts remain. Verified against
+    every xlsx sheet here: it fires on 12 sheets and correctly collapses
+    `STable 4.1` `[1, 13]`, `STable 4.2` `[1, 3086]` and `STable 4.5` `[1, 3086]`
+    back to a single card.
+    """
+    parts: List[Tuple[int, int]] = []
+    start: Optional[int] = None
+    for index, row in enumerate(rows):
+        if all(clean_cell(value) is None for value in row):
+            if start is not None:
+                parts.append((start, index))
+                start = None
+        elif start is None:
+            start = index
+    if start is not None:
+        parts.append((start, len(rows)))
+
+    merged: List[Tuple[int, int]] = []
+    for part in parts:
+        if merged and merged[-1][1] - merged[-1][0] == 1:
+            merged[-1] = (merged[-1][0], part[1])
+        else:
+            merged.append(part)
+    while merged and merged[-1][1] - merged[-1][0] == 1:
+        merged.pop()
+    return merged if len(merged) >= 2 else []
+
+
 # -- header detection --------------------------------------------------------
 
 def _looks_like_labels(cells: List[Optional[str]], width: int = 2) -> bool:

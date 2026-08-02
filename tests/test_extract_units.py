@@ -404,6 +404,82 @@ def test_a_truncated_scan_never_renders_its_value_set_as_complete():
     assert "celltype [text, 1 distinct] e.g. B cell" in text
 
 
+#: The shape of `Figure 6` in 10.1126/sciimmunol.aba4163's data file, trimmed to
+#: three panels: a panel title on its own row, a header row, then data, with a
+#: blank row between panels.
+def _panel(name, header, values):
+    return [(name, None, None), header] + [(None,) + row for row in values]
+
+
+STACKED_PANELS = (
+    _panel("Figure 6C", ("% Crescents", "Control", "S. aureus + NTN"),
+           [(0, 13.3), (0, 23.3), (3.3, 20.0)])
+    + [(None, None, None)]
+    + _panel("Figure 6D", ("[% of CD3+]", "Control", "S. aureus + NTN"),
+             [(0.23, 1.53), (0.16, 2.68), (0.06, 1.81)])
+    + [(None, None, None)]
+    + _panel("Figure 6E", ("[%CD3+ cells]", "Control", "S. aureus + NTN"),
+             [(0.94, 10.9), (0.67, 9.56), (0.91, 6.31)])
+)
+
+
+def test_a_sheet_of_stacked_panels_becomes_one_card_per_panel():
+    """`detect_header` found the first panel's header and `build_card` read every
+    later panel's title, units and header row as data:
+    `Figure 6C [text, 23 distinct, 63 empty] = % Crescents | [% of CD3+] | ... |
+    Figure 6D | Figure 6E | ...`, at header_confidence high and with no note."""
+    data = make_xlsx({"Figure 6": [list(r) for r in STACKED_PANELS]})
+    cards, status, _ = spreadsheet.cards_from_xlsx(data, "s1.xlsx", L)
+    assert status == "ok" and len(cards) == 3
+    assert [c.locator for c in cards] == ["sheet 'Figure 6' rows 1-5",
+                                          "sheet 'Figure 6' rows 7-11",
+                                          "sheet 'Figure 6' rows 13-17"]
+    assert cards[0].data_ref["row_start"] == 1 and cards[0].data_ref["row_end"] == 5
+    assert all("3 blank-row-separated tables" in c.notes[0] for c in cards)
+    # The pooled column name is gone: no card carries a later panel's title.
+    names = {n for c in cards for n in c.header}
+    values = {v for c in cards for col in c.columns
+              for v in (col.get("values") or []) + (col.get("examples") or [])}
+    assert "Figure 6D" not in names | values
+    assert "Figure 6E" not in names | values
+
+
+@pytest.mark.parametrize("parts,expected", [
+    # A lone row above a table is a panel title; merge it down, do not refuse.
+    ([1, 13, 13, 13], [(0, 15), (16, 29), (30, 43)]),
+    ([9, 1, 9, 10], [(0, 9), (10, 21), (22, 32)]),
+    # One title row above one table is one table.
+    ([1, 13], []),
+    ([1, 40], []),
+    # A trailing lone row is a footnote, not a table.
+    ([5, 5, 1], [(0, 5), (6, 11)]),
+    ([9], []),
+])
+def test_which_blank_separated_sheets_are_split(parts, expected):
+    """Requiring every part to be at least 2 rows was tried and it disables the
+    split on `STable 4.4` `[1, 13, 13, 13]` and `Figure S7` `[9, 1, 9, 10]`."""
+    rows: list = []
+    for size in parts:
+        if rows:
+            rows.append((None,))
+        rows.extend([(f"r{i}", i) for i in range(size)])
+    assert tables.split_blocks(rows, L) == expected
+
+
+def test_a_sheet_with_more_panels_than_the_cap_says_how_many_it_dropped():
+    sheet = []
+    for panel in range(4):
+        if sheet:
+            sheet.append([None, None])
+        sheet.append([f"Panel {panel}", None])
+        sheet.append(["name", "value"])
+        sheet.extend([[f"r{i}", i] for i in range(3)])
+    cards, _, meta = spreadsheet.cards_from_xlsx(
+        make_xlsx({"S": sheet}), "s.xlsx", Limits(max_tables_per_sheet=2))
+    assert len(cards) == 2
+    assert meta["tables_skipped"] == 2
+
+
 def test_card_does_not_copy_the_data_it_points_at_it():
     """Duplicating a 2.4 GB corpus to paraphrase it would be the wrong trade: the
     card records where to re-read the real values instead."""

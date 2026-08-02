@@ -70,6 +70,47 @@ def _load(data: bytes):
         io.BytesIO(relaxed), read_only=True, data_only=True, keep_links=False), True
 
 
+def _cards_from_sheet(rows: List[Sequence[Any]], source_file: str, title: str,
+                      limits: Limits, total, truncated: bool,
+                      meta: dict) -> List[tables.TableCard]:
+    """One sheet's cards: normally one, but one per panel when it holds several.
+
+    A sheet of stacked panels used to become a single card that pooled them --
+    six experiments' control and treatment columns under the first panel's
+    header. `tables.split_blocks` says when that is what is happening.
+    """
+    parts = tables.split_blocks(rows, limits)
+    if not parts:
+        card = tables.build_card(
+            rows, source_file=source_file, locator=f"sheet {title!r}", limits=limits,
+            title=title, n_rows_total=total, truncated=truncated,
+            data_ref={"file": source_file, "sheet": title},
+        )
+        return [card] if card is not None else []
+
+    kept = parts[: limits.max_tables_per_sheet]
+    if len(parts) > len(kept):
+        meta["tables_skipped"] = meta.get("tables_skipped", 0) + len(parts) - len(kept)
+    built: List[tables.TableCard] = []
+    for start, end in kept:
+        card = tables.build_card(
+            rows[start:end], source_file=source_file,
+            locator=f"sheet {title!r} rows {start + 1}-{end}", limits=limits,
+            title=title, n_rows_total=None,
+            # Only the part that runs to the end of the scanned window is the one
+            # the cap actually cut; the panels above it were read in full.
+            truncated=truncated and end == len(rows),
+            data_ref={"file": source_file, "sheet": title,
+                      "row_start": start + 1, "row_end": end},
+        )
+        if card is None:
+            continue
+        card.notes.insert(0, f"sheet {title!r} holds {len(parts)} blank-row-separated "
+                             f"tables; this card is rows {start + 1}-{end}")
+        built.append(card)
+    return built
+
+
 def cards_from_xlsx(
     data: bytes, source_file: str, limits: Limits
 ) -> Tuple[List[tables.TableCard], str, dict]:
@@ -125,19 +166,15 @@ def _cards_from_xlsx(
                     f"sheet {sheet.title!r}: {type(e).__name__}: {e}")
                 continue
 
-            card = tables.build_card(
-                rows,
-                source_file=source_file,
-                locator=f"sheet {sheet.title!r}",
-                limits=limits,
-                title=sheet.title,
-                n_rows_total=total,
-                truncated=truncated,
-                data_ref={"file": source_file, "sheet": sheet.title},
-            )
-            if card is not None:
-                cards.append(card)
+            cards.extend(_cards_from_sheet(rows, source_file, sheet.title, limits,
+                                           total, truncated, meta))
             if len(cards) >= limits.max_tables_per_file:
+                cards = cards[: limits.max_tables_per_file]
+                meta["tables_capped"] = True
+                meta.setdefault(
+                    "reason",
+                    f"stopped at the {limits.max_tables_per_file}-table cap; later "
+                    f"sheets in this workbook were not profiled")
                 break
     finally:
         workbook.close()
@@ -168,22 +205,19 @@ def cards_from_xls(
         return [], UNREADABLE, {"reason": f"{type(e).__name__}: {e}"}
 
     cards: List[tables.TableCard] = []
-    meta = {"sheets": book.nsheets}
+    meta: dict = {"sheets": book.nsheets}
     for sheet in book.sheets()[: limits.max_sheets]:
         limit = min(sheet.nrows, limits.max_scan_rows)
         rows = [tuple(sheet.row_values(index)) for index in range(limit)]
-        card = tables.build_card(
-            rows,
-            source_file=source_file,
-            locator=f"sheet {sheet.name!r}",
-            limits=limits,
-            title=sheet.name,
-            n_rows_total=sheet.nrows,
-            truncated=sheet.nrows > limit,
-            data_ref={"file": source_file, "sheet": sheet.name},
-        )
-        if card is not None:
-            cards.append(card)
+        cards.extend(_cards_from_sheet(rows, source_file, sheet.name, limits,
+                                       sheet.nrows, sheet.nrows > limit, meta))
+        if len(cards) >= limits.max_tables_per_file:
+            cards = cards[: limits.max_tables_per_file]
+            meta["tables_capped"] = True
+            meta.setdefault("reason",
+                            f"stopped at the {limits.max_tables_per_file}-table cap; "
+                            f"later sheets in this workbook were not profiled")
+            break
     if not cards:
         return [], NO_TEXT, meta
     return cards, OK, meta
