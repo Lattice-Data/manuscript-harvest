@@ -165,6 +165,23 @@ def test_the_second_reviewers_remarks_are_still_in_the_peer_review_file():
     assert sum(1 for t in reviewers if t.startswith("Reviewer #2")) == 3, reviewers
 
 
+def test_no_supplement_label_is_shared_by_two_files():
+    """A label two files share is not a per-file name. `Download` was on 1,989 of
+    2,076 blocks in 10.1126/science.aat5031 and `Europe PMC supplementary
+    archive` on 347 of 536 in 10.1038/s41467-023-40505-5."""
+    for record in _extractions():
+        labels = [e["label"] for e in record["supplementary"] if e.get("label")]
+        repeated = [name for name, n in collections.Counter(labels).items() if n > 1]
+        assert not repeated, (record["slug"], repeated)
+
+
+def test_every_label_source_is_in_the_closed_set():
+    for record in _extractions():
+        for entry in record["supplementary"]:
+            assert entry.get("label_source") in extractor.LABEL_SOURCES, \
+                (record["slug"], entry["path"], entry.get("label_source"))
+
+
 # -- the specific files that taught this stage its rules ---------------------
 
 def test_the_strict_ooxml_supplement_still_reads():

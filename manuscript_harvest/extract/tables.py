@@ -602,12 +602,17 @@ def _number(value) -> str:
     return str(value)
 
 
-def render(card: TableCard, limits: Limits) -> str:
+def render(card: TableCard, limits: Limits, caption: Optional[str] = None) -> str:
     """The text a model reads for one table, inside `limits.max_card_chars`.
 
     Columns are rendered before sample rows because the column profiles are what
     answer metadata questions; if the budget runs out, the sample rows are what
     should go. Whatever is dropped is stated in the text.
+
+    `caption` is the *file's* caption, used when the table has none of its own --
+    a spreadsheet sheet has no caption, but the publisher's description of the
+    file it sits in ("Table S7. Cytokine analysis, related to Figure 6") is
+    exactly what says what the sheet is.
     """
     head: List[str] = []
     name = card.title or "Table"
@@ -616,8 +621,8 @@ def render(card: TableCard, limits: Limits) -> str:
     if card.locator:
         where += f" ({card.locator})"
     head.append(where)
-    if card.caption:
-        head.append(f"Caption: {card.caption}")
+    if card.caption or caption:
+        head.append(f"Caption: {card.caption or caption}")
 
     shape = f"Shape: {card.n_rows} data row(s) x {card.n_columns} column(s)"
     if card.n_rows_total and card.n_rows_total != card.n_rows:

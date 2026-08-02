@@ -64,7 +64,17 @@ class Block:
     declares it and `walk_section` already knows it. A PDF's tree is a guess, and
     a guessed path is exactly what this package refuses to produce."""
     label: Optional[str] = None
-    """The publisher's name for this item, e.g. "Supplementary Table 3"."""
+    """The publisher's name for this item, e.g. "Supplementary Table 3".
+
+    Not the fetch transport's name for it. `label: "Download"` was on 1,989 of
+    the 2,076 blocks of 10.1126/science.aat5031 and
+    `label: "Europe PMC supplementary archive"` on 347 of 536 in
+    10.1038/s41467-023-40505-5, both straight from the manifest entry."""
+    caption: Optional[str] = None
+    """The publisher's description of the file this block came from, e.g.
+    "Table S7. Cytokine analysis, related to Figure 6". `extract_bytes` accepted
+    one and passed it only to the file-level record, so it reached
+    `extraction.json` and none of that file's blocks."""
     table: Optional[dict] = None
     index: int = 0
 
@@ -84,6 +94,8 @@ class Block:
         }
         if self.section_path:
             record["section_path"] = list(self.section_path)
+        if self.caption:
+            record["caption"] = self.caption
         if self.table is not None:
             record["table"] = self.table
         return record

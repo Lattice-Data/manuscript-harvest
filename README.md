@@ -436,6 +436,17 @@ labels turn an opaque `41467_2023_40505_MOESM3_ESM.xlsx` into "Supplementary
 Table 3" by joining on the manifest's `original_name`. 271 such labels were
 recovered across 36 files.
 
+A block's `label` is the *publisher's* name for the file, never the fetch
+transport's: a manifest label used by two or more entries of the same article is
+rejected and recorded in `supplement_label_rejected`. That measurement, rather
+than a denylist, is what caught `Download` on 1,989 of 2,076 blocks of
+10.1126/science.aat5031 and `Europe PMC supplementary archive` on 347 of 536 in
+10.1038/s41467-023-40505-5. Each supplement records where its label came from in
+`label_source` (`jats`, `jats_caption`, `manifest`, `review`, `none`), and where
+JATS gave a caption but no label the leading identifier becomes the label:
+`Table S7. Cytokine analysis, related to Figure 6` → `Table S7`, with the full
+caption carried on the block and printed in the table card.
+
 Only one source is used per article — extracting both the XML and the PDF would
 double every paragraph and leave a model to guess which copy to quote. XML that
 yields less than `min_main_text_chars` is treated as front-matter-only and the PDF

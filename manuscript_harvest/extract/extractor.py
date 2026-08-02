@@ -255,7 +255,8 @@ class FileResult:
                     "glyphs_mapped", "glyphs_unmapped",
                     "hyphens_kept", "hyphens_joined",
                     "running_lines_dropped", "running_lines",
-                    "tables_skipped", "tables_capped", "reopens_refused"):
+                    "tables_skipped", "tables_capped", "reopens_refused",
+                    "label_source"):
             if key in self.meta:
                 record[key] = self.meta[key]
         return record
@@ -309,10 +310,17 @@ def _plain_text_blocks(data: bytes, source_file: str, limits: Limits,
     return blocks, OK, meta
 
 
-def _table_blocks(cards, source_file: str, origin: str, role: str,
-                  limits: Limits) -> List[Block]:
-    return [Block(kind=TABLE, text=render_card(card, limits), source_file=source_file,
-                  origin=origin, locator=card.locator, role=role, label=card.title,
+def _table_blocks(cards, source_file: str, origin: str, role: str, limits: Limits,
+                  label: Optional[str] = None,
+                  caption: Optional[str] = None) -> List[Block]:
+    """Cards as blocks. A supplied label wins over the sheet name.
+
+    `label=card.title` meant the sheet name, so a JATS-joined publisher label for
+    the file lost to `cytokine_analysis` even when one had been found.
+    """
+    return [Block(kind=TABLE, text=render_card(card, limits, caption=caption),
+                  source_file=source_file, origin=origin, locator=card.locator,
+                  role=role, label=label or card.title, caption=caption,
                   table=card.to_dict())
             for card in cards]
 
@@ -346,6 +354,8 @@ def extract_bytes(
             block.role = role
             if label and not block.label:
                 block.label = label
+            if caption and not block.caption:
+                block.caption = caption
             # A block read out of an archive must say so, or its provenance reads
             # as a top-level supplement that does not exist on disk.
             if origin_prefix and not block.origin.startswith(origin_prefix):
@@ -372,15 +382,18 @@ def extract_bytes(
 
         if extension in SPREADSHEET_EXTENSIONS:
             cards, status, meta = spreadsheet.cards_from_xlsx(data, relative_path, limits)
-            return result(status, _table_blocks(cards, relative_path, "xlsx", role, limits),
+            return result(status, _table_blocks(cards, relative_path, "xlsx", role,
+                                                limits, label, caption),
                           "xlsx", meta, note=meta.get("reason"))
         if extension in LEGACY_SPREADSHEET_EXTENSIONS:
             cards, status, meta = spreadsheet.cards_from_xls(data, relative_path, limits)
-            return result(status, _table_blocks(cards, relative_path, "xls", role, limits),
+            return result(status, _table_blocks(cards, relative_path, "xls", role,
+                                                limits, label, caption),
                           "xls", meta, note=meta.get("reason"))
         if extension in DELIMITED_EXTENSIONS:
             cards, status, meta = spreadsheet.cards_from_csv(data, relative_path, limits)
-            return result(status, _table_blocks(cards, relative_path, "csv", role, limits),
+            return result(status, _table_blocks(cards, relative_path, "csv", role,
+                                                limits, label, caption),
                           "csv", meta, note=meta.get("reason"))
         if extension in PLAIN_TEXT_EXTENSIONS:
             blocks, status, meta = _plain_text_blocks(data, relative_path, limits, role)
@@ -591,6 +604,35 @@ def _supplement_key(entry: dict) -> List[str]:
     return keys
 
 
+#: Where a supplement's label came from. Closed, like the statuses.
+LABEL_SOURCES = frozenset({"jats", "jats_caption", "manifest", "review", "none"})
+
+
+def _label_from_caption(caption: str) -> Optional[str]:
+    """`Table S7. Cytokine analysis, related to Figure 6` -> `Table S7`.
+
+    12 of the 25 `ok` supplements here carry a JATS caption and no JATS label.
+    The leading identifier before the first period is the publisher's name for
+    the file; anything longer than 40 characters is a sentence, not a name, and
+    gets no label rather than a wrong one.
+    """
+    head = caption.split(".", 1)[0].strip()
+    return head if head and len(head) <= 40 else None
+
+
+def _shared_manifest_labels(record: dict) -> set:
+    """Manifest labels used by two or more entries: transport names, not file names.
+
+    Measured rather than denylisted, because the strings vary by tier.
+    `Europe PMC supplementary archive` covers 39/39 and 49/49 entries in two
+    articles here and `Download` covers 11/11 and 2/2, while a genuine Cell Press
+    per-file caption (`Table S1. Primer sequences...`) is unique.
+    """
+    counts = Counter(entry.get("label") for entry in (record.get("supplementary") or [])
+                     if entry.get("label"))
+    return {label for label, n in counts.items() if n >= 2}
+
+
 def _main_text(article_dir: Path, record: dict,
                limits: Limits) -> Tuple[FileResult, Dict[str, dict], dict]:
     """Pick and extract the main text. Returns `(result, supplement_labels, info)`.
@@ -708,6 +750,7 @@ def extract_article(article_dir, limits: Optional[Limits] = None, force: bool = 
     results: List[FileResult] = [main_result]
 
     entries_without_path = 0
+    shared_labels = _shared_manifest_labels(record)
     for entry in record.get("supplementary") or []:
         path = entry.get("path")
         if not path:
@@ -715,11 +758,23 @@ def extract_article(article_dir, limits: Optional[Limits] = None, force: bool = 
             continue
         matched = next((labels[name] for name in _supplement_key(entry) if name in labels),
                        None)
-        label = (matched or {}).get("label") or entry.get("label")
         caption = (matched or {}).get("caption")
-        results.append(extract_path(article_dir / path, path, limits,
-                                    role=SUPPLEMENT, label=label, caption=caption,
-                                    content_type=entry.get("content_type") or ""))
+        # JATS beats a synthesised name, which beats the manifest, which is
+        # rejected outright when two entries share it: that is the transport's
+        # name for the request, not the publisher's name for the file.
+        if (matched or {}).get("label"):
+            label, label_source = matched["label"], "jats"
+        elif caption and _label_from_caption(caption):
+            label, label_source = _label_from_caption(caption), "jats_caption"
+        elif entry.get("label") and entry["label"] not in shared_labels:
+            label, label_source = entry["label"], "manifest"
+        else:
+            label, label_source = None, "none"
+        result = extract_path(article_dir / path, path, limits,
+                              role=SUPPLEMENT, label=label, caption=caption,
+                              content_type=entry.get("content_type") or "")
+        result.meta["label_source"] = label_source
+        results.append(result)
 
     all_blocks: List[Block] = []
     for result in results:
@@ -792,6 +847,7 @@ def extract_article(article_dir, limits: Optional[Limits] = None, force: bool = 
             "sections": sorted({b.section for b in all_blocks if b.section}),
         },
         "unextracted_text_files": text_bearing_failures,
+        "supplement_label_rejected": sorted(shared_labels),
         "caveats": caveats,
         "status": status,
         "problems": problems,

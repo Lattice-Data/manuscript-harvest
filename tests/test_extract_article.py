@@ -242,6 +242,56 @@ def test_supplement_labels_are_joined_from_the_jats(tmp_path):
     assert labelled and all(b["label"] for b in labelled)
 
 
+def test_a_shared_manifest_label_is_rejected_and_a_unique_one_survives(tmp_path):
+    """`label: "Download"` was on 1,989 of the 2,076 blocks of
+    10.1126/science.aat5031 and `label: "Europe PMC supplementary archive"` on
+    347 of 536 in 10.1038/s41467-023-40505-5, straight from the manifest. Both
+    are the fetch transport's name for the request, and a label used by two
+    entries of the same article cannot be a per-file name."""
+    directory = _article(
+        tmp_path, xml=jats_article(METHODS_BODY),
+        supplements=[("a.xlsx", make_xlsx({"S": [["a"], [1]]})),
+                     ("b.xlsx", make_xlsx({"S": [["b"], [2]]})),
+                     ("c.xlsx", make_xlsx({"S": [["c"], [3]]}))])
+    manifest = store.read_manifest(directory)
+    manifest["supplementary"][0]["label"] = "Download"
+    manifest["supplementary"][1]["label"] = "Download"
+    manifest["supplementary"][2]["label"] = "Table S1. Primer sequences"
+    store.write_manifest(directory, manifest)
+
+    record = extract_article(directory, limits=L, force=True)
+    assert record["supplement_label_rejected"] == ["Download"]
+    by_path = {e["path"]: e for e in record["supplementary"]}
+    entries = [by_path[e["path"]] for e in manifest["supplementary"]]
+    assert [e["label_source"] for e in entries] == ["none", "none", "manifest"]
+    assert [e.get("label") for e in entries] == [None, None, "Table S1. Primer sequences"]
+    labels = {b.get("label") for b in read_blocks(directory / EXTRACT_DIR / BLOCKS_NAME)}
+    assert "Download" not in labels
+
+
+def test_a_jats_caption_becomes_the_label_and_reaches_the_blocks(tmp_path):
+    """`extract_bytes` accepted a caption and passed it only to `FileResult`, so
+    "Table S7. Cytokine analysis, related to Figure 6" reached extraction.json
+    and none of that file's blocks. 12 of the 25 ok supplements here carry one."""
+    springer = SPRINGER_SUPPLEMENT.replace(
+        "Supplementary Table 3",
+        "Table S7. Cytokine analysis, related to Figure 6")
+    directory = _article(
+        tmp_path, xml=jats_article(METHODS_BODY + springer),
+        supplements=[("41467_2023_40505_MOESM3_ESM.xlsx",
+                      make_xlsx({"cytokine_analysis": [["cell", "IL17"], ["c1", 3]]}))])
+    record = extract_article(directory, limits=L)
+    entry = record["supplementary"][0]
+    assert entry["label_source"] == "jats_caption"
+    assert entry["label"] == "Table S7"
+    block = next(b for b in read_blocks(directory / EXTRACT_DIR / BLOCKS_NAME)
+                 if b["kind"] == TABLE)
+    # The label beats the sheet name, and the caption is in the card a model reads.
+    assert block["label"] == "Table S7"
+    assert block["caption"] == "Table S7. Cytokine analysis, related to Figure 6"
+    assert "Caption: Table S7. Cytokine analysis" in block["text"]
+
+
 def test_a_missing_recorded_file_is_reported(tmp_path):
     directory = _article(tmp_path, xml=jats_article(METHODS_BODY),
                          supplements=[("gone.xlsx", make_xlsx({"S": [["a"], [1]]}))])
