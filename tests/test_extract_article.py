@@ -592,6 +592,24 @@ def test_cli_prints_the_section_labelling_warning(tmp_path, capsys):
     assert "main-text section labelling: none=1" in err
 
 
+def test_the_record_carries_the_counts_a_review_queue_needs(tmp_path):
+    """The strongest triage signal -- `header_confidence == "low"` -- lived only
+    inside blocks.jsonl, so no queue could be computed from the record at all."""
+    directory = _article(
+        tmp_path, xml=jats_article(METHODS_BODY),
+        supplements=[("s1.xlsx", make_xlsx({"S": [["gene", "symbol"],
+                                                  ["TP53", "p53"]]})),
+                     ("url", make_xlsx({"T": [["a", "b"], [1, 2]]}))])
+    signals = extract_article(directory, limits=L)["review_signals"]
+    assert signals["tables_total"] == 2
+    assert signals["tables_header_low"] == 1, "all-text under all-text headers"
+    assert signals["main_text_blocks"] > 0
+    assert signals["jats_reference_available"] is True
+    assert signals["supplements_sniffed"] == \
+        [next(e["path"] for e in store.read_manifest(directory)["supplementary"]
+              if e["path"].endswith("_url"))]
+
+
 def test_the_record_names_the_running_lines_it_deleted(tmp_path):
     """`meta["running_lines_dropped"]` was set by the parser but was missing from
     the allow-list, so it never reached extraction.json and nothing outside one

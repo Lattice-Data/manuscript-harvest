@@ -256,7 +256,7 @@ class FileResult:
                     "hyphens_kept", "hyphens_joined",
                     "running_lines_dropped", "running_lines",
                     "tables_skipped", "tables_capped", "reopens_refused",
-                    "label_source", "reference_list_dropped"):
+                    "label_source", "reference_list_dropped", "sniffed_as"):
             if key in self.meta:
                 record[key] = self.meta[key]
         return record
@@ -363,6 +363,8 @@ def extract_bytes(
         if sniffed:
             note = f"name carries no usable extension; read as {sniffed}" + \
                    (f"; {note}" if note else "")
+            meta = dict(meta or {})
+            meta["sniffed_as"] = sniffed
         return FileResult(relative_path, role, status, blocks, origin_prefix + origin,
                           meta, label, caption, note)
 
@@ -549,6 +551,30 @@ def _section_labelling(main_result: FileResult, main_info: dict) -> dict:
         "body_sections_missing": missing,
         "confidence": confidence,
         "why": why,
+    }
+
+
+def _review_signals(all_blocks: List[Block], main_result: FileResult,
+                    supplements: List[FileResult], jats_available: bool) -> dict:
+    """The counts a review queue is computed from, at the top of the record.
+
+    The strongest triage signal there is -- `header_confidence == "low"`, 16 of
+    the 68 table cards on this machine -- lived only inside `blocks.jsonl`, so no
+    queue could be built from `extraction.json` at all.
+    """
+    cards = [b.table for b in all_blocks if b.kind == TABLE and b.table]
+    main_blocks = main_result.blocks
+    return {
+        "tables_total": len(cards),
+        "tables_header_low": sum(1 for c in cards
+                                 if c.get("header_confidence") == "low"),
+        "tables_headerless": sum(1 for c in cards if c.get("header_row") is None),
+        "tables_truncated": sum(1 for c in cards if c.get("truncated")),
+        "tables_columns_dropped": sum(c.get("columns_dropped") or 0 for c in cards),
+        "main_text_blocks": len(main_blocks),
+        "main_text_unlabelled": sum(1 for b in main_blocks if not b.section),
+        "supplements_sniffed": [r.path for r in supplements if r.meta.get("sniffed_as")],
+        "jats_reference_available": jats_available,
     }
 
 
@@ -848,6 +874,10 @@ def extract_article(article_dir, limits: Optional[Limits] = None, force: bool = 
         },
         "unextracted_text_files": text_bearing_failures,
         "supplement_label_rejected": sorted(shared_labels),
+        "review_signals": _review_signals(
+            all_blocks, main_result, results[1:],
+            bool((record.get("fulltext_xml") or {}).get("path")
+                 and (article_dir / (record["fulltext_xml"]["path"])).exists())),
         "caveats": caveats,
         "status": status,
         "problems": problems,
