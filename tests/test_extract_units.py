@@ -142,6 +142,21 @@ def test_glued_heading_is_split_off_the_paragraph():
     assert rest.startswith("Data collection")
 
 
+def test_a_glued_references_and_notes_is_split_off_its_first_citation():
+    """The lookahead demanded a capital letter and a reference list starts with a
+    digit, so page 83 of 10.1126/science.aat5031's supplement could only split as
+    heading `REFERENCES` and rest `AND NOTES 1. K. W. Wucherpfennig...`. Ordering
+    matters too: `_leading_patterns` has no `$` anchor, so with the bare
+    `references?` first the alternation would still take it."""
+    split = sections.split_leading_heading(
+        "REFERENCES AND NOTES 1. K. W. Wucherpfennig, Structural basis of "
+        "molecular mimicry, J. Autoimmun. 16, 293-302 (2001).")
+    assert split is not None
+    name, heading, rest = split
+    assert (name, heading) == (sections.REFERENCES, "REFERENCES AND NOTES")
+    assert rest.startswith("1. K. W. Wucherpfennig")
+
+
 @pytest.mark.parametrize("text", [
     "Results of the assay were consistent with prior work in this area of study",
     "Background information about the mice was taken from the vendor records here",

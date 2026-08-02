@@ -190,7 +190,13 @@ def _leading_patterns() -> List[Tuple[str, re.Pattern]]:
         # The heading itself is case-insensitive, the lookahead deliberately is
         # NOT: under a global re.IGNORECASE, `[A-Z]` also matches lower case, and
         # the "followed by a capital" guard silently stops guarding anything.
-        out.append((name, re.compile(rf"^\s*(?i:{body})\b\s*[:.]?\s+(?=[A-Z])")))
+        #
+        # A digit counts as the start of what follows, because a reference list
+        # starts with one. With `[A-Z]` alone, `REFERENCES AND NOTES 1. K. W.
+        # Wucherpfennig...` on page 83 of 10.1126/science.aat5031's supplement
+        # could only split as heading `REFERENCES` and rest `AND NOTES 1. K. W.`,
+        # leaving 19,265 characters of bibliography glued to the first citation.
+        out.append((name, re.compile(rf"^\s*(?i:{body})\b\s*[:.]?\s+(?=[A-Z0-9])")))
     return out
 
 
