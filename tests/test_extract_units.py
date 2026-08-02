@@ -199,6 +199,28 @@ def test_a_statement_section_is_abandoned_rather_than_carried_over_a_paper():
     assert tracker.carry("Nuclei were isolated") == sections.METHODS
 
 
+def test_an_abandoned_section_is_not_reopened_by_its_own_heading():
+    """The existing coverage only reopened with a *different* section.
+    10.1126/science.aat5031 abandons `abstract` at block 33, and then block 70 --
+    the heading `One Sentence Summary`, an ABSTRACT alias -- reopened it, so
+    blocks 70-85 came back labelled `abstract`: 16 blocks and 6,272 characters,
+    four of them figure legends beginning "Fig. 1. Mapping the spatial and
+    temporal architecture of the mature and developing human kidney". The record
+    said "the blocks after it are left unlabelled" the whole time."""
+    tracker = sections.SectionTracker()
+    tracker.heading(sections.ABSTRACT)
+    for _ in range(10):
+        tracker.carry("x" * 1000)
+    assert tracker.abandoned == [sections.ABSTRACT]
+
+    assert tracker.heading(sections.ABSTRACT) is None
+    assert tracker.carry("Fig. 1. Mapping the spatial and temporal architecture") is None
+    assert tracker.reopens_refused == [sections.ABSTRACT]
+    assert "reopen abstract" in tracker.reason()
+    # A different section still opens normally.
+    assert tracker.heading(sections.METHODS) == sections.METHODS
+
+
 def test_a_long_abstract_is_kept_up_to_the_measured_budget():
     """The longest legitimate run measured is a 4,653-character Cell Press abstract
     with its highlights and eTOC blurb, so the budget must not cut that."""

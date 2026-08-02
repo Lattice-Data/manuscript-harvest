@@ -295,10 +295,27 @@ class SectionTracker:
         """Bounded sections that ran too long to keep claiming."""
         self.withheld = 0
         """Blocks under a LOW_VALUE heading that did not look like its content."""
+        self.reopens_refused: List[str] = []
+        """Abandoned sections a later heading of the same name tried to reopen."""
         self._carried = 0
 
     def heading(self, name: str) -> Optional[str]:
-        """Open `name` as the current section, and return it for the heading block."""
+        """Open `name` as the current section, and return it for the heading block.
+
+        An abandoned section stays abandoned. Measured on 10.1126/science.aat5031:
+        `abstract` runs past its budget at block 33, and then block 70 -- the
+        heading `One Sentence Summary`, an ABSTRACT alias -- reopened it, so
+        blocks 70-85 came back labelled `abstract`: 16 blocks and 6,272
+        characters, including four figure legends totalling 2,844 characters
+        beginning "Fig. 1. Mapping the spatial and temporal architecture of the
+        mature and developing human kidney". Meanwhile the record said "the
+        blocks after it are left unlabelled", which was false for 16 of them.
+        """
+        if name in self.abandoned:
+            self.current = None
+            if name not in self.reopens_refused:
+                self.reopens_refused.append(name)
+            return None
         self.current = name
         self._carried = 0
         if name not in self.seen:
@@ -344,4 +361,8 @@ class SectionTracker:
             parts.append(
                 f"{self.withheld} block(s) under a low-value heading did not look like "
                 f"its content and were left unlabelled rather than dropped with it")
+        if self.reopens_refused:
+            parts.append(
+                f"a later heading tried to reopen {', '.join(self.reopens_refused)} "
+                f"after it had been abandoned; it was left unlabelled instead")
         return "; ".join(parts) or None

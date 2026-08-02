@@ -219,7 +219,7 @@ class FileResult:
                     "glyphs_mapped", "glyphs_unmapped",
                     "hyphens_kept", "hyphens_joined",
                     "running_lines_dropped", "running_lines",
-                    "tables_skipped", "tables_capped"):
+                    "tables_skipped", "tables_capped", "reopens_refused"):
             if key in self.meta:
                 record[key] = self.meta[key]
         return record
