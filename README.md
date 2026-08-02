@@ -527,6 +527,12 @@ have yielded text did; `partial` when something is missing; `failed` when there 
 nothing to ask a question of. Images and media carry no blame — an article whose
 only supplements are figures is still `complete`.
 
+A block's `role` is a **three**-value set: `main_text`, `supplement`, and
+`non_evidence` for a file a human marked as not article evidence — a peer-review
+file, a reporting summary, a description-of-files stub. Its text is kept and
+readable, but `manuscript-extract show --role` and every downstream filter now see
+three values, not two.
+
 ### Caveats
 
 Beside the status, `extraction.json` carries a `caveats` list from a closed
