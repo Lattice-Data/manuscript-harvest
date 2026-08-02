@@ -217,7 +217,8 @@ class FileResult:
                     "sections", "sections_abandoned",
                     "low_value_blocks_withheld",
                     "glyphs_mapped", "glyphs_unmapped",
-                    "hyphens_kept", "hyphens_joined"):
+                    "hyphens_kept", "hyphens_joined",
+                    "running_lines_dropped", "running_lines"):
             if key in self.meta:
                 record[key] = self.meta[key]
         return record

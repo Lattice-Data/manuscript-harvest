@@ -151,14 +151,20 @@ def _clean_block(text: str, symbols: Optional[Dict[int, str]] = None,
     return re.sub(r"\s+", " ", text).strip()
 
 
-def _running_lines(page_texts: List[List[str]], limits: Limits) -> set:
-    """Short strings that appear on enough pages to be furniture, not content."""
-    appearances = Counter()
+def _running_lines(page_texts: List[List[str]], limits: Limits) -> Dict[str, int]:
+    """Short strings that appear on enough pages to be furniture, not content.
+
+    Returns `text -> pages seen on`, not a set, so the record can name what was
+    deleted. This rule drops 424 of 1,160 blocks in 10.1126/sciimmunol.aba4163
+    and 854 of 2,474 in the 89-page Science supplement; a count alone does not
+    let anyone check whether that was right.
+    """
+    appearances: Counter = Counter()
     for texts in page_texts:
         for text in set(texts):
             if len(text) <= 100:
                 appearances[text] += 1
-    return {text for text, count in appearances.items()
+    return {text: count for text, count in appearances.items()
             if count >= limits.running_header_min_pages}
 
 
@@ -225,6 +231,11 @@ def blocks_from_pdf(
 
     furniture = _running_lines(per_page, limits)
     meta["running_lines_dropped"] = 0
+    # Nothing a rule drops may be silent. `running_lines_dropped` was set here
+    # already but was not in `extractor.py`'s allow-list, so it never reached
+    # `extraction.json` and the only reader anywhere was one test.
+    meta["running_lines"] = [{"text": text, "pages": pages} for text, pages
+                             in sorted(furniture.items(), key=lambda kv: (-kv[1], kv[0]))][:20]
 
     blocks: List[Block] = []
     tracker = sections_mod.SectionTracker()

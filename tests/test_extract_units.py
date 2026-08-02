@@ -944,15 +944,19 @@ def test_an_unmapped_private_use_glyph_is_counted_not_hidden():
     assert "glyphs_unmapped" not in meta and "glyphs_mapped" not in meta
 
 
-def test_running_headers_are_dropped():
+def test_running_headers_are_dropped_and_named():
     """A journal footer repeated on every page would otherwise appear as thirty
-    near-identical paragraphs."""
+    near-identical paragraphs. Naming them matters as much as dropping them: the
+    rule deletes 424 of 1,160 blocks in 10.1126/sciimmunol.aba4163 and 854 of
+    2,474 in the 89-page Science supplement, and a bare count cannot be checked."""
     body = ("Nuclei were isolated from frozen tissue and sequenced on a NovaSeq "
             "6000 instrument at the core facility. ")
     data = make_pdf_pages([["Nature Communications | volume 14", body * 3]] * 4)
     blocks, _, meta = pdf.blocks_from_pdf(data, "f.pdf", L)
     assert meta["running_lines_dropped"] >= 4
     assert not any("volume 14" in b.text for b in blocks)
+    assert meta["running_lines"][0] == {"text": "Nature Communications | volume 14",
+                                        "pages": 4}
 
 
 def test_glued_section_heading_is_split_in_a_real_pdf():

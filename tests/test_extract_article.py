@@ -441,6 +441,21 @@ def test_a_changed_manifest_invalidates_the_cache(tmp_path):
     assert extract_article(directory, limits=L).get("cached") is None
 
 
+def test_the_record_names_the_running_lines_it_deleted(tmp_path):
+    """`meta["running_lines_dropped"]` was set by the parser but was missing from
+    the allow-list, so it never reached extraction.json and nothing outside one
+    test could see that a third of a file's blocks had been deleted."""
+    body = ("Nuclei were isolated from frozen tissue and sequenced on a NovaSeq "
+            "6000 instrument at the core facility. ")
+    directory = _article(tmp_path, fulltext=make_pdf_pages(
+        [["SCIENCE IMMUNOLOGY | RESEARCH ARTICLE", body * 3]] * 4))
+    record = extract_article(directory, limits=L)
+    main = record["main_text"]
+    assert main["running_lines_dropped"] >= 4
+    assert main["running_lines"][0]["text"] == "SCIENCE IMMUNOLOGY | RESEARCH ARTICLE"
+    assert main["running_lines"][0]["pages"] == 4
+
+
 def test_a_truncated_blocks_file_is_re_extracted_not_trusted(tmp_path):
     """The cache used to test only that blocks.jsonl existed. Emptying a real
     475 KB one and re-running gave `cached: True, status: complete,
