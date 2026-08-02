@@ -54,6 +54,10 @@ class TableCard:
     caption: Optional[str] = None
     header: List[str] = field(default_factory=list)
     header_row: Optional[int] = None
+    header_rows: Optional[List[int]] = None
+    """Both rows, 0-based, when the header spans two: a group label row above a
+    sub-header row. `header_row` stays the sub-header, which is the one the data
+    starts under."""
     header_confidence: str = "low"
     n_columns: int = 0
     n_rows: int = 0
@@ -185,12 +189,48 @@ def split_blocks(rows: List[Sequence[Any]], limits: Limits) -> List[Tuple[int, i
 
 # -- header detection --------------------------------------------------------
 
+def repeating_header(present: List[str]) -> Optional[Tuple[int, int]]:
+    """`(offset, repeats)` when a row is a block of distinct names repeated.
+
+    Two shapes in this corpus, both of which the 0.7-distinct rule rejected --
+    leaving the card headerless and then printing the header strings themselves
+    as data, in the authoritative `=` form:
+
+    - `08_mmc5.xlsx` sheet `TV+vs.V-` is two identical eight-column tables side
+      by side: 16 present cells, 8 distinct, threshold 11. The card fell back to
+      "no header row identified; columns are positional" and then printed
+      `7. column_7 [text, 3 distinct] = cluster | virus+ | virus-`.
+    - `49_..._MOESM4_ESM.xlsx` sheet `Supplementary Data 5` is `Locus, Location`
+      followed by `Sum.PIPs, N.SNPs` once per cell type: 18 cells, 4 distinct.
+      Hence the small leading offset -- index columns come before the repeat.
+
+    The smallest period wins, so the count reported is the real number of groups,
+    and the block's names must be distinct, so a row of eighteen `n/a` does not
+    qualify as a header.
+    """
+    for offset in (0, 1, 2):
+        tail = present[offset:]
+        if len(tail) < 4:
+            continue
+        for period in range(2, len(tail) // 2 + 1):
+            if len(tail) % period:
+                continue
+            block = tail[:period]
+            if len(set(block)) == period and tail == block * (len(tail) // period):
+                return offset, len(tail) // period
+    return None
+
+
 def _looks_like_labels(cells: List[Optional[str]], width: int = 2) -> bool:
     """True when a row reads like column names rather than data.
 
     `width` is how wide the table is. A single-column table has a single-cell
     header, so requiring two populated cells left every one-column supplement
     headerless with its column name read as data.
+
+    A row whose names repeat in blocks is a header too -- a sheet holding two
+    tables side by side, or one group of columns per cell type. The numeric and
+    long-cell clauses still apply, so a repeating row of numbers is still data.
     """
     present = [c for c in cells if c is not None]
     if len(present) < min(2, max(1, width)):
@@ -201,8 +241,51 @@ def _looks_like_labels(cells: List[Optional[str]], width: int = 2) -> bool:
     return (
         numeric <= len(present) // 2
         and long_cells == 0
-        and distinct >= max(min(2, len(present)), int(0.7 * len(present)))
+        and (distinct >= max(min(2, len(present)), int(0.7 * len(present)))
+             or repeating_header(present) is not None)
     )
+
+
+def _compose_header(rows: List[Sequence[Any]], index: int,
+                    width: int) -> Optional[List[Optional[str]]]:
+    """Join a sparse group-label row immediately above the header onto it.
+
+    `Supplementary Data 5` of `49_..._MOESM4_ESM.xlsx` puts the cell type on row
+    4 and `Sum.PIPs / N.SNPs` on row 5, so the card printed
+    `column_5 [number, 6 distinct] = 0 | 0.01 | 0.02 | 0.03 | Endothelial OCRs |
+    Sum.PIPs` -- two header strings offered as data values. Composed, the column
+    is `Endothelial OCRs / Sum.PIPs`, which is also what makes the names unique.
+
+    Forward-fill is the only reconstruction available: openpyxl in read-only mode
+    renders a merged cell as its value followed by `None`s, and
+    `ReadOnlyWorksheet` has no `merged_cells` attribute. The row immediately
+    above must be non-blank -- a blank line between a caption and a header means
+    they are not one header, which is what keeps
+    `41591_2018_269_MOESM1_ESM.xlsx` (title, caption, blank, header on row 4)
+    out of this path.
+    """
+    above = index - 1
+    if above < 0:
+        return None
+    upper = _row_cells(rows[above], width)
+    lower = _row_cells(rows[index], width)
+    upper_present = [c for c in upper if c is not None]
+    lower_present = [c for c in lower if c is not None]
+    if len(upper_present) < 2 or len(upper_present) >= len(lower_present):
+        return None
+    if any(_value_kind(c) == NUMBER for c in upper_present):
+        return None
+    if not _looks_like_labels(upper, width):
+        return None
+
+    filled: List[Optional[str]] = []
+    carried: Optional[str] = None
+    for cell in upper:
+        if cell is not None:
+            carried = cell
+        filled.append(carried)
+    return [f"{group} / {name}" if group and name else (name or group)
+            for group, name in zip(filled, lower)]
 
 
 def detect_header(rows: List[Sequence[Any]], limits: Limits) -> Tuple[Optional[int], List[str], str]:
@@ -354,12 +437,28 @@ def build_card(
     header_row, caption_lines, confidence = detect_header(rows, limits)
     notes: List[str] = []
 
+    header_rows: Optional[List[int]] = None
     if header_row is None:
         header_names = _unique_names([None] * min(width, limits.max_columns))
         data_rows = [r for r in rows if any(clean_cell(v) is not None for v in r)]
         notes.append("no header row identified; columns are positional")
     else:
         header_cells = _row_cells(rows[header_row], width)
+        repeat = repeating_header([c for c in header_cells if c is not None])
+        if repeat:
+            offset, times = repeat
+            notes.append(
+                f"the header repeats {times} times across the row; this sheet holds "
+                f"{times} tables side by side" if offset == 0 else
+                f"the column names repeat in {times} groups across the row, after "
+                f"{offset} leading column(s)")
+        composed = _compose_header(rows, header_row, width)
+        if composed is not None:
+            header_cells = composed
+            header_rows = [header_row - 1, header_row]
+            notes.append(f"header spans 2 rows ({header_row} and {header_row + 1}); "
+                         f"the upper row's labels are forward-filled rightwards, "
+                         f"which is how a merged cell reads in read-only mode")
         header_names = _unique_names(header_cells)
         data_rows = rows[header_row + 1:]
 
@@ -418,6 +517,7 @@ def build_card(
         caption=caption or (" ".join(caption_lines) if caption_lines else None),
         header=header_names,
         header_row=header_row,
+        header_rows=header_rows,
         header_confidence=confidence,
         n_columns=len(header_names),
         n_rows=n_rows,

@@ -319,6 +319,57 @@ def test_headerless_matrix_is_reported_not_guessed():
     assert card.header == ["column_1", "column_2", "column_3"]
 
 
+def test_a_header_whose_names_repeat_is_accepted_not_turned_into_data():
+    """`08_mmc5.xlsx` sheet `TV+vs.V-` is two identical eight-column tables side
+    by side: present 16, distinct 8, threshold 11, so the 0.7 rule rejected it.
+    The card then said "no header row identified; columns are positional" and
+    printed `7. column_7 [text, 3 distinct] = cluster | virus+ | virus-` -- a
+    header string offered as one of three complete values."""
+    header = ["row.names", "p_val", "cluster", "gene"] * 2
+    rows = [tuple(header)] + [("1", "0", "virus-", "IFITM1") * 2 for _ in range(4)]
+    card = tables.build_card(rows, "mmc5.xlsx", "sheet 'TV+vs.V-'", L)
+    assert card.header_row == 0
+    assert card.header[:4] == ["row.names", "p_val", "cluster", "gene"]
+    assert any("2 tables side by side" in note for note in card.notes)
+    assert not any("no header row" in note for note in card.notes)
+
+
+def test_a_two_row_header_is_composed_rather_than_read_as_data():
+    """`49_..._MOESM4_ESM.xlsx` sheet `Supplementary Data 5` puts the cell type on
+    one row and `Sum.PIPs / N.SNPs` on the next, so the card printed
+    `column_5 [number, 6 distinct] = 0 | 0.01 | 0.02 | 0.03 | Endothelial OCRs |
+    Sum.PIPs` -- two header strings offered as data values."""
+    rows = [
+        (None, None, "Cardiomyocyte OCRs", None, "Endothelial OCRs", None),
+        ("Locus", "Location", "Sum.PIPs", "N.SNPs", "Sum.PIPs", "N.SNPs"),
+        (7, "chr1:9365199-10806984", 0.74, 7, 0.0, 0),
+        (15, "chr1:21736588-23086883", 0.05, 5, 0.01, 6),
+    ]
+    card = tables.build_card(rows, "m4.xlsx", "sheet 'Supplementary Data 5'", L)
+    assert card.header_row == 1 and card.header_rows == [0, 1]
+    assert card.header == ["Locus", "Location",
+                           "Cardiomyocyte OCRs / Sum.PIPs",
+                           "Cardiomyocyte OCRs / N.SNPs",
+                           "Endothelial OCRs / Sum.PIPs",
+                           "Endothelial OCRs / N.SNPs"]
+    assert any("header spans 2 rows" in note for note in card.notes)
+    values = {v for c in card.columns for v in (c.get("values") or [])}
+    assert "Endothelial OCRs" not in values and "Sum.PIPs" not in values
+
+
+def test_a_blank_line_between_a_caption_and_a_header_keeps_them_apart():
+    """10.1038/s41591-018-0269-2 MOESM1 is title, caption, blank, then the header
+    on row 4. Those are not one two-row header."""
+    rows = [("Supplementary Table 1", None, None),
+            ("Donor characteristics for the cohort", None, None),
+            (None, None, None),
+            ("donor", "age", "sex"),
+            ("D1", 44, "F"), ("D2", 61, "M")]
+    card = tables.build_card(rows, "m1.xlsx", "s", L)
+    assert card.header_row == 3 and card.header_rows is None
+    assert card.header == ["donor", "age", "sex"]
+
+
 def test_header_confidence_is_low_without_a_type_change():
     """All-text rows under all-text headers could be a first data row of gene
     names; the card says so rather than pretending to know."""
