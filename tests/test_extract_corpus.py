@@ -207,6 +207,18 @@ def test_every_jats_locator_resolves_to_the_element_it_names():
         assert not unresolved, (xml_path.parent.name, unresolved[:10])
 
 
+def test_block_ids_are_unique_over_the_corpus():
+    """`index` is positional: insert one block and every downstream reference
+    moves. A human confirmation recorded against index 148 must not silently
+    become a statement about a different paragraph."""
+    _extractions()
+    for path in sorted(CORPUS.glob("*/extracted/blocks.jsonl")):
+        ids = [b["block_id"] for b in read_blocks(path)]
+        assert all(ids), path
+        repeated = [i for i, n in collections.Counter(ids).items() if n > 1]
+        assert not repeated, (path.parent.parent.name, repeated[:5])
+
+
 # -- the specific files that taught this stage its rules ---------------------
 
 def test_the_strict_ooxml_supplement_still_reads():

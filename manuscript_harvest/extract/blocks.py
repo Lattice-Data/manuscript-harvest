@@ -86,10 +86,13 @@ class Block:
     `extraction.json` and none of that file's blocks."""
     table: Optional[dict] = None
     index: int = 0
+    block_id: str = ""
+    """An identity that survives a parser change. Assigned by `number_blocks`."""
 
     def to_dict(self) -> dict:
         record = {
             "index": self.index,
+            "block_id": self.block_id,
             "kind": self.kind,
             "role": self.role,
             "origin": self.origin,
@@ -113,9 +116,38 @@ class Block:
 
 
 def number_blocks(blocks: List[Block], start: int = 0) -> List[Block]:
-    """Assign stable, contiguous indices in document order."""
+    """Assign contiguous indices, and a `block_id` that survives a parser change.
+
+    `index` is positional: insert one block and every downstream reference moves.
+    That is the prerequisite for a review layer -- a human confirmation recorded
+    against index 148 must not silently become a statement about a different
+    paragraph.
+
+    The identity is content plus provenance plus an occurrence ordinal. The
+    ordinal is not optional: `(source_file, locator, text_sha256)` alone collides
+    416 times in the 2,076 blocks of 10.1126/science.aat5031 (`p.79` /
+    "Developing nephron" occurs 22 times), 128 of 1,050 in aba4163 and 11 of 536
+    in the Nature paper, because a PDF locator is only a page.
+
+    **`section` is deliberately excluded.** It is the most-revised heuristic in
+    this package, and a confirmed fact about donor age has to survive a relabel.
+    Measured across the real `6a54ff7^ -> HEAD` parser change: including it would
+    have changed 21 of 1,717 ids in aat5031 and 2 of 882 in aba4163.
+
+    Ids are assigned here because this is the one place indices are assigned, so
+    no caller can forget one and not the other.
+    """
+    ordinals: dict = {}
     for offset, block in enumerate(blocks):
         block.index = start + offset
+        key = "\x00".join([
+            block.role, block.origin, block.source_file, block.locator, block.kind,
+            hashlib.sha256(block.text.encode("utf-8")).hexdigest(),
+        ])
+        ordinal = ordinals.get(key, 0)
+        ordinals[key] = ordinal + 1
+        block.block_id = hashlib.sha256(
+            f"{key}\x00{ordinal}".encode("utf-8")).hexdigest()[:16]
     return blocks
 
 

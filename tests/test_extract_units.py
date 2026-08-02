@@ -25,6 +25,7 @@ from manuscript_harvest.extract.blocks import (
     PARAGRAPH,
     TABLE,
     Block,
+    number_blocks,
     read_blocks,
     render_markdown,
     write_blocks,
@@ -1158,6 +1159,36 @@ def test_a_cell_holding_several_paragraphs_keeps_them_apart():
     rows = next(b for b in blocks if b.kind == TABLE).table
     assert "0.798; 0.15" in next(b for b in blocks if b.kind == TABLE).text
     assert rows["header"] == ["Locus", "SNP PIP", "Supporting SNPs"]
+
+
+def test_a_block_id_survives_a_section_relabel():
+    """`section` is the most-revised heuristic in this package, and a confirmed
+    fact about donor age has to survive a relabel. Measured across the real
+    6a54ff7^ -> HEAD change: including it would have moved 21 of 1,717 ids."""
+    def one():
+        return Block(kind=PARAGRAPH, text="Donors were 44 and 61 years old.",
+                     source_file="f.pdf", origin="pdf", locator="p.7")
+
+    before, after = one(), one()
+    after.section = "results"
+    number_blocks([before])
+    number_blocks([after])
+    assert before.block_id == after.block_id and before.block_id
+
+
+def test_repeated_text_at_the_same_locator_gets_distinct_ids():
+    """A PDF locator is only a page: `(source_file, locator, text_sha256)`
+    collides 416 times in the 2,076 blocks of 10.1126/science.aat5031, `p.79` /
+    "Developing nephron" alone 22 times."""
+    blocks = [Block(kind=PARAGRAPH, text="Developing nephron", source_file="f.pdf",
+                    origin="pdf", locator="p.79") for _ in range(22)]
+    number_blocks(blocks)
+    assert len({b.block_id for b in blocks}) == 22
+    # And the assignment is a pure function of the list, so it repeats exactly.
+    again = [Block(kind=PARAGRAPH, text="Developing nephron", source_file="f.pdf",
+                   origin="pdf", locator="p.79") for _ in range(22)]
+    number_blocks(again)
+    assert [b.block_id for b in blocks] == [b.block_id for b in again]
 
 
 def test_a_prose_paragraph_with_inline_markup_is_unchanged():
