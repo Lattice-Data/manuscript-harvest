@@ -70,6 +70,45 @@ def test_known_headings_normalise(heading, expected):
     assert sections.normalize(heading) == expected
 
 
+@pytest.mark.parametrize("heading,expected", [
+    # Cell Press STAR Methods, 10.1016/j.cell.2021.01.053
+    ("Experimental Model and Subject Details", "methods"),
+    ("Quantification and Statistical Analysis", "methods"),
+    ("Supplemental Experimental Procedures", "methods"),
+    ("Supplemental Information", "supplementary"),
+    # The same headings as PyMuPDF renders Cell Press's bullet glyph, page 18.
+    ("d EXPERIMENTAL MODEL AND SUBJECT DETAILS", "methods"),
+    ("d METHOD DETAILS", "methods"),
+    ("d QUANTIFICATION AND STATISTICAL ANALYSIS", "methods"),
+    ("• Method Details", "methods"),
+    # Science, 10.1126/science.aat5031 supplement page 83
+    ("References and Notes", "references"),
+    ("Methods Summary", "methods"),
+    ("Data Availability Statement", "data_availability"),
+    ("Availability of data and materials", "data_availability"),
+])
+def test_the_top_level_headings_publishers_actually_use(heading, expected):
+    """Every one of these returned None. The strongest single case is
+    `References and Notes` on page 83 of 10.1126/science.aat5031's supplement:
+    unrecognised, it left 71 blocks and 19,265 characters of other people's
+    reference titles labelled `methods`."""
+    assert sections.normalize(heading) == expected
+
+
+@pytest.mark.parametrize("heading", [
+    # Nature uses `Main` for the body as a whole; mapping it to any canonical
+    # name is the guess this module refuses to make.
+    "Main",
+    # The bullet prefix must not promote a Cell Press highlight line, of which
+    # 10.1016/j.cell.2021.01.053 has four on page 2.
+    "d Detailed COVID-19 immune landscape depicted by",
+    "d SARS-CoV-2 RNA is present in diverse epithelial and",
+    "d Megakaryocytes and monocyte subsets may contribute to",
+])
+def test_the_widened_prefix_does_not_promote_a_highlight_line(heading):
+    assert sections.normalize(heading) is None
+
+
 @pytest.mark.parametrize("heading", [
     "Single-cell profiling of pancreatic islets",
     "TP53 is required for the response",

@@ -61,10 +61,18 @@ _ALIASES: List[Tuple[str, str]] = [
     # Methods section of both went unrecognised, leaving 69 and 51 main-text blocks
     # unlabelled -- and in a STAR Methods paper the key resources table, which is
     # where the library kit and every antibody are written down, sits under it.
-    (METHODS, r"(?:online|extended|supplementar\w+|detailed|expanded)?\s*"
+    # Every addition below is a real top-level heading from a file in this corpus
+    # that `normalize` returned None for.
+    (METHODS, r"(?:online|extended|supplement(?:al|ary)|detailed|expanded)?\s*"
               r"(?:star\s*" + _STAR + r"?\s*)?(?:materials?\s+and\s+)?methods?"
               r"|methods?\s+and\s+materials?"
               r"|experimental\s+(?:procedures?|methods?|design|model)"
+              # Cell Press STAR Methods sub-headings, 10.1016/j.cell.2021.01.053 p.18
+              r"|experimental\s+model(?:\s+and\s+subject\s+details?)?"
+              r"|quantification\s+and\s+statistical\s+analysis"
+              r"|supplement(?:al|ary)\s+experimental\s+procedures?"
+              # Nature's short methods block, e.g. 10.1038/s41586-020-2157-4
+              r"|methods?\s+summary"
               r"|materials?\s+and\s+methods?"
               r"|method\s+details?"
               r"|star\s*" + _STAR + r"?\s*methods?"),
@@ -73,12 +81,20 @@ _ALIASES: List[Tuple[str, str]] = [
     (CONCLUSIONS, r"conclusions?|concluding\s+remarks"),
     (FIGURE_LEGENDS, r"(?:supplementary\s+|extended\s+data\s+)?figure\s+legends?"
                      r"|legends?\s+(?:to|for)\s+figures?"),
-    (SUPPLEMENTARY, r"supplementary\s+(?:information|material|data|notes?|methods?|results?)"
+    # Cell Press writes "Supplemental Information", not "Supplementary".
+    (SUPPLEMENTARY, r"supplement(?:al|ary)\s+"
+                    r"(?:information|material|data|notes?|methods?|results?)"
                     r"|extended\s+data|supporting\s+information"),
-    (DATA_AVAILABILITY, r"(?:data|code|materials?|software)\s+(?:and\s+\w+\s+)?availability"
-                        r"|availability\s+of\s+(?:data|code)"
+    (DATA_AVAILABILITY, r"(?:(?:data|code|materials?|software)\s+(?:and\s+\w+\s+)?availability"
+                        r"|availability\s+of\s+(?:data|code)(?:\s+and\s+materials?)?)"
+                        r"(?:\s+statements?)?"
                         r"|accession\s+(?:codes?|numbers?)"),
-    (REFERENCES, r"references?|bibliography|literature\s+cited|works\s+cited"),
+    # `references and notes` must come first: `normalize` would backtrack past a
+    # bad ordering because of the `$` anchor, but `_leading_patterns` has no
+    # anchor, so with the bare `references?` first a glued Science bibliography
+    # splits as heading "REFERENCES" and rest "AND NOTES 1. K. W. Wucherpfennig".
+    (REFERENCES, r"references?\s+and\s+notes"
+                 r"|references?|bibliography|literature\s+cited|works\s+cited"),
     (BACK_MATTER, r"acknowledge?ments?|author\s+contributions?|competing\s+interests?"
                   r"|conflicts?\s+of\s+interest|funding|ethics\s+\w+|declarations?"
                   r"|additional\s+information|reporting\s+summary|abbreviations"),
@@ -101,13 +117,22 @@ _MAX_HEADING_CHARS = 120
 """Longer than this and it is a sentence that happens to start with a keyword."""
 
 
+#: Optional section numbering ("2.", "2.1)", "IV.") or a bullet glyph. The bare
+#: `d` is Cell Press's bullet as PyMuPDF renders it: page 18 of
+#: 10.1016/j.cell.2021.01.053 emits `d KEY RESOURCES TABLE`,
+#: `d EXPERIMENTAL MODEL AND SUBJECT DETAILS`, `d METHOD DETAILS` and
+#: `d QUANTIFICATION AND STATISTICAL ANALYSIS` -- 9 such blocks in that file. It
+#: is safe only because the body must still match in full afterwards, so the four
+#: bulleted highlight lines on page 2 ("d Detailed COVID-19 immune landscape
+#: depicted by") are still not headings.
+_HEADING_PREFIX = r"(?:(?:\d+(?:\.\d+)*|[IVXLC]+|[d●▪•⁃])\s*[.)]?\s*)?"
+
+
 def _compiled() -> List[Tuple[str, re.Pattern]]:
     out = []
     for name, body in _ALIASES:
-        # Optional section numbering ("2.", "2.1)", "IV."), optional trailing colon.
         out.append((name, re.compile(
-            rf"^\s*(?:(?:\d+(?:\.\d+)*|[IVXLC]+)\s*[.)]?\s*)?(?:{body})\s*[:.]?\s*$",
-            re.IGNORECASE)))
+            rf"^\s*{_HEADING_PREFIX}(?:{body})\s*[:.]?\s*$", re.IGNORECASE)))
     return out
 
 
