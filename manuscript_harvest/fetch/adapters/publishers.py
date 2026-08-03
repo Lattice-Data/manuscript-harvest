@@ -18,11 +18,10 @@ PII_RX = re.compile(r"/pii/([A-Z0-9]+)", re.IGNORECASE)
 from .base import (
     Adapter,
     collect_links,
-    dedupe_by_target,
     is_file_url,
     looks_like_supplement,
     meta_content,
-    url_without_fragment,
+    supplements_from_links,
 )
 
 
@@ -51,25 +50,30 @@ class NatureAdapter(Adapter):
             pass
         return None
 
+    @staticmethod
+    def _is_supplement(link: dict, url: str) -> bool:
+        """Matched against `url`, the fragment-stripped href, not the raw one.
+
+        The article page carries one `#MOESM<n>` anchor per supplementary object, and
+        it is the `MOESM` test below that the fragment would fool: `#MOESM4` puts the
+        string in the raw href while the target is the article itself. `is_file_url`
+        is not at risk -- it strips the fragment internally, by construction -- so on
+        a normal article URL, which names no file, those anchors are already refused
+        at the gate. The stripped form is what keeps that true for a publisher whose
+        article URL does end in something the extension check accepts.
+
+        A named function rather than a lambda so the distinction survives being read.
+        """
+        if not is_file_url(url):
+            return False
+        on_static_host = (
+            "static-content.springer.com/esm" in url.lower()
+            or "media.springernature.com" in url.lower()
+        )
+        return "MOESM" in url.upper() or on_static_host or looks_like_supplement(link)
+
     def find_supplements(self, page, doi: str) -> Tuple[List[dict], bool]:
-        links = collect_links(page)
-        if not links:
-            return [], False
-        found = []
-        for link in links:
-            # Fragments must be stripped first: the article page carries one
-            # `#MOESM<n>` anchor per supplementary object, and treating those as
-            # downloads fetches the page itself once per anchor.
-            url = url_without_fragment(link["url"])
-            if not is_file_url(url):
-                continue
-            on_static_host = (
-                "static-content.springer.com/esm" in url.lower()
-                or "media.springernature.com" in url.lower()
-            )
-            if "MOESM" in url.upper() or on_static_host or looks_like_supplement(link):
-                found.append({"url": url, "label": link["text"] or None})
-        return dedupe_by_target(found), True
+        return supplements_from_links(page, self._is_supplement)
 
 
 class WileyAdapter(Adapter):
@@ -97,15 +101,9 @@ class WileyAdapter(Adapter):
         return None
 
     def find_supplements(self, page, doi: str) -> Tuple[List[dict], bool]:
-        links = collect_links(page)
-        if not links:
-            return [], False
-        found = [
-            {"url": url_without_fragment(link["url"]), "label": link["text"] or None}
-            for link in links
-            if "downloadsupplement" in link["url"].lower() or looks_like_supplement(link)
-        ]
-        return dedupe_by_target(found), True
+        # Raw href, as below: only Nature needs the stripped form.
+        return supplements_from_links(page, lambda link, url: (
+            "downloadsupplement" in link["url"].lower() or looks_like_supplement(link)))
 
 
 class ElsevierAdapter(Adapter):
@@ -166,16 +164,9 @@ class ElsevierAdapter(Adapter):
         return None
 
     def find_supplements(self, page, doi: str) -> Tuple[List[dict], bool]:
-        links = collect_links(page)
-        if not links:
-            return [], False
-        found = [
-            {"url": url_without_fragment(link["url"]), "label": link["text"] or None}
-            for link in links
-            if ("ars.els-cdn.com" in link["url"].lower() and is_file_url(link["url"]))
-            or looks_like_supplement(link)
-        ]
-        return dedupe_by_target(found), True
+        return supplements_from_links(page, lambda link, url: (
+            ("ars.els-cdn.com" in link["url"].lower() and is_file_url(link["url"]))
+            or looks_like_supplement(link)))
 
 
 class PmcAdapter(Adapter):
@@ -199,12 +190,5 @@ class PmcAdapter(Adapter):
         return None
 
     def find_supplements(self, page, doi: str) -> Tuple[List[dict], bool]:
-        links = collect_links(page)
-        if not links:
-            return [], False
-        found = [
-            {"url": url_without_fragment(link["url"]), "label": link["text"] or None}
-            for link in links
-            if "/bin/" in link["url"].lower()
-        ]
-        return dedupe_by_target(found), True
+        return supplements_from_links(
+            page, lambda link, url: "/bin/" in link["url"].lower())

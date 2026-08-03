@@ -482,6 +482,26 @@ def test_nature_adapter_finds_files_not_anchors():
     assert all("MediaObjects" in link["url"] for link in links)
 
 
+def test_the_shared_supplement_skeleton_offers_both_url_forms():
+    """`supplements_from_links` hands its predicate the raw anchor *and* the
+    fragment-stripped URL, because the five adapters disagree about which to match --
+    Nature tests the stripped form, Wiley, Elsevier and PMC the raw href. A
+    single-argument skeleton would have changed one of them with nothing to notice."""
+    from manuscript_harvest.fetch.adapters.base import supplements_from_links
+
+    article = "https://www.nature.com/articles/x"
+    page = FakePage(url=article, links=[{"url": article + "#MOESM4", "text": "4"}])
+
+    seen = []
+    supplements_from_links(page, lambda link, url: seen.append((link["url"], url)) or False)
+    assert seen == [(article + "#MOESM4", article)], seen
+
+    # And the `(links, parsed)` contract the skeleton exists to get right: a page that
+    # rendered and listed nothing is not the same as a page that did not render.
+    assert supplements_from_links(page, lambda link, url: False) == ([], True)
+    assert supplements_from_links(FakePage(links=[]), lambda link, url: True) == ([], False)
+
+
 def test_empty_page_is_unparsed_not_empty():
     """`parsed=False` is what makes a publisher redesign loud instead of silent."""
     links, parsed = adapter_for("https://www.nature.com/articles/x").find_supplements(

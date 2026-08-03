@@ -174,7 +174,7 @@ audited but untouched — see the bottom of this file.
 
 - **A decision is owed on B9**: whether the two archive unpackers should share the
   media/supplement split. Documented in both docstrings; spawned as a separate task.
-## (C) — 6 of 8 done
+## (C) — 7 of 8 done
 
 - [x] C1 `extract/review.py:337`, `spreadsheet.py:74`, `docxfile.py:142`, `jats.py:376` —
       the table-header override translation existed three times and only the xlsx copy
@@ -213,9 +213,15 @@ audited but untouched — see the bottom of this file.
       differently-shaped methods, verified unshadowed. Europe PMC's candidate loop left
       alone (it folds `better_pdf_failure`).
 
-Remaining (C): C7 the
-adapter `find_supplements` skeleton (5 copies; Nature strips the fragment *first*, so a
-naive predicate re-admits the `#MOESM` anchors); C8 four small test-side/helper merges.
+- [x] C7 `fetch/adapters/base.py:157` — `supplements_from_links(page, predicate)` now
+      holds the five-copy skeleton and, with it, the `(links, parsed)` contract every new
+      adapter had to remember by hand. The predicate takes `(link, url)` because the
+      adapters disagree on which form to match; Nature's is a named method.
+      **Corrected the plan's rationale:** `is_file_url` strips fragments internally, so a
+      naive predicate would NOT re-admit the `#MOESM` anchors — the stripped URL only
+      protects the `"MOESM" in url` test. Docstrings say the accurate version.
+
+Remaining (C): C8 four small test-side/helper merges.
 Plus **8 explicit leave-alones** to record as cross-references, not merges.
 - **(E) 20 stale comments/docstrings**, including `extract/cli.py:426` advertising
   `--role` as two values when three exist, and `pdf_loader` being a ghost name in three

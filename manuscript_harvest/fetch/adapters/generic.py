@@ -16,11 +16,10 @@ from typing import List, Optional, Tuple
 from .base import (
     Adapter,
     collect_links,
-    dedupe_by_target,
     is_supplement_url,
     looks_like_supplement,
     meta_content,
-    url_without_fragment,
+    supplements_from_links,
 )
 
 
@@ -56,13 +55,4 @@ class GenericAdapter(Adapter):
         return None
 
     def find_supplements(self, page, doi: str) -> Tuple[List[dict], bool]:
-        links = collect_links(page)
-        if not links:
-            # No anchors at all means the page did not render for us.
-            return [], False
-        found = [
-            {"url": url_without_fragment(link["url"]), "label": link["text"] or None}
-            for link in links
-            if looks_like_supplement(link)
-        ]
-        return dedupe_by_target(found), True
+        return supplements_from_links(page, lambda link, url: looks_like_supplement(link))

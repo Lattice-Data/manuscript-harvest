@@ -154,6 +154,33 @@ def looks_like_supplement(link: dict) -> bool:
     return is_file_url(url)
 
 
+def supplements_from_links(page, predicate) -> Tuple[List[dict], bool]:
+    """The `find_supplements` skeleton every adapter shares: collect, filter, dedupe.
+
+    `predicate(link, url)` gets the raw anchor dict *and* the fragment-stripped URL,
+    which is why it takes two: the five adapters do not agree on which to match.
+    Nature tests the stripped form -- see `NatureAdapter._is_supplement` for the
+    `#MOESM<n>` case that decides it -- while Wiley, Elsevier and PMC test the raw
+    href. Handing a predicate only one of the two would have changed one of them
+    silently, and the difference is not visible from any single adapter.
+
+    The `(links, parsed)` pair is the reason to share this at all. Returning `[]`
+    with `parsed=True` for a page that did not render is how a publisher redesign
+    becomes a silently incomplete corpus, and until now every new adapter had to
+    remember that by hand.
+    """
+    links = collect_links(page)
+    if not links:
+        # No anchors at all means the page did not render for us.
+        return [], False
+    found = [
+        {"url": url_without_fragment(link["url"]), "label": link["text"] or None}
+        for link in links
+        if predicate(link, url_without_fragment(link["url"]))
+    ]
+    return dedupe_by_target(found), True
+
+
 def dedupe_by_target(links: List[dict]) -> List[dict]:
     """Collapse links that point at the same file ignoring their fragments."""
     seen, out = set(), []
