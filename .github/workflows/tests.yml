@@ -29,6 +29,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt -r requirements-dev.txt
+          # Then the package itself, so pyproject's own dependency list is
+          # exercised rather than taken on trust. It has to agree with the two
+          # requirements files -- the same pins are already installed by the line
+          # above, so this resolves to nothing new and fails loudly if a
+          # requirement was added to one place and not the other. It is also what
+          # puts the console scripts on PATH for the smoke test below.
+          pip install -e .
 
       # Playwright is deliberately NOT installed. The browser tier imports it
       # lazily inside a function, and its tests run against fakes, so the suite
@@ -68,6 +75,12 @@ jobs:
           import manuscript_harvest.fetch.cli, manuscript_harvest.extract.cli  # must import regardless
           print("ok: both CLIs import with no browser installed")
           PY
+          # And as the installed console scripts, which is how the README tells
+          # people to run them. An entry point can be wrong in pyproject while the
+          # module import above still passes.
+          manuscript-fetch --help > /dev/null
+          manuscript-extract --help > /dev/null
+          echo "ok: both console scripts run with no browser installed"
 
   lint:
     runs-on: ubuntu-latest
