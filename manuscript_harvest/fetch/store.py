@@ -168,6 +168,13 @@ def new_record(ids) -> dict:
 #: than restating the set, so the two cannot drift apart.
 SUPPL_SETTLED = {"none_listed", "fetched", "fetched_unverified"}
 
+#: `fulltext.status` values that mean the PDF is on disk and usable.
+#: `scanned_pdf_suspected` is in here because the file *is* the article -- it needs
+#: OCR, which is a separate problem from not having it. Same rule as above: this is
+#: the only definition, so read it rather than restating the pair. It had been
+#: restated as a bare literal eleven lines below that instruction.
+PDF_USABLE = {"ok", "scanned_pdf_suspected"}
+
 
 def finalize_status(record: dict) -> dict:
     """Derive the top-level status from the per-artifact statuses.
@@ -177,7 +184,7 @@ def finalize_status(record: dict) -> dict:
     partial  -> we have something useful but not everything.
     failed   -> no usable PDF.
     """
-    pdf_ok = (record.get("fulltext") or {}).get("status") in {"ok", "scanned_pdf_suspected"}
+    pdf_ok = (record.get("fulltext") or {}).get("status") in PDF_USABLE
     supplements_settled = record.get("supplementary_status") in SUPPL_SETTLED
 
     if pdf_ok and supplements_settled:

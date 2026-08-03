@@ -52,8 +52,9 @@ DEFAULT_MANUAL_DIR = "manual_fetch"
 SPEC_NAME = "manual_fetch.yaml"
 
 # Statuses that mean the PDF is on disk and usable. Kept in step with
-# fetcher._PDF_SUCCESS; duplicated rather than imported so that reading this file
-# does not require reading the tier orchestrator.
+# `store.PDF_USABLE`, which is the definition; duplicated rather than imported so
+# that this verification harness reads on its own, without the fetch stage's
+# internals. If that pair ever changes, it changes in `store` first.
 PDF_SUCCESS = {"ok", "scanned_pdf_suspected"}
 
 # Elsevier names every supplementary component mmc<N>, and the article PDF is

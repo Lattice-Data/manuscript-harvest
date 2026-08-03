@@ -56,8 +56,10 @@ from .sources.base import (
     ROLE_XML,
 )
 
-# Statuses that mean the PDF is on disk and usable.
-_PDF_SUCCESS = {"ok", "scanned_pdf_suspected"}
+# Statuses that mean the PDF is on disk and usable. Defined in `store`, which is
+# where `finalize_status` reads it, so the orchestrator and the record it writes
+# cannot disagree about what counts as having the article.
+_PDF_SUCCESS = store.PDF_USABLE
 
 
 def _best_pdf_status(reported: List[str]) -> str:

@@ -174,7 +174,7 @@ audited but untouched — see the bottom of this file.
 
 - **A decision is owed on B9**: whether the two archive unpackers should share the
   media/supplement split. Documented in both docstrings; spawned as a separate task.
-## (C) — 2 of 8 done
+## (C) — 3 of 8 done
 
 - [x] C1 `extract/review.py:337`, `spreadsheet.py:74`, `docxfile.py:142`, `jats.py:376` —
       the table-header override translation existed three times and only the xlsx copy
@@ -187,8 +187,13 @@ audited but untouched — see the bottom of this file.
       uncovered, so a new counter would have reached the PDF record and not the docx one.
       Verified the recorded keys are unchanged on 10.1126_science.aat5031.
 
-Remaining (C): C3 the PDF-usable
-status set (3 copies, one an undocumented inline literal); C4 the `max_files` truncation
+- [x] C3 `fetch/store.py:171`, `fetcher.py:59`, `manual_fetch.py:54` — promoted the
+      "PDF is usable" pair to `store.PDF_USABLE`; `finalize_status` had restated it as a
+      bare literal eleven lines below a comment insisting a set be defined once.
+      `fetcher._PDF_SUCCESS` now *is* that object. `manual_fetch.PDF_SUCCESS` stays a
+      deliberate copy (its comment says why) but points at `store`, not `fetcher`.
+
+Remaining (C): C4 the `max_files` truncation
 block (3 tiers, message already drifted); C5 the table-cap and reset_dimensions guards
 (xlsx vs xls, xls copies untested); C6 the identical `_fetch_pdf` body (biorxiv vs
 pmc_oa — do NOT reuse that name, two subclasses have different signatures); C7 the
