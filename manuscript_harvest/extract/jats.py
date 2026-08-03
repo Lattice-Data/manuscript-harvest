@@ -369,13 +369,8 @@ class _Walker:
             self.tables_capped = True
             return
         self.tables_seen += 1
-        forced = {}
-        if self.overrides is not None:
-            answer = self.overrides.header_for(self.source_file, path)
-            if answer is not None:
-                row = (answer.get("override") or {}).get("header_row")
-                forced = {"forced_header_row": row, "forced_headerless": row is None,
-                          "review_note": self.overrides.note_for(answer)}
+        forced = (self.overrides.header_kwargs(self.source_file, path)
+                  if self.overrides is not None else {})
         card = tables.build_card(
             rows, source_file=self.source_file, locator=path, limits=self.limits,
             title=label or "Table", caption=caption,

@@ -174,8 +174,22 @@ audited but untouched — see the bottom of this file.
 
 - **A decision is owed on B9**: whether the two archive unpackers should share the
   media/supplement split. Documented in both docstrings; spawned as a separate task.
-- **(C) 8 merges** (highest value: the table-header override translation exists three
-  times and only the `spreadsheet.py` copy is tested) **and 8 explicit leave-alones**.
+## (C) — 1 of 8 done
+
+- [x] C1 `extract/review.py:337`, `spreadsheet.py:74`, `docxfile.py:142`, `jats.py:376` —
+      the table-header override translation existed three times and only the xlsx copy
+      ran. Now one `Overrides.header_kwargs`; the docx and JATS paths gained their first
+      table-header tests (previously-uncovered `docxfile:144-147` and `jats:374-377` are
+      now covered, and all three fail together if the translation breaks).
+
+Remaining (C): C2 SectionTracker meta dump (2 copies, docx untested); C3 the PDF-usable
+status set (3 copies, one an undocumented inline literal); C4 the `max_files` truncation
+block (3 tiers, message already drifted); C5 the table-cap and reset_dimensions guards
+(xlsx vs xls, xls copies untested); C6 the identical `_fetch_pdf` body (biorxiv vs
+pmc_oa — do NOT reuse that name, two subclasses have different signatures); C7 the
+adapter `find_supplements` skeleton (5 copies; Nature strips the fragment *first*, so a
+naive predicate re-admits the `#MOESM` anchors); C8 four small test-side/helper merges.
+Plus **8 explicit leave-alones** to record as cross-references, not merges.
 - **(E) 20 stale comments/docstrings**, including `extract/cli.py:426` advertising
   `--role` as two values when three exist, and `pdf_loader` being a ghost name in three
   places.

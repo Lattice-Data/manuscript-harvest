@@ -139,14 +139,8 @@ def blocks_from_docx(
             caption = next((b.text for b in reversed(blocks)
                             if b.kind in {HEADING, PARAGRAPH} and len(b.text) < 400), None)
             locator = f"table {table_index}"
-            forced = {}
-            if overrides is not None:
-                answer = overrides.header_for(source_file, locator)
-                if answer is not None:
-                    row = (answer.get("override") or {}).get("header_row")
-                    forced = {"forced_header_row": row,
-                              "forced_headerless": row is None,
-                              "review_note": overrides.note_for(answer)}
+            forced = (overrides.header_kwargs(source_file, locator)
+                      if overrides is not None else {})
             card = tables.build_card(
                 rows, source_file=source_file, locator=locator,
                 limits=limits, title=f"Table {table_index}", caption=caption,

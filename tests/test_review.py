@@ -16,7 +16,8 @@ from manuscript_harvest.extract.blocks import BLOCKS_NAME, read_blocks
 from manuscript_harvest.extract.extractor import EXTRACT_DIR, extract_article
 from manuscript_harvest.extract.limits import Limits
 from manuscript_harvest.fetch import store
-from tests.fakes import DOI, jats_article, make_article, make_pdf_pages, make_xlsx
+from tests.fakes import (DOI, jats_article, make_article, make_docx, make_pdf_pages,
+                         make_xlsx)
 
 L = Limits()
 
@@ -305,6 +306,39 @@ def test_a_confirmed_header_row_changes_the_next_extraction(tmp_path):
     # The note is an f-string over values read out of the review file, never
     # datetime.now(), because it lands in blocks.jsonl.
     assert "2026-08-01T10:14:00Z" in " ".join(card["notes"])
+
+
+@pytest.mark.parametrize("builder", ["docx", "jats"])
+def test_a_confirmed_header_row_applies_to_every_table_parser(tmp_path, builder):
+    """The override translation was written out three times -- xlsx, docx and JATS --
+    and only the xlsx copy was executed, because every other table-header test builds
+    its supplement with `make_xlsx`. So two of the three could have stopped applying a
+    curator's answer with nothing to notice."""
+    rows = [["Supplementary Table 1", ""], ["gene", "symbol"],
+            ["TP53", "p53"], ["MYC", "myc"]]
+    if builder == "docx":
+        supplements = [("s1.docx", make_docx([("table", rows)]))]
+    else:
+        cells = "".join(
+            "<tr>" + "".join(f"<td>{v}</td>" for v in row) + "</tr>" for row in rows)
+        supplements = [("s1.xml", jats_article(
+            f"<sec><title>Results</title><table-wrap><label>T1</label>"
+            f"<table>{cells}</table></table-wrap></sec>"))]
+
+    directory, record = _extracted(tmp_path, xml=jats_article(METHODS_BODY),
+                                   supplements=supplements)
+    item = next(i for i in _queue(directory, record) if i["kind"] == review.TABLE_HEADER)
+    config = _write_review(tmp_path, record, [
+        _answer(item, "corrected", override={"header_row": 2},
+                note="row 1 is a title line")])
+
+    after = extract_article(directory, limits=L, force=True, config=config)
+    assert after["review"]["overrides_applied"] == 1
+    card = next(b["table"] for b in read_blocks(directory / EXTRACT_DIR / BLOCKS_NAME)
+                if b.get("table") and b["source_file"].endswith(("s1.docx", "s1.xml")))
+    assert card["header_confidence"] == "confirmed"
+    assert card["header"] == ["gene", "symbol"]
+    assert any("row 1 is a title line" in note for note in card["notes"])
 
 
 def test_a_review_is_part_of_the_extraction_key(tmp_path):

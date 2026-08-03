@@ -72,15 +72,14 @@ def _load(data: bytes):
 
 
 def _forced(overrides, source_file: str, locator: str) -> dict:
-    """A human's answer about this card's header row, as build_card keywords."""
+    """A human's answer about this card's header row, as build_card keywords.
+
+    The translation itself is `review.Overrides.header_kwargs`; this only tolerates
+    an article with no review file at all.
+    """
     if overrides is None:
         return {}
-    answer = overrides.header_for(source_file, locator)
-    if answer is None:
-        return {}
-    row = (answer.get("override") or {}).get("header_row")
-    return {"forced_header_row": row, "forced_headerless": row is None,
-            "review_note": overrides.note_for(answer)}
+    return overrides.header_kwargs(source_file, locator)
 
 
 def _cards_from_sheet(rows: List[Sequence[Any]], source_file: str, title: str,

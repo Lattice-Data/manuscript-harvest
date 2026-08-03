@@ -357,6 +357,26 @@ class Overrides:
         return self._take(TABLE_HEADER,
                           {"source_file": source_file, "locator": locator})
 
+    def header_kwargs(self, source_file: str, locator: str) -> dict:
+        """A reviewed header row as `tables.build_card` keywords, `{}` if unanswered.
+
+        The translation lives here because it was written out three times -- in the
+        xlsx, docx and JATS table paths -- and only the xlsx copy was ever executed:
+        every table-header test builds its supplement with `make_xlsx`. Three copies
+        of an untested four-step translation is how a curator's answer quietly stops
+        being applied to one file type.
+
+        Note `forced_headerless`: a stored `header_row` of `None` is an answer, not a
+        missing one. It means "this sheet has no header", which is why the two keys
+        cannot be collapsed into one.
+        """
+        answer = self.header_for(source_file, locator)
+        if answer is None:
+            return {}
+        row = (answer.get("override") or {}).get("header_row")
+        return {"forced_header_row": row, "forced_headerless": row is None,
+                "review_note": self.note_for(answer)}
+
     def label_for(self, path: str) -> Optional[dict]:
         return self._take(SUPPLEMENT_LABEL, {"path": path})
 
