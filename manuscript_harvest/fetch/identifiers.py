@@ -156,6 +156,12 @@ class Identifiers:
             "pmid": self.pmid,
             "pmcid": self.pmcid,
             "epmc_source": self.epmc_source,
+            # `source` and `id` are one composite key -- `MED/12345`, `PPR/998877` --
+            # so recording the source alone left the manifest with half an
+            # identifier. It matters most for preprints, where the `PPR` number is
+            # the only handle Europe PMC answers to: neither `pmid` nor `pmcid` is
+            # set for them.
+            "epmc_id": self.epmc_id,
             "title": self.title,
             "journal": self.journal,
             "year": self.year,

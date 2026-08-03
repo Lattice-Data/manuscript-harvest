@@ -20,7 +20,7 @@ scratchpad. Each item below carries enough detail to be executed without it.
 Group (A) safe deletions and group (D) requirements fixes only. Groups (B), (C), (E),
 (F) and (G) are audited but deliberately untouched — see "Not started" at the bottom.
 
-## (A) Safe deletions — 10 of 20 done
+## (A) Safe deletions — 11 of 20 done
 
 - [x] A1 `extract/review.py:422-423` — duplicate `partially_reviewed` branch; the next
       two lines return the identical tuple for every input that reaches it.
@@ -41,8 +41,12 @@ Group (A) safe deletions and group (D) requirements fixes only. Groups (B), (C),
       before the first read.
 - [x] A10 `fetch/manual_fetch.py:359, 388` — `**extra` on `build_article`; today a typo
       lands verbatim in the reviewed spec instead of raising.
-- [ ] A11 `fetch/identifiers.py:113, 211` — write-only `epmc_id`, collected and never
-      reaching a manifest. Deleting it (alternative: add it to `to_dict`).
+- [x] A11 `fetch/identifiers.py:113, 211` — write-only `epmc_id`, collected and never
+      reaching a manifest. **Resolved the other way than the plan's default: persisted
+      it in `to_dict` rather than deleting it.** `epmc_source` was already recorded and
+      is half a composite key; for preprints the `PPR` number is the only handle Europe
+      PMC answers to. This is the one item in group (A) that adds a line instead of
+      removing one, and the one to revert first if a manifest-shape change is unwanted.
 - [ ] A12 `fetch/validate.py:175` — never-passed `min_bytes` param; replace with a
       `_MIN_DOWNLOAD_BYTES` constant beside its siblings.
 - [ ] A13 `fetch/fetcher.py:217, 227` — never-passed `tiers` param; the config dict is
