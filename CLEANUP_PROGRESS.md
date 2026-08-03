@@ -20,7 +20,7 @@ scratchpad. Each item below carries enough detail to be executed without it.
 Group (A) safe deletions and group (D) requirements fixes only. Groups (B), (C), (E),
 (F) and (G) are audited but deliberately untouched — see "Not started" at the bottom.
 
-## (A) Safe deletions — 4 of 20 done
+## (A) Safe deletions — 5 of 20 done
 
 - [x] A1 `extract/review.py:422-423` — duplicate `partially_reviewed` branch; the next
       two lines return the identical tuple for every input that reaches it.
@@ -29,7 +29,7 @@ Group (A) safe deletions and group (D) requirements fixes only. Groups (B), (C),
 - [x] A3 `extract/jats.py:78-79` — `_normalize_ws`, zero references repo-wide.
 - [x] A4 `extract/review.py:318-319` — `Overrides.__bool__`; every consumer is an
       identity test, no `if overrides` anywhere.
-- [ ] A5 `extract/section_audit.py:63` — unreferenced `_TOO_SHORT`; keep its comment by
+- [x] A5 `extract/section_audit.py:63` — unreferenced `_TOO_SHORT`; keep its comment by
       moving it above the `too_short` counter (~line 123).
 - [ ] A6 `extract/tables.py:308-309, 312-313` — both `detect_header` early guards; the
       sole caller `build_card` already returns on the identical conditions.

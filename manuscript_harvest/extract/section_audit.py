@@ -57,12 +57,6 @@ from .limits import Limits
 #: a two-sentence paragraph still yields plenty.
 SHINGLE_WORDS = 8
 
-#: A paragraph shorter than one shingle cannot be aligned this way. PDF layout
-#: produces a lot of these (axis labels, panel letters), and guessing at them
-#: would put noise into a measurement whose job is to be trusted.
-_TOO_SHORT = "too_short"
-
-
 def words(text: str) -> List[str]:
     """Lowercased alphanumeric words. Punctuation and hyphenation are dropped, so
     "perturba-tion" and "perturbation" shingle the same way."""
@@ -120,6 +114,10 @@ def audit(jats_blocks, pdf_blocks, size: int = SHINGLE_WORDS) -> dict:
     index = reference_index(jats_blocks, size)
     per_section: Dict[str, Counter] = defaultdict(Counter)
     confusions: Counter = Counter()
+    # A paragraph shorter than one shingle cannot be aligned this way. PDF layout
+    # produces a lot of these (axis labels, panel letters), and guessing at them
+    # would put noise into a measurement whose job is to be trusted, so they are
+    # counted out as `too_short_to_align` rather than scored.
     aligned = correct = unaligned = too_short = 0
     unaligned_chars = 0
 
