@@ -20,7 +20,7 @@ scratchpad. Each item below carries enough detail to be executed without it.
 Group (A) safe deletions and group (D) requirements fixes only. Groups (B), (C), (E),
 (F) and (G) are audited but deliberately untouched — see "Not started" at the bottom.
 
-## (A) Safe deletions — 7 of 20 done
+## (A) Safe deletions — 8 of 20 done
 
 - [x] A1 `extract/review.py:422-423` — duplicate `partially_reviewed` branch; the next
       two lines return the identical tuple for every input that reaches it.
@@ -35,7 +35,7 @@ Group (A) safe deletions and group (D) requirements fixes only. Groups (B), (C),
       sole caller `build_card` already returns on the identical conditions.
 - [x] A7 `fetch/store.py:299` — unreachable trailing `return f"{value:.1f}TB"`; the
       loop's `or unit == "TB"` guarantees the fifth iteration returns.
-- [ ] A8 `fetch/http.py:158-159` — unreachable trailing `raise`; also add a
+- [x] A8 `fetch/http.py:158-159` — unreachable trailing `raise`; also add a
       `max_retries < 0` guard in `Http.__init__` so the function cannot fall off the end.
 - [ ] A9 `fetch/sources/proxy_browser.py:1292` — `disposition = ""`; both arms rebind
       before the first read.

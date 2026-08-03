@@ -60,6 +60,12 @@ class Http:
         ncbi_api_key: Optional[str] = None,
         max_bytes: Optional[int] = None,
     ):
+        if max_retries < 0:
+            # `get` relies on its retry loop running at least once: the final
+            # iteration either returns or raises, which is why it needs no
+            # fallthrough. A negative count makes `range()` empty and would send
+            # the caller a `None` where a `Response` is declared.
+            raise ValueError(f"max_retries must be >= 0, got {max_retries}")
         self.contact_email = contact_email
         self.min_interval = float(min_interval_seconds)
         self.timeout = timeout_seconds
@@ -155,5 +161,3 @@ class Http:
                 content_type=(resp.headers.get("Content-Type") or "").split(";")[0].strip().lower(),
                 headers=dict(resp.headers),
             )
-
-        raise HttpError(f"GET {url} exhausted retries: {last_error}")
