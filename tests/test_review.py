@@ -299,6 +299,102 @@ def test_a_cleared_file_stays_listed_and_the_article_can_be_complete(tmp_path):
     assert after["supplementary"][0]["status"] == "unsupported_format"
 
 
+#: Body prose no heading rule recognises, as several layout blocks so the reviewed
+#: span has more than one paragraph to label -- one call covering many blocks is the
+#: whole point of the counting rule below.
+UNLABELLED_PAGES = [[
+    ("Tissue-resident immune cells are important for organ homeostasis. "
+     "We profiled the mature and developing human kidney. ") * 6,
+    ("Cells were clustered and annotated against a reference atlas, giving "
+     "twenty-eight populations across the nephron. ") * 6,
+    ("Receptor-ligand analysis implicated a signalling axis between epithelium "
+     "and resident macrophages. ") * 6,
+]]
+
+
+def _span_answered(tmp_path, section="results", note="pages 3-7 are results"):
+    """An article that queues a section span, with that span answered."""
+    directory, record = _extracted(tmp_path, fulltext=make_pdf_pages(UNLABELLED_PAGES))
+    item = next(i for i in _queue(directory, record)
+                if i["kind"] == review.SECTION_SPAN)
+    config = _write_review(tmp_path, record, [
+        _answer(item, "corrected", override={"section": section}, note=note)])
+    return directory, extract_article(directory, limits=L, force=True, config=config)
+
+
+def test_an_answered_section_span_labels_the_blocks_the_parser_left_unlabelled(tmp_path):
+    """The question was asked, rendered and stored, and the answer reached nothing:
+    `Overrides.section_for` had no caller. On 10.1126/science.aat5031 that showed up
+    as 14 override-bearing answers against `overrides_applied: 13`."""
+    directory, after = _span_answered(tmp_path)
+    assert after["review"]["overrides_applied"] == 1
+
+    blocks = [b for b in read_blocks(directory / EXTRACT_DIR / BLOCKS_NAME)
+              if b["role"] == "main_text"]
+    reviewed = [b for b in blocks if b.get("section_source") == "review"]
+    assert reviewed, "no block carries the reviewed section"
+    assert {b["section"] for b in reviewed} == {"results"}
+    # Nothing a rule does is silent, and a reviewed section is not a derived one.
+    assert after["main_text"]["sections_from_review"] == {
+        "section": "results",
+        "blocks": len(reviewed),
+        "blocks_already_labelled": len(blocks) - len(reviewed),
+    }
+
+
+def test_a_reviewed_span_never_overwrites_a_section_the_parser_found(tmp_path):
+    """One value for a whole unlabelled span is weaker evidence than a heading the
+    parser actually recognised, so it only fills gaps. The curator's own note on
+    10.1126/science.aat5031 says as much: "overwhelmingly results", while naming two
+    introduction paragraphs and one discussion paragraph inside the same span."""
+    # The unlabelled prose has to come *first*: a heading owns everything after it,
+    # so front matter before the only recognised heading is the shape that leaves
+    # both a real label and a gap for the reviewed span to fill.
+    pages = [UNLABELLED_PAGES[0] + [
+        "Methods " + ("Islets were dissociated and loaded on a 10x Chromium "
+                      "controller with the Single Cell 3' v3 kit. " * 6),
+    ]]
+    directory, record = _extracted(tmp_path, fulltext=make_pdf_pages(pages))
+    before = read_blocks(directory / EXTRACT_DIR / BLOCKS_NAME)
+    labelled = {b["block_id"]: b["section"] for b in before if b.get("section")}
+    assert "methods" in labelled.values(), "fixture did not label anything to protect"
+
+    span = next(i for i in _queue(directory, record)
+                if i["kind"] == review.SECTION_SPAN)
+    config = _write_review(tmp_path, record, [
+        _answer(span, "corrected", override={"section": "results"})])
+    extract_article(directory, limits=L, force=True, config=config)
+
+    after = read_blocks(directory / EXTRACT_DIR / BLOCKS_NAME)
+    for block in after:
+        was = labelled.get(block["block_id"])
+        if was is not None:
+            assert block["section"] == was, \
+                f"the reviewed span overwrote a parser label: {was} -> {block['section']}"
+            assert not block.get("section_source")
+
+
+def test_a_reviewed_span_is_counted_once_however_many_blocks_it_labels(tmp_path):
+    """`section_for` counts every call into `applied()`, so calling it per block
+    would report one answer as dozens and make `overrides_applied` useless as the
+    check that an answer arrived."""
+    directory, after = _span_answered(tmp_path)
+    labelled = after["main_text"]["sections_from_review"]["blocks"]
+    assert labelled > 1, "fixture is too small to tell one call from many"
+    assert after["review"]["overrides_applied"] == 1
+
+
+def test_an_unanswered_section_span_leaves_the_blocks_unlabelled(tmp_path):
+    """The gap-filling is the answer's doing, not the extractor's."""
+    page = ("Tissue-resident immune cells are important for organ homeostasis. "
+            "We profiled the mature and developing human kidney. ") * 20
+    directory, record = _extracted(tmp_path, fulltext=make_pdf_pages([[page]]))
+    blocks = read_blocks(directory / EXTRACT_DIR / BLOCKS_NAME)
+    assert any(b.get("section") is None for b in blocks)
+    assert not any(b.get("section_source") for b in blocks)
+    assert "sections_from_review" not in (record.get("main_text") or {})
+
+
 def test_a_file_a_human_says_has_content_blocks_complete(tmp_path):
     directory, record = _extracted(
         tmp_path, xml=jats_article(METHODS_BODY),

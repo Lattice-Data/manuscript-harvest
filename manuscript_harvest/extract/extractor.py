@@ -257,7 +257,8 @@ class FileResult:
                     "hyphens_kept", "hyphens_joined",
                     "running_lines_dropped", "running_lines",
                     "tables_skipped", "tables_capped", "reopens_refused",
-                    "label_source", "reference_list_dropped", "sniffed_as"):
+                    "label_source", "reference_list_dropped", "sniffed_as",
+                    "sections_from_review"):
             if key in self.meta:
                 record[key] = self.meta[key]
         return record
@@ -702,7 +703,50 @@ def _main_text(article_dir: Path, record: dict, limits: Limits,
     labels: Dict[str, dict] = {}
     result = _choose_main_text(article_dir, record, limits, info, labels, overrides)
     info["thin"] = result.chars < limits.min_main_text_chars
+    _apply_reviewed_section(result, overrides)
     return result, labels, info
+
+
+def _apply_reviewed_section(result: FileResult, overrides) -> None:
+    """Label the blocks the parser left `None` with the section a human gave.
+
+    `review._section_span_question` asks this only where `section_audit.py` cannot
+    score the labeller for free -- a PDF main text with no JATS beside it -- and it
+    asks once for the whole span, so the answer is one value keyed on the main
+    text's own path. Applied here rather than inside `pdf.py` for that reason: it is
+    a fact about the article, not about a page, and it keeps the parsers unaware of
+    the review layer.
+
+    Two rules the coarseness of that answer forces:
+
+    * only blocks with no section are touched. A heading the parser *did* recognise
+      is better evidence than one value covering everything it did not, so a
+      reviewed span never overwrites one.
+    * `section_for` is called once, not per block. It counts every call into
+      `Overrides.applied()`, so asking per block would report one answer as
+      hundreds and make `overrides_applied` useless as a check.
+
+    Nothing here is silent: the section, the count and the blocks left alone all
+    reach `extraction.json`, and each changed block carries `section_source`.
+    """
+    if overrides is None or not result.blocks:
+        return
+    section = overrides.section_for(result.path, "main_text", "", 0)
+    if not section:
+        return
+    changed = 0
+    for block in result.blocks:
+        if block.section is None:
+            block.section = section
+            block.section_source = "review"
+            changed += 1
+    result.meta["sections_from_review"] = {
+        "section": section,
+        "blocks": changed,
+        # The parser's own labels, kept. Reported so the reviewed span reads as a
+        # floor under the labelling rather than a replacement for it.
+        "blocks_already_labelled": len(result.blocks) - changed,
+    }
 
 
 def _choose_main_text(article_dir: Path, record: dict, limits: Limits,

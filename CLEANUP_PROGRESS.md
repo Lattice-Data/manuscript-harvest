@@ -9,7 +9,7 @@ Delete this file in the last commit of the cleanup.
 
 Baseline that must hold at every commit:
 
-    python -m pytest tests -q                          # 796 passed, 10 skipped
+    python -m pytest tests -q                          # 800 passed, 10 skipped
     ruff check --select F manuscript_harvest tests     # clean
 
 The full audited plan this comes from is not checked in; it lives in the session
@@ -98,7 +98,7 @@ audited but untouched — see the bottom of this file.
       measurements over the 63-paper development corpus and the `.xls` file they cite is
       not in the shipped corpus.
 
-## (B) lifted into this pass — 2 of 11 done
+## (B) lifted into this pass — 3 of 11 done
 
 - [x] B11 `requirements.txt:1`, `pyproject.toml:22` — pymupdf floor raised `>=1.24` to
       `>=1.28`, the version the checked-in section-score baseline was measured on, plus a
@@ -107,6 +107,16 @@ audited but untouched — see the bottom of this file.
       releases mostly shrink the *alignable sample* (98->70, 125->79 paragraphs) rather
       than label worse (88.8%->82.9%, 92.0%->91.1%), so this gate can fail on a PyMuPDF
       change without the labeller regressing. Recorded in the note.
+- [x] B1 `extract/review.py:348` — `Overrides.section_for` had no caller, so a curator's
+      `section_span` answer was discarded. **Wired up** (the alternative was deleting the
+      question). Applied in `extractor._apply_reviewed_section`, not in `pdf.py`: the answer
+      is article-level, keyed on the main text's path. Three rules, each pinned by a test
+      and each verified by mutation: only `section is None` blocks are filled; `section_for`
+      is called once (it counts into `applied()`); every filled block carries
+      `section_source: "review"`, a new optional `Block` field. Verified on
+      10.1126_science.aat5031: `overrides_applied` 13 -> 14, 52 blocks labelled `results`,
+      35 parser labels untouched, `blocks.jsonl` still byte-identical across re-extraction,
+      and no other article in the corpus affected.
 - [x] B10 `.github/workflows/tests.yml:44-55` — `--cov-fail-under` raised 70 to 90, and
       the comment claiming the floor was "set just under the current number" replaced with
       the measured pair: **91.8% without a corpus (what CI reports and the badge shows)
@@ -115,9 +125,8 @@ audited but untouched — see the bottom of this file.
 
 ## Remaining — audited, not started
 
-- **(B) the other 9 items needing care.** Includes the real defects: `Overrides.section_for`
-  is dead so a curator's `section_span` answer is discarded (`review.py:351`); a security
-  claim asserted where it is not enforced (`europepmc.py:245`); `Http(max_bytes=)` is a
+- **(B) the other 8 items needing care.** Includes the real defects:
+  a security claim asserted where it is not enforced (`europepmc.py:245`); `Http(max_bytes=)` is a
   cap production cannot set — wire it, do not delete; two `proxy_browser` download paths
   drifted apart; review-queue order docs contradict code.
 - **(C) 8 merges** (highest value: the table-header override translation exists three
