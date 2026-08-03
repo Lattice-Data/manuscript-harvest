@@ -68,7 +68,7 @@ Group (A) safe deletions and group (D) requirements fixes only. Groups (B), (C),
       public alias `MAX_BOUNDED_SECTION_CHARS` and its tautological assertion. Do NOT
       rewrite the docstring at 271-272 as if it were false.
 
-## (D) Requirements and packaging — 5 of 8 done
+## (D) Requirements and packaging — 6 of 8 done
 
 - [x] D1 `requirements.txt:3`, `pyproject.toml:25` — the declared `pyyaml` floor could
       not be installed on py3.12 or py3.13. **Raised to `>=6.0.2`, not the `>=6.0.1` the
@@ -85,8 +85,11 @@ Group (A) safe deletions and group (D) requirements fixes only. Groups (B), (C),
       `fetch.browser.challenge_wait_seconds` (default 8).
 - [x] D5 `requirements.txt:2, 4` — annotate the two floors that are NOT load-bearing
       (`requests>=2.31` passes at 2.25.1, `openpyxl>=3.1` at 3.0.10). No version change.
-- [ ] D6 — no coverage config anywhere, so a stale branch-mode `.coverage` makes the
-      documented local command die after the tests pass. Declare branch mode.
+- [x] D6 — coverage mode was nowhere declared. Declared `branch = false` in pyproject
+      (statement mode, which is what the gate and the badge already mean; total
+      unchanged at 93% with a local corpus). **The plan overstated this one:** the
+      `DataError` needs `--cov-append`, which neither CI nor the README passes — a plain
+      run erases the data file first, so it was never reproducible as described.
 - [ ] D7 `README.md:64` — `pip install xlrd` should be `pip install 'xlrd>=2.0'` to match
       the extra it claims to equal.
 - [ ] D8 `requirements.txt:6-13` — the corpus counts are stated as fact; they are

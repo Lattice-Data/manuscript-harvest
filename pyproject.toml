@@ -39,3 +39,13 @@ manuscript-extract = "manuscript_harvest.extract.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["manuscript_harvest*"]
+
+# Statement coverage, stated rather than left to whichever flags a run happens to
+# carry. The figure CI gates on and the badge both mean statements, so a run that
+# silently switched to branch mode would report a lower number for the same suite.
+# Being explicit also heads off `coverage.exceptions.DataError: Can't combine
+# statement coverage data with branch data`, which is what a `--cov-append` run
+# onto data from a `--cov-branch` run raises -- after the tests have already
+# passed, so it reads as a test failure rather than a mode mismatch.
+[tool.coverage.run]
+branch = false
