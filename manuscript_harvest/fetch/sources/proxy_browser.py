@@ -1122,6 +1122,41 @@ class ProxyBrowserSource(Source):
             return round(length / 1024 / 1024, 1)
         return None
 
+    def _refuse_oversize(self, url: str, oversize, result: SourceResult, via: str) -> None:
+        """Record a file the cap refused. Shared by both download paths.
+
+        They return different arities -- `_download_one` a 4-tuple, `_download_via_page`
+        a 3-tuple -- so this records and the caller shapes its own return.
+        """
+        result.problems.append(
+            f"{url.rsplit('/', 1)[-1]} not fetched: {oversize} MB exceeds the "
+            f"{self.config.get('max_file_mb', 200)} MB cap (fetch.max_file_mb)"
+        )
+        result.note("supplement_file", url=url, via=via, status="too_large",
+                    megabytes=oversize)
+
+    def _transport_failure(self, url: str, error: Exception, result: SourceResult,
+                           via: str) -> str:
+        """Name a failed body fetch, and say so out loud when it is the ~512 MB wall.
+
+        Playwright's Node driver marshals bodies as strings, so anything near V8's
+        limit fails here whatever `fetch.max_file_mb` says -- raising the cap cannot
+        help and the only route left is fetching the file by hand. That instruction
+        was in `_download_one` and missing from `_download_via_page`, which is the
+        drift this helper removes: the aggregate "N of M could not be fetched" line
+        still appeared, so the loss was the advice, not the fact.
+        """
+        transport_limit = "longer than 0x1fffffe8" in str(error)
+        status = "too_large_for_transport" if transport_limit else "request_failed"
+        if transport_limit:
+            result.problems.append(
+                f"{url.rsplit('/', 1)[-1]} exceeds what the browser transport can "
+                "return (~512 MB); fetch it manually if it is needed"
+            )
+        result.note("supplement_file", url=url, via=via, status=status,
+                    error=f"{type(error).__name__}: {error}")
+        return status
+
     def _download_one(self, context, url: str, referer: str, result: SourceResult, via: str,
                       allow_page_fallback: bool = True):
         """Fetch one file, falling back to real navigation for JS challenges.
@@ -1133,30 +1168,14 @@ class ProxyBrowserSource(Source):
         """
         oversize = self._oversize_mb(context, url, referer)
         if oversize is not None:
-            result.problems.append(
-                f"{url.rsplit('/', 1)[-1]} not fetched: {oversize} MB exceeds the "
-                f"{self.config.get('max_file_mb', 200)} MB cap (fetch.max_file_mb)"
-            )
-            result.note("supplement_file", url=url, via=via, status="too_large",
-                        megabytes=oversize)
+            self._refuse_oversize(url, oversize, result, via)
             return None, None, None, "too_large"
 
         try:
             response = context.request.get(url, headers={"Referer": referer})
             content, status_code, headers = response.body(), response.status, response.headers
         except Exception as e:
-            # Playwright's Node driver marshals bodies as strings, so anything
-            # near V8's ~512 MB limit fails here regardless of the cap.
-            transport_limit = "longer than 0x1fffffe8" in str(e)
-            status = "too_large_for_transport" if transport_limit else "request_failed"
-            if transport_limit:
-                result.problems.append(
-                    f"{url.rsplit('/', 1)[-1]} exceeds what the browser transport can "
-                    "return (~512 MB); fetch it manually if it is needed"
-                )
-            result.note("supplement_file", url=url, via=via, status=status,
-                        error=f"{type(e).__name__}: {e}")
-            return None, None, None, status
+            return None, None, None, self._transport_failure(url, e, result, via)
 
         # A 401/403 can also be the bot gate rather than a real refusal: for
         # 10.1084/jem.20232192, PMC answered 403 for four supplementary tables
@@ -1255,12 +1274,7 @@ class ProxyBrowserSource(Source):
         # described the 1.8 KB challenge page, not the file.
         oversize = self._oversize_mb(context, url, url)
         if oversize is not None:
-            result.problems.append(
-                f"{url.rsplit('/', 1)[-1]} not fetched: {oversize} MB exceeds the "
-                f"{self.config.get('max_file_mb', 200)} MB cap (fetch.max_file_mb)"
-            )
-            result.note("supplement_file", url=url, via=via, status="too_large",
-                        megabytes=oversize)
+            self._refuse_oversize(url, oversize, result, via)
             return None, None, "too_large"
 
         try:
@@ -1268,11 +1282,7 @@ class ProxyBrowserSource(Source):
             content, status_code = response.body(), response.status
             headers = response.headers
         except Exception as e:
-            transport_limit = "longer than 0x1fffffe8" in str(e)
-            status = "too_large_for_transport" if transport_limit else "request_failed"
-            result.note("supplement_file", url=url, via=via, status=status,
-                        error=f"{type(e).__name__}: {e}")
-            return None, None, status
+            return None, None, self._transport_failure(url, e, result, via)
 
         if status_code >= 400 or not content:
             result.note("supplement_file", url=url, via=via, status="http_error",
