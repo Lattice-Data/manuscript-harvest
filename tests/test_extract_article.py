@@ -269,6 +269,52 @@ def test_a_shared_manifest_label_is_rejected_and_a_unique_one_survives(tmp_path)
     assert "Download" not in labels
 
 
+def test_a_shared_jats_label_is_rejected_the_same_way_a_manifest_one_is(tmp_path):
+    """The rule does not depend on where the string came from, and the JATS
+    branch is the one trusted *above* the manifest.
+
+    10.1073/pnas.1914143116 gives every one of its ten `<supplementary-material>`
+    elements `<label>Supplementary File</label>`, so all ten files were handed the
+    same name through the door the manifest guard does not watch. Dropping them to
+    `none` is what puts them in front of a curator.
+    """
+    shared = """<sec sec-type="supplementary-material"><sec>
+<title>Supporting Information</title><p>
+<supplementary-material content-type="local-data" id="SD1"><label>Supplementary File</label>
+<media xlink:href="pnas.sd01.xlsx"/></supplementary-material>
+<supplementary-material content-type="local-data" id="SD2"><label>Supplementary File</label>
+<media xlink:href="pnas.sd02.xlsx"/></supplementary-material>
+<supplementary-material content-type="local-data" id="SD3"><label>Dataset S3</label>
+<media xlink:href="pnas.sd03.xlsx"/></supplementary-material>
+</p></sec></sec>"""
+    directory = _article(
+        tmp_path, xml=jats_article(METHODS_BODY + shared),
+        supplements=[("pnas.sd01.xlsx", make_xlsx({"S": [["a"], [1]]})),
+                     ("pnas.sd02.xlsx", make_xlsx({"S": [["b"], [2]]})),
+                     ("pnas.sd03.xlsx", make_xlsx({"S": [["c"], [3]]}))])
+
+    record = extract_article(directory, limits=L, force=True)
+    assert "Supplementary File" in record["supplement_label_rejected"]
+    by_name = {e["path"].rsplit("/", 1)[-1].split("_", 1)[-1]: e
+               for e in record["supplementary"]}
+    assert [by_name[n]["label_source"] for n in
+            ("pnas.sd01.xlsx", "pnas.sd02.xlsx", "pnas.sd03.xlsx")] \
+        == ["none", "none", "jats"]
+    assert [by_name[n].get("label") for n in
+            ("pnas.sd01.xlsx", "pnas.sd02.xlsx", "pnas.sd03.xlsx")] \
+        == [None, None, "Dataset S3"]
+    # Scoped to the supplements' own blocks, which is the whole claim: the shared
+    # string must not become a *file's* name. The body's caption blocks keep it,
+    # and should -- `<label>Supplementary File</label>` is what the XML says at
+    # that point in the Supporting Information listing, which is a caption for a
+    # sentence in the article rather than a name for a spreadsheet.
+    supplement_labels = {b.get("label") for b in
+                         read_blocks(directory / EXTRACT_DIR / BLOCKS_NAME)
+                         if b["source_file"].startswith("supplementary/")}
+    assert "Supplementary File" not in supplement_labels
+    assert "Dataset S3" in supplement_labels
+
+
 def test_a_jats_caption_becomes_the_label_and_reaches_the_blocks(tmp_path):
     """`extract_bytes` accepted a caption and passed it only to `FileResult`, so
     "Table S7. Cytokine analysis, related to Figure 6" reached extraction.json
