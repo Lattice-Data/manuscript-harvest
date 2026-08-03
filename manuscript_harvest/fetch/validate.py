@@ -93,6 +93,13 @@ _JS_CHALLENGE_MARKERS = [
     "enable javascript and cookies to continue",
 ]
 
+# Magic bytes, not Content-Type: a publisher that serves a paywall page as
+# `application/pdf` will also mislabel a supplement.
+# `extract/extractor.py`'s `sniff_extension` applies the same ordering for the same
+# reason over fifteen formats. Deliberately NOT shared: that one is a dispatcher on
+# unstripped `data[:8]` that opens the zip container to separate .xlsx from .docx,
+# while this is one whitespace-tolerant question about one format. If either gains a
+# format, read the other rather than copying from it.
 _PDF_MAGIC = b"%PDF"
 # Below this much extracted text we assume the PDF is scanned images.
 _MIN_TEXT_CHARS = 200

@@ -174,7 +174,7 @@ audited but untouched — see the bottom of this file.
 
 - **A decision is owed on B9**: whether the two archive unpackers should share the
   media/supplement split. Documented in both docstrings; spawned as a separate task.
-## (C) — 8 of 8 done (merges COMPLETE)
+## (C) — 8 of 8 merges done, leave-alones recorded (COMPLETE)
 
 - [x] C1 `extract/review.py:337`, `spreadsheet.py:74`, `docxfile.py:142`, `jats.py:376` —
       the table-header override translation existed three times and only the xlsx copy
@@ -231,8 +231,16 @@ audited but untouched — see the bottom of this file.
       pulling the orchestrator, the HTTP client and all five tiers in to merge two dicts.
       Now `manuscript_harvest/config.py`; fetch modules imported by extract.cli: **14 -> 5**.
 
-Still to do in (C): the **8 explicit leave-alones**, which want cross-reference
-comments rather than merges.
+- [x] C9 the 8 leave-alones. Two needed a cross-reference and got one:
+      `validate.py:96` now points at `extractor.sniff_extension` and says why the
+      magic-byte ordering is shared as a *principle* but not as code; `pmc_oa.py:56`
+      now points at `adapters.base.SUPPLEMENT_HINT` and records that bare `suppl` is
+      safe over a tarball basename and unsafe over a rendered page's anchor text.
+      Both references were checked to name things that exist. The remaining six
+      (`manual_fetch.PDF_SUCCESS`, `_IMAGE_EXTENSIONS` drift, the two CLIs'
+      `load_config`/`main`, `better_pdf_failure`, `sanitize_filename` vs
+      `safe_member_name`, `_shared_*_labels`) already carry their own rationale or were
+      covered by C3/B9 — left alone as the audit directed.
 - **(E) 20 stale comments/docstrings**, including `extract/cli.py:426` advertising
   `--role` as two values when three exist, and `pdf_loader` being a ghost name in three
   places.

@@ -55,6 +55,13 @@ _HTTPS_PREFIX = "https://ftp.ncbi.nlm.nih.gov"
 _IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".tif", ".tiff", ".bmp", ".eps"}
 # Names PMC uses for genuine supplementary material, as opposed to the article's
 # own figure images which also sit in the package.
+#
+# Related to but deliberately not `adapters.base.SUPPLEMENT_HINT`, which answers the
+# same question about a *rendered page*. The inputs differ, and so does what is safe:
+# that one matches href plus anchor text, where a bare `suppl` also prefixes
+# "supplier", "supply" and "supplant", so it anchors on whole path segments. This one
+# only ever sees a tarball member's basename, where bare `suppl` is unambiguous. If
+# either list gains a publisher pattern, review both.
 _SUPPLEMENT_MARKERS = re.compile(
     r"(suppl|_s\d+\b|-s\d+\b|moesm|esm|additional[_-]?file|media-?\d|table[_-]?s\d|data[_-]?s\d)",
     re.IGNORECASE,
