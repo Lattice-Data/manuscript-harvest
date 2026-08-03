@@ -68,7 +68,7 @@ Group (A) safe deletions and group (D) requirements fixes only. Groups (B), (C),
       public alias `MAX_BOUNDED_SECTION_CHARS` and its tautological assertion. Do NOT
       rewrite the docstring at 271-272 as if it were false.
 
-## (D) Requirements and packaging — 3 of 8 done
+## (D) Requirements and packaging — 4 of 8 done
 
 - [x] D1 `requirements.txt:3`, `pyproject.toml:25` — the declared `pyyaml` floor could
       not be installed on py3.12 or py3.13. **Raised to `>=6.0.2`, not the `>=6.0.1` the
@@ -80,7 +80,7 @@ Group (A) safe deletions and group (D) requirements fixes only. Groups (B), (C),
 - [x] D3 `pyproject.toml:2, 11, 17` — `license = { text = "MIT" }` is a deprecated TOML
       table that already warns on build. Use the SPDX string, drop the license
       classifier, require `setuptools>=77`.
-- [ ] D4 `config.yaml` — two live browser keys documented nowhere:
+- [x] D4 `config.yaml` — two live browser keys documented nowhere:
       `fetch.max_challenge_failures` (default 3) and
       `fetch.browser.challenge_wait_seconds` (default 8).
 - [ ] D5 `requirements.txt:2, 4` — annotate the two floors that are NOT load-bearing

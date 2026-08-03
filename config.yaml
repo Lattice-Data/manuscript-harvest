@@ -48,6 +48,12 @@ fetch:
     enabled: true
     prefix: "https://stanford.idm.oclc.org/login?url="
 
+  # Clearing a JavaScript challenge costs a page load each, so a host that
+  # challenges every file would burn one timeout per file. After this many
+  # consecutive failures the tier stops trying that fallback and records the
+  # remaining files as not attempted, rather than reproving the point per file.
+  # max_challenge_failures: 3
+
   browser:
     profile_dir: "~/.manuscript-harvest/chrome-profile"
     headless: true
@@ -58,6 +64,10 @@ fetch:
     # dead-session fetch took 7.5 minutes to say so.
     settle_deadline_seconds: 20
     content_deadline_seconds: 12
+    # How long to sit on PMC's proof-of-work page ("Preparing to download ...")
+    # before assuming its script has run. The challenge is per session, not per
+    # file, so this is paid once per run and every later file fetches normally.
+    # challenge_wait_seconds: 8
     check_url: "https://www.nature.com/articles/s41586-026-10510-x"
 
 # Extraction stage: corpus files -> blocks of text with provenance.
