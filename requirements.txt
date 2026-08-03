@@ -3,8 +3,10 @@ requests>=2.31
 pyyaml>=6.0.2
 openpyxl>=3.1
 
-# openpyxl is required, not optional: in a 63-article test corpus, 172 of the 191
-# spreadsheets are .xlsx, and they are where sample-level metadata actually lives.
+# openpyxl is required, not optional: of the 191 spreadsheets in the 63-paper
+# development corpus, 172 are .xlsx, and they are where sample-level metadata
+# actually lives. That corpus is not in this repository -- see the note in the
+# README about where these counts come from.
 #
 # The pyyaml floor is set by wheel availability across the whole supported range,
 # not by an API this code needs: cp312 wheels start at 6.0.1 and cp313 wheels at
@@ -23,8 +25,11 @@ openpyxl>=3.1
 #
 # Two optional extras:
 #   requirements-browser.txt   the institutional-proxy tier (Playwright)
-#   xlrd>=2.0                  legacy binary .xls supplements (1 file in 191);
+#   xlrd>=2.0                  legacy binary .xls supplements (1 of those 191);
 #                              without it such a file is reported
-#                              `unsupported_format` rather than silently skipped
+#                              `unsupported_format` rather than silently skipped.
+#                              No .xls file is in a fetched corpus here, so the
+#                              path is exercised against a stub standing in for
+#                              xlrd rather than against real bytes.
 #
 # Word documents, zips and JATS XML need nothing beyond the standard library.

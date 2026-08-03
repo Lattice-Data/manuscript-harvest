@@ -208,11 +208,14 @@ def _cards_from_xlsx(
 def cards_from_xls(
     data: bytes, source_file: str, limits: Limits, overrides=None
 ) -> Tuple[List[tables.TableCard], str, dict]:
-    """Legacy binary `.xls`. One file in this corpus needs it.
+    """Legacy binary `.xls`. One file in the 63-paper development corpus needs it.
 
     `xlrd` 2.x reads only this format, which is exactly the reason to keep it
     optional: without it the single file is reported as unsupported rather than
     dragging in a dependency for 1 of 191 spreadsheets.
+
+    That file is not in a fetched corpus here, so this path is tested against a
+    stub standing in for `xlrd` rather than against real bytes.
     """
     try:
         import xlrd
