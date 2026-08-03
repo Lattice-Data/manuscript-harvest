@@ -1,0 +1,190 @@
+{
+  "review_format": 1,
+  "slug": "10.1016_j.cell.2021.01.053",
+  "doi": "10.1016/j.cell.2021.01.053",
+  "answers": [
+    {
+      "kind": "table_header",
+      "key": {
+        "source_file": "fulltext.nxml",
+        "locator": "body/sec[4]/sec[1]/table-wrap[1]"
+      },
+      "source_sha256": "6a04f94e845ee0a18be36872aa2f3ecc33bd9a5bf4a785c8535e26f86c5378e5",
+      "card_fingerprint": "05bacb94e0495c55",
+      "verdict": "confirmed",
+      "override": {
+        "header_row": 1
+      },
+      "note": "This is the Cell Press Key Resources Table; the JATS carries an explicit <thead> of REAGENT or RESOURCE / SOURCE / IDENTIFIER, so row 1 is the header.",
+      "by": "Idan Gabdank",
+      "at": "2026-08-02T14:43:39Z"
+    },
+    {
+      "kind": "table_header",
+      "key": {
+        "source_file": "supplementary/06_mmc3.xlsx",
+        "locator": "sheet 'Readme'"
+      },
+      "source_sha256": "e33ef784ad8673521818538fdc36ae8c1be475dcdbe24b869df9e897226d3d32",
+      "card_fingerprint": "2f1db5309176ea6c",
+      "verdict": "corrected",
+      "override": {
+        "header_row": null
+      },
+      "note": "Headerless: all six rows are sibling legend definitions (Severity:, Stage:, Sex:, Age:, SampleType:, SampleTime:), so promoting row 1 to a column name was dropping a definition.",
+      "by": "Idan Gabdank",
+      "at": "2026-08-02T14:43:39Z"
+    },
+    {
+      "kind": "table_header",
+      "key": {
+        "source_file": "supplementary/27_mmc6.xlsx",
+        "locator": "sheet 'inflammatory genes'"
+      },
+      "source_sha256": "50266d607967666cd1817800cf3e8f1b790787fa1f5b5f8e6fe92724d18e8cad",
+      "card_fingerprint": "1d35a4a3bbf6e6c1",
+      "verdict": "corrected",
+      "override": {
+        "header_row": 1
+      },
+      "note": "Row 1 is the table title and rows 2-201 are 200 gene symbols; naming the column from row 1 keeps ABCA1 in the list, which the detected row-2 header was dropping.",
+      "by": "Idan Gabdank",
+      "at": "2026-08-02T14:43:39Z"
+    },
+    {
+      "kind": "table_header",
+      "key": {
+        "source_file": "supplementary/27_mmc6.xlsx",
+        "locator": "sheet 'cytokines genes'"
+      },
+      "source_sha256": "50266d607967666cd1817800cf3e8f1b790787fa1f5b5f8e6fe92724d18e8cad",
+      "card_fingerprint": "67caf35193ea29bd",
+      "verdict": "corrected",
+      "override": {
+        "header_row": 1
+      },
+      "note": "Row 1 holds the 16 sources (15 papers plus the KEGG database) that each column's gene list comes from; the detected row-3 header was naming columns after gene symbols and eating two data rows per column.",
+      "by": "Idan Gabdank",
+      "at": "2026-08-02T14:43:39Z"
+    },
+    {
+      "kind": "supplement_label",
+      "key": {
+        "path": "supplementary/04_mmc7.xlsx"
+      },
+      "source_sha256": "136416b28ae8bc15fd74be93c6678204223df583bc4c9457b37950921e0ac46d",
+      "card_fingerprint": null,
+      "verdict": "confirmed",
+      "override": {
+        "label": "Table S7",
+        "caption": "Table S7. Cytokine analysis, related to Figure 6"
+      },
+      "note": "The JATS carries no <label> for this file, only a <caption>; the label derived from it (Table S7) matches the publisher's caption and the mmc-to-table numbering exactly.",
+      "by": "Idan Gabdank",
+      "at": "2026-08-02T14:43:39Z"
+    },
+    {
+      "kind": "supplement_label",
+      "key": {
+        "path": "supplementary/06_mmc3.xlsx"
+      },
+      "source_sha256": "e33ef784ad8673521818538fdc36ae8c1be475dcdbe24b869df9e897226d3d32",
+      "card_fingerprint": null,
+      "verdict": "confirmed",
+      "override": {
+        "label": "Table S3",
+        "caption": "Table S3. ANOVA results, related to Figures 2 and 3"
+      },
+      "note": "The JATS carries no <label> for this file, only a <caption>; the label derived from it (Table S3) matches the publisher's caption and the mmc-to-table numbering exactly.",
+      "by": "Idan Gabdank",
+      "at": "2026-08-02T14:43:39Z"
+    },
+    {
+      "kind": "supplement_label",
+      "key": {
+        "path": "supplementary/08_mmc5.xlsx"
+      },
+      "source_sha256": "aaff52f2f02176d3f1bf637e85a0bf0ddffb3bad4da77a5ae74cd4056d44d506",
+      "card_fingerprint": null,
+      "verdict": "confirmed",
+      "override": {
+        "label": "Table S5",
+        "caption": "Table S5. Virus-positive cells (from BALF) compared with virus-negative cells from PBMCs and BALF, related to Figure 4"
+      },
+      "note": "The JATS carries no <label> for this file, only a <caption>; the label derived from it (Table S5) matches the publisher's caption and the mmc-to-table numbering exactly.",
+      "by": "Idan Gabdank",
+      "at": "2026-08-02T14:43:39Z"
+    },
+    {
+      "kind": "supplement_label",
+      "key": {
+        "path": "supplementary/16_mmc4.xlsx"
+      },
+      "source_sha256": "7c3786e8667ef628a4525eca6cac163003bb76045520a4f5b37a0fb8bb1a13a5",
+      "card_fingerprint": null,
+      "verdict": "confirmed",
+      "override": {
+        "label": "Table S4",
+        "caption": "Table S4. Proportion of virus-positive cells, related to Figure 4"
+      },
+      "note": "The JATS carries no <label> for this file, only a <caption>; the label derived from it (Table S4) matches the publisher's caption and the mmc-to-table numbering exactly.",
+      "by": "Idan Gabdank",
+      "at": "2026-08-02T14:43:39Z"
+    },
+    {
+      "kind": "supplement_label",
+      "key": {
+        "path": "supplementary/27_mmc6.xlsx"
+      },
+      "source_sha256": "50266d607967666cd1817800cf3e8f1b790787fa1f5b5f8e6fe92724d18e8cad",
+      "card_fingerprint": null,
+      "verdict": "confirmed",
+      "override": {
+        "label": "Table S6",
+        "caption": "Table S6. Inflammatory genes and cytokine score, related to Figures 6 and 7"
+      },
+      "note": "The JATS carries no <label> for this file, only a <caption>; the label derived from it (Table S6) matches the publisher's caption and the mmc-to-table numbering exactly.",
+      "by": "Idan Gabdank",
+      "at": "2026-08-02T14:43:39Z"
+    },
+    {
+      "kind": "supplement_label",
+      "key": {
+        "path": "supplementary/30_mmc2.xlsx"
+      },
+      "source_sha256": "0aa09073c460161ef5bc3488be17fe092bb8b457ce441767b0b9a0597276c79a",
+      "card_fingerprint": null,
+      "verdict": "confirmed",
+      "override": {
+        "label": "Table S2",
+        "caption": "Table S2. Marker genes and predicted regulons (transcription factors) for cell clusters, related to Figure 1"
+      },
+      "note": "The JATS carries no <label> for this file, only a <caption>; the label derived from it (Table S2) matches the publisher's caption and the mmc-to-table numbering exactly.",
+      "by": "Idan Gabdank",
+      "at": "2026-08-02T14:43:39Z"
+    },
+    {
+      "kind": "supplement_label",
+      "key": {
+        "path": "supplementary/31_mmc1.xlsx"
+      },
+      "source_sha256": "11f91d4272ba7afe712f493ddd824e5a64ba3709be0d70a1255152c7d49d9eb9",
+      "card_fingerprint": null,
+      "verdict": "confirmed",
+      "override": {
+        "label": "Table S1",
+        "caption": "Table S1. Clinical characteristics of 284 human samples, related to Figure 1"
+      },
+      "note": "The JATS carries no <label> for this file, only a <caption>; the label derived from it (Table S1) matches the publisher's caption and the mmc-to-table numbering exactly.",
+      "by": "Idan Gabdank",
+      "at": "2026-08-02T14:43:39Z"
+    }
+  ],
+  "sign_off": {
+    "verdict": "fit",
+    "by": "Idan Gabdank",
+    "at": "2026-08-02T14:49:36Z",
+    "note": "Fit to curate from. JATS main text with declared sections and no caveats; all four low-confidence table headers resolved (three of them recovering data the detector had absorbed into a header row) and all seven Table S1-S7 labels confirmed against the JATS captions. The 32 image_no_text supplements are figure renditions only, each figure shipped as both .jpg and .gif."
+  },
+  "signed_manifest_sha256": "bdff24352a099ecacf70934337180a99777563bb36a135e9aefe8fea82e7218d"
+}

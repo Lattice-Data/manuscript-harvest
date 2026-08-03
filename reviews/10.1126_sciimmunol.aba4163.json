@@ -1,0 +1,138 @@
+{
+  "review_format": 1,
+  "slug": "10.1126_sciimmunol.aba4163",
+  "doi": "10.1126/sciimmunol.aba4163",
+  "answers": [
+    {
+      "kind": "table_header",
+      "key": {
+        "source_file": "supplementary/01_aba4163_data_file_s1.xlsx",
+        "locator": "sheet 'Figure 3' rows 54-64"
+      },
+      "source_sha256": "46631bfaca1b1c02e61d97404d66c16eba38054b2ea4b599c894a7fe93c68cd0",
+      "card_fingerprint": "ec498f9350e3b8cc",
+      "verdict": "corrected",
+      "override": {
+        "header_row": 1
+      },
+      "note": "Row 54 holds the d0/d3/d10/d30 column names for both side-by-side blocks; the text in A55-A56 is a spilled y-axis label, not data.",
+      "by": "Idan Gabdank",
+      "at": "2026-08-02T14:19:51Z"
+    },
+    {
+      "kind": "table_header",
+      "key": {
+        "source_file": "supplementary/01_aba4163_data_file_s1.xlsx",
+        "locator": "sheet 'Figure 5' rows 66-82"
+      },
+      "source_sha256": "46631bfaca1b1c02e61d97404d66c16eba38054b2ea4b599c894a7fe93c68cd0",
+      "card_fingerprint": "ec498f9350e3b8cc",
+      "verdict": "corrected",
+      "override": {
+        "header_row": 2
+      },
+      "note": "Row 66 is only the panel title 'Figure 5G'; row 67 holds the Control/S. aureus/cGN/S. aureus + cGN names for both side-by-side blocks, with a spilled y-axis label in A.",
+      "by": "Idan Gabdank",
+      "at": "2026-08-02T14:19:51Z"
+    },
+    {
+      "kind": "table_header",
+      "key": {
+        "source_file": "supplementary/01_aba4163_data_file_s1.xlsx",
+        "locator": "sheet 'Figure 5' rows 84-93"
+      },
+      "source_sha256": "46631bfaca1b1c02e61d97404d66c16eba38054b2ea4b599c894a7fe93c68cd0",
+      "card_fingerprint": "cb9c6c1eb0b96c63",
+      "verdict": "corrected",
+      "override": {
+        "header_row": 2
+      },
+      "note": "Row 84 is only the panel title 'Figure 5H'; row 85 holds the condition names for all five side-by-side blocks (IL-17A, IL-6, IL-10, CXCL5, IL-23A). The repeated 'x-fold of control' text at rows 87-88 in columns H/N/Z is a spilled label on data rows.",
+      "by": "Idan Gabdank",
+      "at": "2026-08-02T14:19:51Z"
+    },
+    {
+      "kind": "table_header",
+      "key": {
+        "source_file": "supplementary/01_aba4163_data_file_s1.xlsx",
+        "locator": "sheet 'Figure 8' rows 38-43"
+      },
+      "source_sha256": "46631bfaca1b1c02e61d97404d66c16eba38054b2ea4b599c894a7fe93c68cd0",
+      "card_fingerprint": "ad09c1728245a3f6",
+      "verdict": "cannot_tell",
+      "override": null,
+      "note": "Genuinely ambiguous: the two side-by-side blocks have their headers on different rows (left block on row 39, right block on row 38), which a single header_row cannot express.",
+      "by": "Idan Gabdank",
+      "at": "2026-08-02T14:19:51Z"
+    },
+    {
+      "kind": "table_header",
+      "key": {
+        "source_file": "supplementary/01_aba4163_data_file_s1.xlsx",
+        "locator": "sheet 'Figure S7' rows 12-23"
+      },
+      "source_sha256": "46631bfaca1b1c02e61d97404d66c16eba38054b2ea4b599c894a7fe93c68cd0",
+      "card_fingerprint": "cb9c6c1eb0b96c63",
+      "verdict": "corrected",
+      "override": {
+        "header_row": 4
+      },
+      "note": "Rows 13-14 are blank and row 12 is only the panel title 'Figure S7F'; row 15 holds Time [days] plus the merged IMQ / IMQ + S. aureus group labels.",
+      "by": "Idan Gabdank",
+      "at": "2026-08-02T14:19:51Z"
+    },
+    {
+      "kind": "table_header",
+      "key": {
+        "source_file": "supplementary/01_aba4163_data_file_s1.xlsx",
+        "locator": "sheet 'Figure S7' rows 26-35"
+      },
+      "source_sha256": "46631bfaca1b1c02e61d97404d66c16eba38054b2ea4b599c894a7fe93c68cd0",
+      "card_fingerprint": "cb9c6c1eb0b96c63",
+      "verdict": "corrected",
+      "override": {
+        "header_row": 2
+      },
+      "note": "Row 26 is only the panel title 'Figure S7G'; row 27 holds Time [days] and the merged IMQ / IMQ + S. aureus group labels. 'Psoriasis Score' in A28 is a y-label on the first data row.",
+      "by": "Idan Gabdank",
+      "at": "2026-08-02T14:19:51Z"
+    },
+    {
+      "kind": "supplement_label",
+      "key": {
+        "path": "supplementary/02_aba4163_sm.pdf"
+      },
+      "source_sha256": "0a26037563e2e4533ac7c504e31911c698f70d49d45d6febe7e616dde056249d",
+      "card_fingerprint": null,
+      "verdict": "corrected",
+      "override": {
+        "label": "Supplementary Materials"
+      },
+      "note": "The file's own front matter reads 'Supplementary Materials for ...'; the manifest's 'Download' was the fetch button text, not a publisher label.",
+      "by": "Idan Gabdank",
+      "at": "2026-08-02T14:19:51Z"
+    },
+    {
+      "kind": "supplement_label",
+      "key": {
+        "path": "supplementary/01_aba4163_data_file_s1.xlsx"
+      },
+      "source_sha256": "46631bfaca1b1c02e61d97404d66c16eba38054b2ea4b599c894a7fe93c68cd0",
+      "card_fingerprint": null,
+      "verdict": "corrected",
+      "override": {
+        "label": "Data file S1"
+      },
+      "note": "The Supplementary Materials PDF lists it as 'Data file S1 (Microsoft Excel format)'; the manifest's 'Download' was the fetch button text, not a publisher label.",
+      "by": "Idan Gabdank",
+      "at": "2026-08-02T14:19:51Z"
+    }
+  ],
+  "sign_off": {
+    "verdict": "fit_with_notes",
+    "by": "Idan Gabdank",
+    "at": "2026-08-02T14:28:50Z",
+    "note": "Fit to curate from, with one exception: the 'Figure 8' rows 38-43 card is unreliable because its two side-by-side blocks carry headers on different rows, so columns 7-9 are misnamed and one IFN-y data row is absorbed into the header. The supplement_set_unverified caveat is satisfied in substance: the SM PDF's own front matter lists exactly the two files held (the Supplementary Materials PDF and Data file S1)."
+  },
+  "signed_manifest_sha256": "dd2596de77ea1bd86e4c16e143846b510676ac7092a15b3a8d1747c6b73da034"
+}
