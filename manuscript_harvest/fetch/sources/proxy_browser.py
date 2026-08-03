@@ -810,7 +810,13 @@ class ProxyBrowserSource(Source):
                 return
             # From here on the page under the adapter is the one cell.com served.
             final_url, body = recovered
-            denial = classify_denial(final_url, body)
+            # Not re-classified: `_cell_press_retry` only hands back a page whose own
+            # `classify_denial` was falsy -- that is the first term of its `unreadable`
+            # test -- and the function is pure over (url, content), so asking again
+            # about the same bytes cannot answer differently. What this line is for is
+            # clearing the denial recorded for the *stub*, which no longer describes
+            # the page now under the adapter.
+            denial = None
             adapter = adapter_for(final_url)
 
         result.note("landing", url=target, final_url=final_url, status="loaded",

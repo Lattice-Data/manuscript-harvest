@@ -98,7 +98,7 @@ audited but untouched — see the bottom of this file.
       measurements over the 63-paper development corpus and the `.xls` file they cite is
       not in the shipped corpus.
 
-## (B) — 9 of 11 done
+## (B) — 10 of 11 done
 
 - [x] B11 `requirements.txt:1`, `pyproject.toml:22` — pymupdf floor raised `>=1.24` to
       `>=1.28`, the version the checked-in section-score baseline was measured on, plus a
@@ -149,6 +149,10 @@ audited but untouched — see the bottom of this file.
       interchangeable with the guard A18 removed: that one gated the retry and returned
       a reason that still reaches this line, while this one gates a ScienceDirect URL
       built from an Elsevier PII. At most one of the two may go.
+- [x] B8 `fetch/sources/proxy_browser.py:813` — replaced a `classify_denial` call that
+      could only return falsy with `denial = None` plus the invariant. Behaviour-identical
+      (`classify_denial` returns `None` on a clean page, and the retry's success path
+      requires a falsy denial); the line's real job is clearing the *stub's* denial.
 - [x] B10 `.github/workflows/tests.yml:44-55` — `--cov-fail-under` raised 70 to 90, and
       the comment claiming the floor was "set just under the current number" replaced with
       the measured pair: **91.8% without a corpus (what CI reports and the badge shows)
