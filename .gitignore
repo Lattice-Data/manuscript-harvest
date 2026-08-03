@@ -27,3 +27,7 @@ corpus/
 manual_fetch/*
 !manual_fetch/manual_fetch.yaml
 manual-fetch-run/
+
+# Local curation scratch. The leading `#` has to be escaped: unescaped it starts
+# a comment, so the line would be read as prose and ignore nothing.
+\#Local projects curation/

@@ -18,8 +18,8 @@ from pathlib import Path
 import pytest
 
 from manuscript_harvest.extract import blocks as blocks_mod
-from manuscript_harvest.extract import (extractor, jats, review, section_audit,
-                                        spreadsheet, tables)
+from manuscript_harvest.extract import (extractor, jats, pdf, review,
+                                        section_audit, spreadsheet, tables)
 from manuscript_harvest.extract.blocks import read_blocks
 from manuscript_harvest.extract.limits import Limits
 from manuscript_harvest.fetch import store
@@ -131,31 +131,61 @@ def test_no_extracted_block_carries_an_invisible_or_symbol_glyph():
     10.1126/sciimmunol.aba4163 alone -- 21x U+00AD, 41x U+F067 (Adobe Symbol
     gamma), 5x U+200B -- so `interleukin-<U+00AD> 17A` and `interferon- (IFN-)`
     reached a model where the paper says `interleukin-17A` and
-    `interferon-γ (IFN-γ)`."""
-    _extractions()
+    `interferon-γ (IFN-γ)`.
+
+    The private-use half of this asks only for what `pdf.py` promises. A glyph
+    it *can* name -- anything in `_SYMBOL_PUA` -- must never survive. A glyph it
+    cannot is a different case: `CIDFont+F5` in 10.1038/s41467-025-67643-2 emits
+    U+F021 twice on page 3 of its supplement, and that font is not a symbol face,
+    so reading the codepoint as the Adobe Symbol position for `!` would invent a
+    character the document never had. Those are allowed through and must instead
+    be *counted*, which is the rule `pdf.py` states: "named rather than silently
+    passed on". This asserts the naming actually happened.
+    """
+    records = {r["slug"]: r for r in _extractions()}
     damaged = collections.Counter()
+    uncounted = collections.Counter()
     for path in sorted(CORPUS.glob("*/extracted/blocks.jsonl")):
+        slug = path.parent.parent.name
+        record = records.get(slug) or {}
+        counted = set()
+        for entry in [record.get("main_text")] + (record.get("supplementary") or []):
+            counted.update(((entry or {}).get("glyphs_unmapped") or {}).keys())
         for block in read_blocks(path):
             for char in block["text"]:
                 point = ord(char)
+                name = f"U+{point:04X}"
                 if point in (0x00AD, 0x200B, 0x200C, 0x200D, 0xFEFF) \
-                        or 0xF000 <= point <= 0xF0FF:
-                    damaged[(path.parent.parent.name, f"U+{point:04X}")] += 1
+                        or point in pdf._SYMBOL_PUA:
+                    damaged[(slug, name)] += 1
+                elif pdf._is_pua(point) and name not in counted:
+                    uncounted[(slug, name)] += 1
     assert not damaged, dict(damaged)
+    assert not uncounted, ("private-use glyphs reached blocks.jsonl without being "
+                           "recorded in glyphs_unmapped", dict(uncounted))
 
 
 def test_no_table_card_fuses_two_numbers_into_one_value():
     """`_inline_text` had no boundary between a cell's block-level children, so
     10.1038/s41467-023-40505-5 Table 1's SNP PIP column read `0.7980.15` and its
-    dtype flipped from number to mixed."""
+    dtype flipped from number to mixed.
+
+    A dotted European date has the same shape and is not a fusion:
+    10.1101/2024.11.01.621259's `GeoMx run date` column holds `11.05.2023`,
+    `18.07.2023` and three more. A four-digit trailing group is what separates
+    them -- the fusion this guards against ends in the tail of a decimal, so
+    `0.7980.15` still matches.
+    """
     _extractions()
     fused = re.compile(r"^\d+\.\d+\d\.\d")
+    dotted_date = re.compile(r"^\d{1,2}\.\d{1,2}\.\d{4}$")
     offenders = []
     for path in sorted(CORPUS.glob("*/extracted/blocks.jsonl")):
         for block in read_blocks(path):
             for column in ((block.get("table") or {}).get("columns") or []):
                 for value in (column.get("values") or []) + (column.get("examples") or []):
-                    if fused.match(str(value)):
+                    text = str(value)
+                    if fused.match(text) and not dotted_date.match(text):
                         offenders.append((path.parent.parent.name, column["name"], value))
     assert not offenders, offenders[:10]
 
@@ -294,6 +324,17 @@ def test_pdf_reading_order_is_not_improved_by_sorting():
     reading order and it is measurably worse. Measured once and pinned here so the
     next person does not "fix" it: insertion order gives 10 backward steps in 98
     aligned paragraphs, and sorting makes both statistics worse.
+
+    Re-measured over 18 XML/PDF pairs (was 2). `inverted_pairs`: sorting worse on
+    13, better on 1, tied on 4. `backward_steps`: worse on 13, better on 0, tied
+    on 5. The conclusion is stronger than when it was pinned, but the one
+    exception showed that asserting it per article was too strict --
+    10.1016/j.isci.2023.106877 moves 0.096 -> 0.092 on `inverted_pairs` while
+    `backward_steps` stays put at 10, which is noise on one statistic rather than
+    a reading order that got better. So the assertion is the claim itself: over
+    the corpus, sorting must not win more often than it loses, and no single
+    article may improve on *both* statistics at once, which is what a genuine
+    improvement would look like.
     """
     import fitz
 
@@ -303,7 +344,8 @@ def test_pdf_reading_order_is_not_improved_by_sorting():
     if not pairs:
         pytest.skip("no article here has both renditions")
 
-    worse = []
+    better_on_both = []
+    sorting_wins = sorting_loses = 0
     for xml_path, pdf_path in pairs:
         jats_blocks, status, _ = jats.blocks_from_jats(xml_path.read_bytes(),
                                                        str(xml_path), L)
@@ -322,10 +364,25 @@ def test_pdf_reading_order_is_not_improved_by_sorting():
                         texts.append(cleaned)
             document.close()
             scores[sort] = section_audit.reading_order_score(jats_blocks, texts)
+        # `inverted_pairs` is None when fewer than two paragraphs aligned, so
+        # there is no ordering to be right or wrong about. 10.1038/s41586-024-08560-0
+        # is an author correction -- four paragraphs, one of which aligns -- and
+        # comparing None to None raised TypeError rather than skipping.
+        if any(scores[s]["inverted_pairs"] is None for s in (False, True)):
+            continue
         if scores[True]["inverted_pairs"] < scores[False]["inverted_pairs"]:
-            worse.append((pdf_path.parent.name, scores[False], scores[True]))
-    assert not worse, ("sorting improved reading order here; re-measure before "
-                       "changing pdf.py", worse)
+            sorting_wins += 1
+            if scores[True]["backward_steps"] < scores[False]["backward_steps"]:
+                better_on_both.append((pdf_path.parent.name, scores[False], scores[True]))
+        elif scores[True]["inverted_pairs"] > scores[False]["inverted_pairs"]:
+            sorting_loses += 1
+
+    assert not better_on_both, (
+        "sorting improved both reading-order statistics here; re-measure before "
+        "changing pdf.py", better_on_both)
+    assert sorting_wins <= sorting_loses, (
+        "sorting now wins on inverted_pairs more often than it loses; re-measure "
+        "before changing pdf.py", sorting_wins, sorting_loses)
 
 
 # -- the specific files that taught this stage its rules ---------------------

@@ -1,0 +1,139 @@
+{
+  "review_format": 1,
+  "slug": "10.1038_s41467-023-40505-5",
+  "doi": "10.1038/s41467-023-40505-5",
+  "answers": [
+    {
+      "kind": "table_header",
+      "key": {
+        "source_file": "supplementary/49_41467_2023_40505_MOESM4_ESM.xlsx",
+        "locator": "sheet 'Summary'"
+      },
+      "source_sha256": "99e03891c40c48ed28e319d1358ba4ff035bc82c8bd1b4252e2b5929328e3a3b",
+      "card_fingerprint": "1d878995f35d0e78",
+      "verdict": "confirmed",
+      "override": {
+        "header_row": 1
+      },
+      "note": "Row 1 reads 'Supplementary Data | Caption', which is the header; the 15 rows below are the per-sheet captions.",
+      "by": "Idan Gabdank",
+      "at": "2026-08-02T15:16:30Z"
+    },
+    {
+      "kind": "table_header",
+      "key": {
+        "source_file": "supplementary/49_41467_2023_40505_MOESM4_ESM.xlsx",
+        "locator": "sheet 'Supplementary Data 6' rows 13-28"
+      },
+      "source_sha256": "99e03891c40c48ed28e319d1358ba4ff035bc82c8bd1b4252e2b5929328e3a3b",
+      "card_fingerprint": "7d26b7d7e6fdb292",
+      "verdict": "confirmed",
+      "override": {
+        "header_row": 3
+      },
+      "note": "Rows 1-2 are the table title and the attB cloning-site note, already lifted into the caption; row 3 is 'SNP | Allele | Sequence'.",
+      "by": "Idan Gabdank",
+      "at": "2026-08-02T15:16:30Z"
+    },
+    {
+      "kind": "table_header",
+      "key": {
+        "source_file": "supplementary/49_41467_2023_40505_MOESM4_ESM.xlsx",
+        "locator": "sheet 'Supplementary Data 12'"
+      },
+      "source_sha256": "99e03891c40c48ed28e319d1358ba4ff035bc82c8bd1b4252e2b5929328e3a3b",
+      "card_fingerprint": "05a25dbe4d8dcfe5",
+      "verdict": "confirmed",
+      "override": {
+        "header_row": 4
+      },
+      "note": "Rows 1-3 are the title, the OMIM search string and the download date; row 4 is 'Phenotype MIM number | Phenotype | Gene'.",
+      "by": "Idan Gabdank",
+      "at": "2026-08-02T15:16:30Z"
+    },
+    {
+      "kind": "supplement_label",
+      "key": {
+        "path": "supplementary/42_41467_2023_40505_MOESM1_ESM.pdf"
+      },
+      "source_sha256": "1aa4f7443ee919b67c0485d3233a807b9117f9668945310488d71863fdad6e21",
+      "card_fingerprint": null,
+      "verdict": "confirmed",
+      "override": {
+        "label": "Supplementary Information"
+      },
+      "note": "Matches the JATS caption and the PDF's own title page (19 pages of supplementary figures and notes).",
+      "by": "Idan Gabdank",
+      "at": "2026-08-02T15:16:30Z"
+    },
+    {
+      "kind": "supplement_label",
+      "key": {
+        "path": "supplementary/22_41467_2023_40505_MOESM2_ESM.pdf"
+      },
+      "source_sha256": "168cc099c835aa502fd21db04f59708e914dc772b4025b284699ecd8dc5b6a43",
+      "card_fingerprint": null,
+      "verdict": "confirmed",
+      "override": {
+        "label": "Peer Review File",
+        "evidence": false
+      },
+      "note": "Label is right, but the file is referee reports and author rebuttals, not the article: it was contributing 98639 chars over 213 blocks, about 40 percent of this article's extraction.",
+      "by": "Idan Gabdank",
+      "at": "2026-08-02T15:16:30Z"
+    },
+    {
+      "kind": "supplement_label",
+      "key": {
+        "path": "supplementary/41_41467_2023_40505_MOESM3_ESM.pdf"
+      },
+      "source_sha256": "4a274c9bbbc65b293f8ba605c6b7f44f1d56767e6aaf203bdd80d592c04b67e4",
+      "card_fingerprint": null,
+      "verdict": "corrected",
+      "override": {
+        "label": "Description of Additional Supplementary Files"
+      },
+      "note": "Was unlabelled because _label_from_caption rejects captions over 40 characters; this name is both the JATS caption and the PDF's own first line. Kept as evidence.",
+      "by": "Idan Gabdank",
+      "at": "2026-08-02T15:16:30Z"
+    },
+    {
+      "kind": "supplement_label",
+      "key": {
+        "path": "supplementary/49_41467_2023_40505_MOESM4_ESM.xlsx"
+      },
+      "source_sha256": "99e03891c40c48ed28e319d1358ba4ff035bc82c8bd1b4252e2b5929328e3a3b",
+      "card_fingerprint": null,
+      "verdict": "confirmed",
+      "override": {
+        "label": "Supplementary Data 1-15"
+      },
+      "note": "Matches the JATS caption; the workbook holds Supplementary Data 1-13 plus Supplementary Tables 14-15.",
+      "by": "Idan Gabdank",
+      "at": "2026-08-02T15:16:30Z"
+    },
+    {
+      "kind": "supplement_label",
+      "key": {
+        "path": "supplementary/07_41467_2023_40505_MOESM5_ESM.pdf"
+      },
+      "source_sha256": "adb8ea59415648c25ca1fc077c4b67248a25194cd31269a3e0e58bceae07fb3d",
+      "card_fingerprint": null,
+      "verdict": "confirmed",
+      "override": {
+        "label": "Reporting Summary",
+        "evidence": false
+      },
+      "note": "Label is right, but a Nature reporting-summary checklist is not article evidence.",
+      "by": "Idan Gabdank",
+      "at": "2026-08-02T15:16:30Z"
+    }
+  ],
+  "sign_off": {
+    "verdict": "fit",
+    "by": "Idan Gabdank",
+    "at": "2026-08-02T15:31:20Z",
+    "note": "Fit to curate from. JATS main text with declared sections and no caveats; all three low-confidence table headers confirmed against the sheets, all five supplement labels resolved including one the 40-character caption guard had left unlabelled. The Peer Review File and Reporting Summary are marked non-evidence, which moves 259 of 536 blocks out of the evidence pool and leaves 172 main-text plus 105 supplement blocks."
+  },
+  "signed_manifest_sha256": "79fa11130dcb70205756bd3f9a4ee91ecdcd08c6208682755d379e0359a00db0"
+}

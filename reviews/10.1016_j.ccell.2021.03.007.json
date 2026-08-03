@@ -1,0 +1,27 @@
+{
+  "review_format": 1,
+  "slug": "10.1016_j.ccell.2021.03.007",
+  "doi": "10.1016/j.ccell.2021.03.007",
+  "answers": [
+    {
+      "kind": "main_text_present",
+      "key": {
+        "path": "landing.html"
+      },
+      "source_sha256": null,
+      "card_fingerprint": null,
+      "verdict": "cannot_tell",
+      "override": null,
+      "note": "Neither rendition is present, and the override vocabulary has no value for that: the saved landing.html is a Cloudflare bot-block error page from ScienceDirect (CLOUDFLARE_ERROR_1000S_BOX, served to HeadlessChrome) with 814 visible characters and no article content, and the manifest records fulltext status publisher_stub_page with a null path and no XML.",
+      "by": "Idan Gabdank",
+      "at": "2026-08-02T17:55:47Z"
+    }
+  ],
+  "sign_off": {
+    "verdict": "unfit",
+    "by": "Idan Gabdank",
+    "at": "2026-08-02T17:55:47Z",
+    "note": "Unfit: the corpus holds no article text at all - 0 blocks, 0 characters - because the fetch was blocked by Cloudflare and saved the error page instead of the article, and no supplements were retrieved against an expected_but_missing status. This is a fetch failure, not an extraction defect. The real bytes are already on this machine at ~/Desktop/GOLD_STANDARD/j.ccell.2021.03.007/ (PIIS1535610821001653.pdf, 23 pages, plus mmc1-mmc6), so a re-run through MANUSCRIPT_HARVEST_MANUAL_DIR should supersede this."
+  },
+  "signed_manifest_sha256": "8784cbeaf32eb585f459527617062a4597d003fef9620d82028f6d75210bf4e1"
+}
