@@ -3,7 +3,7 @@
     corpus/<doi_slug>/
         manifest.json
         fulltext.pdf
-        fulltext.nxml            only when an OA package supplied it
+        fulltext.nxml            when Europe PMC, bioRxiv or an OA package had JATS
         supplementary/01_...     original filenames, sanitised and ordered
         landing.html             browser tier only, for adapter debugging
 

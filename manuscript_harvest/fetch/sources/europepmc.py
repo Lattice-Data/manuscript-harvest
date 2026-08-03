@@ -1,4 +1,4 @@
-"""Tier 1: Europe PMC.
+"""Europe PMC.
 
 Two endpoints, both verified against the live service:
 

@@ -241,7 +241,7 @@ audited but untouched — see the bottom of this file.
       `load_config`/`main`, `better_pdf_failure`, `sanitize_filename` vs
       `safe_member_name`, `_shared_*_labels`) already carry their own rationale or were
       covered by C3/B9 — left alone as the audit directed.
-## (E) — 6 of 20 done
+## (E) — 10 of 20 done
 
 E1 was covered by B5 and E7 by B9. **Correction: an earlier note claimed B5 also covered
 E2 (the `--role` help string); it did not.** E2 is still open below.
@@ -260,6 +260,16 @@ E2 (the `--role` help string); it did not.** E2 is still open below.
 - [x] E13 `fetch/identifiers.py:8` — credited `hasPDF` and `hasSuppl` jointly with the
       "none" vs "we failed" distinction. Only `has_suppl` drives anything; `has_pdf`
       appears solely as a field, a `to_dict` entry and an assignment.
+- [x] E8 tier numbers had drifted -- `pmc_oa` called itself "Tier 2" as did
+      `pmc_supplements`, and biorxiv "Tier 3" where it is fourth. Numbers dropped from all
+      four docstrings; `sources/__init__.py`'s `OA_TIERS` is the single statement of order.
+- [x] E9 "no page scraping" was false in three places while `pmc_supplements` regexes
+      PMC's HTML and biorxiv regexes its supplement page. Replaced with "no credentials
+      and no browser" (true of all four), `fetch/__init__.py` now lists all four OA tiers
+      rather than three, and biorxiv's "the one open-access tier that scrapes" is gone.
+- [x] E10 `fetch/store.py:6` — `fulltext.nxml` was attributed to the OA package alone;
+      three tiers emit it and the OA route is off by default. Measured over the local
+      corpus: 20 articles have XML, from europepmc (18) and biorxiv (2), none from pmc_oa.
 - [x] E18 no change needed: `tests/test_review.py`'s "in what order" became accurate once
       B5 added the ordering test.
 - **(F) 7 README passages carrying knowledge found nowhere else** — must be preserved

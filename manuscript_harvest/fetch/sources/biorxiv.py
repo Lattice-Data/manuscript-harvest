@@ -1,4 +1,4 @@
-"""Tier 3: bioRxiv and medRxiv preprints.
+"""bioRxiv and medRxiv preprints.
 
 Preprints under the 10.1101 prefix are open by definition, so no authentication
 is involved. The details API gives the version number and a JATS XML link:
@@ -10,8 +10,9 @@ from which the PDF and supplementary-material URLs are constructed:
     https://www.biorxiv.org/content/<doi>v<version>.full.pdf
     https://www.biorxiv.org/content/<doi>v<version>.supplementary-material
 
-The supplementary-material page is HTML, so this is the one open-access tier that
-scrapes. It is a narrow scrape -- media links follow a fixed
+The supplementary-material page is HTML, so this tier scrapes -- as
+`pmc_supplements` also does, over PMC's `/bin/` paths. It is a narrow scrape --
+media links follow a fixed
 `/DC<n>/embed/media-<n>.<ext>` shape -- and when the pattern does not match, the
 result is `page_not_parsed` rather than a silent zero.
 """

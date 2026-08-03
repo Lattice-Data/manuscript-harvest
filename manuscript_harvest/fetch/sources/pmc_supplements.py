@@ -1,4 +1,4 @@
-"""Tier 2: supplementary files listed by PMC, fetched from the publisher.
+"""Supplementary files listed by PMC, fetched from the publisher.
 
 This tier exists because of a split discovered while testing against the live
 services:

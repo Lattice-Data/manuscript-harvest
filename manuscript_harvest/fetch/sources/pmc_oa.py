@@ -1,4 +1,4 @@
-"""Tier 2: the PMC Open Access package.
+"""The PMC Open Access package.
 
     GET https://www.ncbi.nlm.nih.gov/pmc/utils/oa/oa.fcgi?id=PMC3258128
 

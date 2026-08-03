@@ -1,9 +1,11 @@
 """Source registry, in tier order.
 
-The open-access tiers come first because they need no credentials, no browser,
-and no page scraping. `proxy_browser` is last and is imported lazily -- Playwright
-is an optional dependency, and a corpus of open-access papers can be built
-without it ever being installed.
+The open-access tiers come first because they need no credentials and no browser.
+Not because none of them scrapes: two regex a rendered page, and `OA_TIERS` below is
+the only statement of their order, so read it rather than a number in a docstring.
+`proxy_browser` is last and is imported lazily -- Playwright is an optional
+dependency, and a corpus of open-access papers can be built without it ever being
+installed.
 """
 
 from typing import List
