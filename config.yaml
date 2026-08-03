@@ -9,7 +9,7 @@ fetch:
   # NCBI and Europe PMC all ask callers to identify themselves, and it is what
   # keeps a polite client out of the rate-limited pool. Left null, requests go
   # out without one -- which works, but is not the documented convention.
-  contact_email: null
+  contact_email: "gabdank@stanford.edu"
 
   ncbi_api_key: null                      # optional; raises the NCBI rate limit from 3 to 10 req/s
   min_interval_seconds: 3.0               # per host; 1-10 papers needs nothing cleverer
@@ -23,7 +23,7 @@ fetch:
   # articles. When exceeded, the oldest are evicted oldest-first; their manifests
   # are kept, so you keep the record of what was there and can re-fetch with
   # --force. null = unlimited. Inspect with `usage`, apply by hand with `prune`.
-  max_corpus_gb: null
+  max_corpus_gb: 25
 
   # Tried in order. The first four need no credentials and no browser; the last
   # one is the exception path. Drop "proxy_browser" (or pass --oa-only) to
