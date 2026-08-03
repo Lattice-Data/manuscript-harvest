@@ -75,6 +75,34 @@ class Source:
     def max_files(self) -> int:
         return int(self.config.get("max_files", 50))
 
+    def apply_files_cap(self, items: list, result, via: Optional[str] = None,
+                        noun: str = "file") -> list:
+        """Trim `items` to `max_files`, recording anything dropped. Returns the kept.
+
+        Nothing a cap drops is silent, and this was written out in three tiers whose
+        wording had already come apart -- `pmc_supplements` said "supplementary
+        file(s)" while `biorxiv` and the browser tier said "link(s)". No test pinned
+        either, so the drift was free.
+
+        `noun` stays a parameter rather than being settled on one word, because the
+        difference is real: `pmc_supplements` counts files PMC listed, while bioRxiv
+        and the browser tier count anchors matched on a rendered page, and a dropped
+        anchor may not have been a distinct file at all. Saying "file" there would
+        claim more than the tier knows.
+        """
+        kept = items[: self.max_files]
+        dropped = len(items) - len(kept)
+        if dropped > 0:
+            result.problems.append(
+                f"{dropped} supplementary {noun}(s) not fetched: max_files cap "
+                f"({self.max_files}) reached"
+            )
+            note = {"status": "truncated", "dropped": dropped, "max_files": self.max_files}
+            if via is not None:
+                note["via"] = via
+            result.note("cap", **note)
+        return kept
+
     def applies(self, ids) -> bool:
         raise NotImplementedError
 

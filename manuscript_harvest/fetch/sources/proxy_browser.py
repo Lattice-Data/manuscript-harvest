@@ -1068,15 +1068,8 @@ class ProxyBrowserSource(Source):
         keeps the `max_files` cap from masquerading as a partial failure -- and any
         links dropped by the cap are recorded, not silently discarded.
         """
-        attempted = links[: self.max_files]
-        dropped = len(links) - len(attempted)
-        if dropped > 0:
-            result.problems.append(
-                f"{dropped} supplementary link(s) not fetched: max_files cap "
-                f"({self.max_files}) reached"
-            )
-            result.note("cap", via=via, status="truncated", dropped=dropped,
-                        max_files=self.max_files)
+        # "link": scraped anchors, as in biorxiv -- see `Source.apply_files_cap`.
+        attempted = self.apply_files_cap(links, result, via=via, noun="link")
 
         # Clearing a JS challenge costs a page load each, so a site that challenges
         # everything would otherwise burn one timeout per file. After a few

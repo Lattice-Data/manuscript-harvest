@@ -66,14 +66,8 @@ class PmcSupplementsSource(Source):
             result.note("listing", status="no_files_listed", count=0)
             return result
 
-        attempted = listing[: self.max_files]
-        dropped = len(listing) - len(attempted)
-        if dropped > 0:
-            result.problems.append(
-                f"{dropped} supplementary file(s) not fetched: max_files cap "
-                f"({self.max_files}) reached"
-            )
-            result.note("cap", status="truncated", dropped=dropped, max_files=self.max_files)
+        # "file", not "link": PMC listed these, so a dropped one is a known file.
+        attempted = self.apply_files_cap(listing, result, noun="file")
 
         fetched, challenged, failed = 0, 0, 0
         for bin_path, filename in attempted:

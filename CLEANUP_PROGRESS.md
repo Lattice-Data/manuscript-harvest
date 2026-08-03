@@ -174,7 +174,7 @@ audited but untouched — see the bottom of this file.
 
 - **A decision is owed on B9**: whether the two archive unpackers should share the
   media/supplement split. Documented in both docstrings; spawned as a separate task.
-## (C) — 3 of 8 done
+## (C) — 4 of 8 done
 
 - [x] C1 `extract/review.py:337`, `spreadsheet.py:74`, `docxfile.py:142`, `jats.py:376` —
       the table-header override translation existed three times and only the xlsx copy
@@ -193,8 +193,15 @@ audited but untouched — see the bottom of this file.
       `fetcher._PDF_SUCCESS` now *is* that object. `manual_fetch.PDF_SUCCESS` stays a
       deliberate copy (its comment says why) but points at `store`, not `fetcher`.
 
-Remaining (C): C4 the `max_files` truncation
-block (3 tiers, message already drifted); C5 the table-cap and reset_dimensions guards
+- [x] C4 `fetch/sources/base.py:76`, and the three tiers — the `max_files` truncation
+      block is now `Source.apply_files_cap`. The wording had already drifted
+      ("file(s)" vs "link(s)"); `noun` stays a parameter because the distinction is real
+      (PMC lists files, the other two match page anchors). Added a test pinning the
+      "file(s)" side — only the browser tier's "link(s)" was pinned, so a merge could
+      have settled on one word and overclaimed. `via` now sorts last in the note JSON:
+      cosmetic and unasserted.
+
+Remaining (C): C5 the table-cap and reset_dimensions guards
 (xlsx vs xls, xls copies untested); C6 the identical `_fetch_pdf` body (biorxiv vs
 pmc_oa — do NOT reuse that name, two subclasses have different signatures); C7 the
 adapter `find_supplements` skeleton (5 copies; Nature strips the fragment *first*, so a

@@ -169,14 +169,9 @@ class BiorxivSource(Source):
                         detail="page loaded; no supplementary links present")
             return
 
-        attempted = links[: self.max_files]
-        dropped = len(links) - len(attempted)
-        if dropped > 0:
-            result.problems.append(
-                f"{dropped} supplementary link(s) not fetched: max_files cap "
-                f"({self.max_files}) reached"
-            )
-            result.note("cap", status="truncated", dropped=dropped, max_files=self.max_files)
+        # "link": these are anchors matched on a rendered page, so a dropped one is
+        # not known to have been a distinct file.
+        attempted = self.apply_files_cap(links, result, noun="link")
 
         fetched = 0
         for url in attempted:
