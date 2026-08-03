@@ -241,7 +241,7 @@ audited but untouched — see the bottom of this file.
       `load_config`/`main`, `better_pdf_failure`, `sanitize_filename` vs
       `safe_member_name`, `_shared_*_labels`) already carry their own rationale or were
       covered by C3/B9 — left alone as the audit directed.
-## (E) — 10 of 20 done
+## (E) — 13 of 20 done
 
 E1 was covered by B5 and E7 by B9. **Correction: an earlier note claimed B5 also covered
 E2 (the `--role` help string); it did not.** E2 is still open below.
@@ -270,6 +270,16 @@ E2 (the `--role` help string); it did not.** E2 is still open below.
 - [x] E10 `fetch/store.py:6` — `fulltext.nxml` was attributed to the OA package alone;
       three tiers emit it and the OA route is off by default. Measured over the local
       corpus: 20 articles have XML, from europepmc (18) and biorxiv (2), none from pmc_oa.
+- [x] E11 `config.yaml` — "apply by hand with `prune`" contradicted the code: the budget
+      is enforced automatically after every fetch whenever `max_corpus_gb` is set.
+- [x] E12 `config.yaml` — `ncbi_api_key`'s "raises the rate limit from 3 to 10 req/s" is
+      unreachable while `min_interval_seconds: 3.0` throttles per host and never drops for
+      a key. Now says what makes a key worth having.
+- [x] E15 `config.yaml` + `extract/limits.py` — the claim that "each default says why it
+      exists" was false for 11 of 26 fields, 4 of them keys config.yaml itself exposes.
+      Documented those 4 (`max_sample_rows`, `max_card_chars`, `max_archive_members`,
+      `max_member_mb`) so the claim holds for everything exposed, and softened the
+      sentence for the 7 internal ones that are still bare numbers.
 - [x] E18 no change needed: `tests/test_review.py`'s "in what order" became accurate once
       B5 added the ordering test.
 - **(F) 7 README passages carrying knowledge found nowhere else** — must be preserved

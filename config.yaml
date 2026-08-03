@@ -11,7 +11,10 @@ fetch:
   # out without one -- which works, but is not the documented convention.
   contact_email: "gabdank@stanford.edu"
 
-  ncbi_api_key: null                      # optional; raises the NCBI rate limit from 3 to 10 req/s
+  # Optional. Raises NCBI's own ceiling from 3 to 10 req/s -- but this client is
+  # throttled by min_interval_seconds below, which is per host and does not drop
+  # when a key is present, so lowering that is what makes a key worth having.
+  ncbi_api_key: null
   min_interval_seconds: 3.0               # per host; 1-10 papers needs nothing cleverer
   timeout_seconds: 60
   max_files: 50                           # supplementary files per article; anything dropped is recorded
@@ -29,7 +32,8 @@ fetch:
   # "drop the media" saving -- staying inside a budget means giving up whole
   # articles. When exceeded, the oldest are evicted oldest-first; their manifests
   # are kept, so you keep the record of what was there and can re-fetch with
-  # --force. null = unlimited. Inspect with `usage`, apply by hand with `prune`.
+  # --force. null = unlimited. Applied automatically after every fetch whenever
+  # this key is set; inspect with `usage`, or force a sweep now with `prune`.
   max_corpus_gb: 25
 
   # Tried in order. The first four need no credentials and no browser; the last
@@ -79,7 +83,9 @@ fetch:
 
 # Extraction stage: corpus files -> blocks of text with provenance.
 # Only the caps you want to change need to appear here; anything omitted comes
-# from manuscript_harvest/extract/limits.py, where each default says why it exists.
+# from manuscript_harvest/extract/limits.py. Every cap this file exposes carries its
+# reasoning there; a handful of internal ones are bare numbers, which is the honest
+# signal that nothing has yet needed them changed.
 extract:
   # Defaults to fetch.corpus_dir, so moving the corpus needs one edit, not two.
   # corpus_dir: "corpus"
