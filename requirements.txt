@@ -11,6 +11,16 @@ openpyxl>=3.1
 # 6.0.2, so `pyyaml==6.0` cannot be installed on two of the four interpreters
 # `requires-python = ">=3.10"` promises.
 #
+# The requests and openpyxl floors are NOT load-bearing, and are written down here
+# because every other line in this file is read as "this floor exists for a
+# reason". The suite passes at requests 2.25.1 and openpyxl 3.0.10, and
+# `reset_dimensions` -- the openpyxl call that looks like it would need 3.1 -- is
+# present in 3.0.10 and guarded by an except anyway. Keep requests at 2.31
+# regardless: that is the release which stopped Proxy-Authorization leaking across
+# a cross-host redirect (CVE-2023-32681), and this tool authenticates through an
+# institutional proxy, so it is the one dependency where that class of bug would
+# reach real credentials.
+#
 # Two optional extras:
 #   requirements-browser.txt   the institutional-proxy tier (Playwright)
 #   xlrd>=2.0                  legacy binary .xls supplements (1 file in 191);
