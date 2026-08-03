@@ -68,10 +68,13 @@ Group (A) safe deletions and group (D) requirements fixes only. Groups (B), (C),
       public alias `MAX_BOUNDED_SECTION_CHARS` and its tautological assertion. Do NOT
       rewrite the docstring at 271-272 as if it were false.
 
-## (D) Requirements and packaging — 0 of 8 done
+## (D) Requirements and packaging — 1 of 8 done
 
-- [ ] D1 `requirements.txt:3`, `pyproject.toml:25` — **`pyyaml>=6.0` is not installable
-      on py3.12 or py3.13**, both CI matrix legs. Raise to `>=6.0.1`.
+- [x] D1 `requirements.txt:3`, `pyproject.toml:25` — the declared `pyyaml` floor could
+      not be installed on py3.12 or py3.13. **Raised to `>=6.0.2`, not the `>=6.0.1` the
+      plan proposed:** measured wheel availability is cp312 from 6.0.1 and cp313 from
+      6.0.2, so 6.0.1 fails the same way on the 3.13 leg. Note the severity is "the
+      floor is not honourable", not "CI is broken" — pip resolves to 6.0.3 either way.
 - [ ] D2 `.github/workflows/tests.yml` — CI never runs `pip install .`, so the
       requirements/pyproject agreement and both console scripts are unguarded.
 - [ ] D3 `pyproject.toml:2, 11, 17` — `license = { text = "MIT" }` is a deprecated TOML

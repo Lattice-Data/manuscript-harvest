@@ -1,10 +1,15 @@
 pymupdf>=1.24
 requests>=2.31
-pyyaml>=6.0
+pyyaml>=6.0.2
 openpyxl>=3.1
 
 # openpyxl is required, not optional: in a 63-article test corpus, 172 of the 191
 # spreadsheets are .xlsx, and they are where sample-level metadata actually lives.
+#
+# The pyyaml floor is set by wheel availability across the whole supported range,
+# not by an API this code needs: cp312 wheels start at 6.0.1 and cp313 wheels at
+# 6.0.2, so `pyyaml==6.0` cannot be installed on two of the four interpreters
+# `requires-python = ">=3.10"` promises.
 #
 # Two optional extras:
 #   requirements-browser.txt   the institutional-proxy tier (Playwright)

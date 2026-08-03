@@ -22,7 +22,7 @@ classifiers = [
 dependencies = [
     "pymupdf>=1.24",
     "requests>=2.31",
-    "pyyaml>=6.0",
+    "pyyaml>=6.0.2",
     "openpyxl>=3.1",
 ]
 
