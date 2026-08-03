@@ -98,6 +98,10 @@ _PDF_MAGIC = b"%PDF"
 _MIN_TEXT_CHARS = 200
 # A PDF this small is only accepted if it reads like a real article.
 _SMALL_PDF_BYTES = 30_000
+# Below this a body is a failed download rather than a refusal page. Kept low on
+# purpose: a small PDF is usually a "purchase this article" stub, and calling that
+# `download_failed` would hide why it failed.
+_MIN_DOWNLOAD_BYTES = 100
 
 #: Failure statuses that name a cause the user can act on, most decisive first.
 #: These beat a generic miss wherever they appear, because "your session expired"
@@ -172,7 +176,6 @@ def validate_pdf(
     content: bytes,
     content_type: str = "",
     url: str = "",
-    min_bytes: int = 100,
 ) -> Tuple[bool, str, dict]:
     """Decide whether `content` may be stored as the article PDF.
 
@@ -184,9 +187,7 @@ def validate_pdf(
     meta: dict = {"bytes": len(content or b""), "content_type": content_type}
 
     # Only a genuinely empty or absurdly short body counts as a failed download.
-    # The floor is kept low on purpose: a small PDF is usually a "purchase this
-    # article" stub, and calling that `download_failed` would hide why it failed.
-    if not content or len(content) < min_bytes:
+    if not content or len(content) < _MIN_DOWNLOAD_BYTES:
         return False, "download_failed", meta
 
     if not looks_like_pdf(content):
