@@ -214,7 +214,6 @@ def fetch_publication(
     config: dict,
     force: bool = False,
     want_supplements: bool = True,
-    tiers: Optional[List[str]] = None,
     http: Optional[Http] = None,
 ) -> dict:
     """Fetch one publication into the corpus. Returns the manifest record.
@@ -224,7 +223,7 @@ def fetch_publication(
     """
     fetch_cfg = config.get("fetch", {}) or {}
     corpus_dir = fetch_cfg.get("corpus_dir", "corpus")
-    tier_names = list(tiers if tiers is not None else fetch_cfg.get("tiers", DEFAULT_TIERS))
+    tier_names = list(fetch_cfg.get("tiers", DEFAULT_TIERS))
 
     normalized = normalize_doi(doi)
     directory = store.article_dir(corpus_dir, normalized)

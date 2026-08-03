@@ -20,7 +20,7 @@ scratchpad. Each item below carries enough detail to be executed without it.
 Group (A) safe deletions and group (D) requirements fixes only. Groups (B), (C), (E),
 (F) and (G) are audited but deliberately untouched — see "Not started" at the bottom.
 
-## (A) Safe deletions — 12 of 20 done
+## (A) Safe deletions — 13 of 20 done
 
 - [x] A1 `extract/review.py:422-423` — duplicate `partially_reviewed` branch; the next
       two lines return the identical tuple for every input that reaches it.
@@ -49,7 +49,7 @@ Group (A) safe deletions and group (D) requirements fixes only. Groups (B), (C),
       removing one, and the one to revert first if a manifest-shape change is unwanted.
 - [x] A12 `fetch/validate.py:175` — never-passed `min_bytes` param; replace with a
       `_MIN_DOWNLOAD_BYTES` constant beside its siblings.
-- [ ] A13 `fetch/fetcher.py:217, 227` — never-passed `tiers` param; the config dict is
+- [x] A13 `fetch/fetcher.py:217, 227` — never-passed `tiers` param; the config dict is
       the single channel.
 - [ ] A14 `extract/blocks.py:124, 148` — never-passed `offset` param on `number_blocks`.
       Keep the docstring verbatim (it records the id-collision measurement).
