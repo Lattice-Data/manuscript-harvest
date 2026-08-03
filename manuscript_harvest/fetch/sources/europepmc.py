@@ -244,9 +244,21 @@ class EuropePmcSource(Source):
 def _unpack_zip(content: bytes, max_files: int, max_file_bytes: int):
     """Return [(name, bytes)] for the real files in a ZIP.
 
-    Directory entries are skipped, only basenames are kept (so no member can
-    write outside the corpus directory), and both the per-file size and the file
-    count are capped -- an archive should not be able to fill the disk.
+    Directory entries are skipped, and both the per-file size and the file count
+    are capped -- an archive should not be able to fill the disk.
+
+    Member names are returned *as recorded in the archive*, path and all. Nothing
+    can write outside the corpus directory regardless, but the guard is downstream
+    rather than here: `fetcher._write_group` routes every name through
+    `store.supplement_filename`, whose `sanitize_filename` reduces
+    `'../../evil.txt'` to `'01_evil.txt'`. This docstring used to claim the
+    reduction happened in this function, which it does not -- worth being exact
+    about, because a reader checking the safety argument would have looked here and
+    found nothing doing it. `pmc_oa._unpack_tgz` does strip to the basename itself.
+
+    No media split either, unlike `pmc_oa._classify`: every member becomes a
+    supplement. That difference is deliberate for now and measured -- see the note
+    in `_classify`.
     """
     out = []
     with zipfile.ZipFile(io.BytesIO(content)) as archive:

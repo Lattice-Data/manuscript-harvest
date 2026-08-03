@@ -98,7 +98,7 @@ audited but untouched — see the bottom of this file.
       measurements over the 63-paper development corpus and the `.xls` file they cite is
       not in the shipped corpus.
 
-## (B) — 10 of 11 done
+## (B) — 11 of 11 done (COMPLETE)
 
 - [x] B11 `requirements.txt:1`, `pyproject.toml:22` — pymupdf floor raised `>=1.24` to
       `>=1.28`, the version the checked-in section-score baseline was measured on, plus a
@@ -153,6 +153,17 @@ audited but untouched — see the bottom of this file.
       could only return falsy with `denial = None` plus the invariant. Behaviour-identical
       (`classify_denial` returns `None` on a clean page, and the retry's success path
       requires a falsy denial); the line's real job is clearing the *stub's* denial.
+- [x] B9 `fetch/sources/pmc_oa.py:277`, `fetch/sources/europepmc.py:244` — the two
+      archive unpackers disagree about whether article figure images belong in
+      `supplementary/`. **Documented, not resolved** — the plan's second option. Sharing
+      the split would move ~297 files out of `supplementary/` on future fetches, changing
+      per-file extraction statuses and possibly article status, and a figures-only ZIP
+      needs a `suppl_status` decision first. Measured and recorded in both docstrings:
+      435 entries, 382 from europepmc and 0 from pmc_oa, 297 of the 382 are images, no
+      `media/` anywhere. **A decision is still owed** — spawned as its own task.
+      Fixed in passing: `_unpack_zip`'s docstring claimed it reduced members to
+      basenames, which it does not; the traversal guard is `store.sanitize_filename`
+      downstream (verified: `'../../evil.txt'` -> `'01_evil.txt'`). That was audit item E7.
 - [x] B10 `.github/workflows/tests.yml:44-55` — `--cov-fail-under` raised 70 to 90, and
       the comment claiming the floor was "set just under the current number" replaced with
       the measured pair: **91.8% without a corpus (what CI reports and the badge shows)
@@ -161,10 +172,8 @@ audited but untouched — see the bottom of this file.
 
 ## Remaining — audited, not started
 
-- **(B) the other 8 items needing care.** Includes the real defects:
-  a security claim asserted where it is not enforced (`europepmc.py:245`); `Http(max_bytes=)` is a
-  cap production cannot set — wire it, do not delete; two `proxy_browser` download paths
-  drifted apart; review-queue order docs contradict code.
+- **A decision is owed on B9**: whether the two archive unpackers should share the
+  media/supplement split. Documented in both docstrings; spawned as a separate task.
 - **(C) 8 merges** (highest value: the table-header override translation exists three
   times and only the `spreadsheet.py` copy is tested) **and 8 explicit leave-alones**.
 - **(E) 20 stale comments/docstrings**, including `extract/cli.py:426` advertising

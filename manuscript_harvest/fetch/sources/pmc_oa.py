@@ -281,6 +281,24 @@ def _classify(members: List[Tuple[str, bytes]]):
     supplementary material. Keeping them apart matters: `supplementary/` is where
     a curator looks for supplementary tables, and padding it with figure JPEGs
     would bury them.
+
+    **This split is this tier's alone, and the tier that delivers the supplements
+    does not do it.** `europepmc._unpack_zip` marks every ZIP member a supplement,
+    and the OA-package route is off by default (`fetch.try_oa_package`), so the
+    policy above currently describes no file on disk. Measured over the 36 local
+    articles: 435 supplementary entries, 382 of them from `europepmc` and none from
+    here, and 297 of those 382 are `.jpg`/`.gif` -- so the burying this docstring
+    warns about is what a corpus actually looks like, and no `media/` directory
+    exists. `10.1038_s41586-021-03465-8` holds the mixture plainly, with an article
+    figure (`01_..._Fig5_HTML.gif`) beside a real supplement
+    (`02_..._Fig9_ESM.gif`).
+
+    Sharing the split is the obvious fix and is deliberately not done here: it would
+    move those files out of `supplementary/` on every future fetch, which changes
+    per-file extraction statuses and can move an article's own status, and
+    `_unpack_zip`'s caller sets `suppl_status = "fetched"` unconditionally where this
+    one guards on `if supplements:` -- so a figures-only ZIP needs a decision first.
+    Recorded rather than done, so the inconsistency is at least not silent.
     """
     supplements: List[Tuple[str, bytes]] = []
     media: List[Tuple[str, bytes]] = []
