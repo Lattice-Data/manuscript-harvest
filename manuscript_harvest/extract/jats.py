@@ -75,10 +75,6 @@ def _prepare(data: bytes) -> str:
     return _ENTITY_RX.sub(replace, text)
 
 
-def _normalize_ws(text: str) -> str:
-    return re.sub(r"\s+", " ", text.replace("\xa0", " ")).strip()
-
-
 #: Children that end a run of text. Without a boundary between them a `<td>`
 #: holding three `<p>`s reads as one value.
 _BLOCK_LEVEL = frozenset({"p", "list-item", "disp-quote", "sec", "title", "def",
