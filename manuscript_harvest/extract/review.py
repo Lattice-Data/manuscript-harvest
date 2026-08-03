@@ -315,9 +315,6 @@ class Overrides:
             kept[answer_key(answer.get("kind", ""), key)] = answer
         return cls(kept)
 
-    def __bool__(self) -> bool:
-        return bool(self._answers)
-
     def applied(self) -> int:
         return self._applied
 
