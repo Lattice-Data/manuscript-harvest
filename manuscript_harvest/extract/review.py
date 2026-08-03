@@ -419,8 +419,6 @@ def state_of(review: Optional[dict], extraction: dict,
         return "stale", stale
     if sign_off:
         return "reviewed", stale
-    if answered and answered < queued:
-        return "partially_reviewed", stale
     if answered:
         return "partially_reviewed", stale
     return ("queued" if queued else "unreviewed"), stale

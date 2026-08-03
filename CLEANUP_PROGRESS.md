@@ -20,9 +20,9 @@ scratchpad. Each item below carries enough detail to be executed without it.
 Group (A) safe deletions and group (D) requirements fixes only. Groups (B), (C), (E),
 (F) and (G) are audited but deliberately untouched — see "Not started" at the bottom.
 
-## (A) Safe deletions — 0 of 20 done
+## (A) Safe deletions — 1 of 20 done
 
-- [ ] A1 `extract/review.py:422-423` — duplicate `partially_reviewed` branch; the next
+- [x] A1 `extract/review.py:422-423` — duplicate `partially_reviewed` branch; the next
       two lines return the identical tuple for every input that reaches it.
 - [ ] A2 `extract/__init__.py:33-34` — two re-export lines nothing imports; their
       `# noqa: F401` suppresses a true positive.
