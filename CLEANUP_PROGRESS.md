@@ -20,7 +20,7 @@ scratchpad. Each item below carries enough detail to be executed without it.
 Group (A) safe deletions and group (D) requirements fixes only. Groups (B), (C), (E),
 (F) and (G) are audited but deliberately untouched — see "Not started" at the bottom.
 
-## (A) Safe deletions — 18 of 20 done
+## (A) Safe deletions — 19 of 20 done
 
 - [x] A1 `extract/review.py:422-423` — duplicate `partially_reviewed` branch; the next
       two lines return the identical tuple for every input that reaches it.
@@ -62,7 +62,7 @@ Group (A) safe deletions and group (D) requirements fixes only. Groups (B), (C),
 - [x] A18 `fetch/sources/proxy_browser.py:879-880` — unreachable `not_elsevier` guard;
       the only call site is already inside an Elsevier-only `looks_blocked` branch.
       Do NOT also delete line 789 (see B7).
-- [ ] A19 `pytest.ini:17` — dead `is not supported and will be removed` filter;
+- [x] A19 `pytest.ini:17` — dead `is not supported and will be removed` filter;
       `spreadsheet.py` silences openpyxl at the call site so it never reaches pytest.
 - [ ] A20 `extract/sections.py:266-273` + `tests/test_extract_units.py:282` — unused
       public alias `MAX_BOUNDED_SECTION_CHARS` and its tautological assertion. Do NOT
