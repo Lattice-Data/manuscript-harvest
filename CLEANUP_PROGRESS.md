@@ -68,7 +68,7 @@ Group (A) safe deletions and group (D) requirements fixes only. Groups (B), (C),
       public alias `MAX_BOUNDED_SECTION_CHARS` and its tautological assertion. Do NOT
       rewrite the docstring at 271-272 as if it were false.
 
-## (D) Requirements and packaging — 6 of 8 done
+## (D) Requirements and packaging — 7 of 8 done
 
 - [x] D1 `requirements.txt:3`, `pyproject.toml:25` — the declared `pyyaml` floor could
       not be installed on py3.12 or py3.13. **Raised to `>=6.0.2`, not the `>=6.0.1` the
@@ -90,7 +90,7 @@ Group (A) safe deletions and group (D) requirements fixes only. Groups (B), (C),
       unchanged at 93% with a local corpus). **The plan overstated this one:** the
       `DataError` needs `--cov-append`, which neither CI nor the README passes — a plain
       run erases the data file first, so it was never reproducible as described.
-- [ ] D7 `README.md:64` — `pip install xlrd` should be `pip install 'xlrd>=2.0'` to match
+- [x] D7 `README.md:64` — `pip install xlrd` should be `pip install 'xlrd>=2.0'` to match
       the extra it claims to equal.
 - [ ] D8 `requirements.txt:6-13` — the corpus counts are stated as fact; they are
       measurements over the 63-paper development corpus and the `.xls` file they cite is

@@ -61,7 +61,7 @@ things, so use whichever fits how you installed the package:
 
     pip install -r requirements-browser.txt   # or: pip install -e '.[browser]'
     pip install -r requirements-dev.txt       # or: pip install -e '.[dev]'
-    pip install xlrd                          # or: pip install -e '.[xls]'
+    pip install 'xlrd>=2.0'                   # or: pip install -e '.[xls]'
 
 `browser` is the library-proxy tier (Playwright), `dev` is pytest, and `xls` is for
 legacy binary `.xls` supplements — one file in the reference corpus needs it.
