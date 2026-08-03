@@ -666,6 +666,28 @@ def _shared_manifest_labels(record: dict) -> set:
     return {label for label, n in counts.items() if n >= 2}
 
 
+def _shared_jats_labels(record: dict, labels: Dict[str, dict]) -> set:
+    """The same rule for JATS labels, which a publisher can also make useless.
+
+    A label two files share is not a per-file name, and nothing about that
+    depends on the label having come from the manifest. 10.1073/pnas.1914143116
+    gives every one of its ten `<supplementary-material>` elements
+    `<label>Supplementary File</label>`, so the JATS branch -- trusted above the
+    manifest precisely because it is the publisher's own name -- handed all ten
+    files the same one. Rejecting it drops them to `none`, which is honest and is
+    what puts them in front of a curator.
+    """
+    counts: Counter = Counter()
+    for entry in record.get("supplementary") or []:
+        if not entry.get("path"):
+            continue
+        matched = next((labels[name] for name in _supplement_key(entry) if name in labels),
+                       None)
+        if (matched or {}).get("label"):
+            counts[matched["label"]] += 1
+    return {label for label, n in counts.items() if n >= 2}
+
+
 def _main_text(article_dir: Path, record: dict, limits: Limits,
                overrides=None) -> Tuple[FileResult, Dict[str, dict], dict]:
     """Pick and extract the main text. Returns `(result, supplement_labels, info)`.
@@ -811,6 +833,7 @@ def extract_article(article_dir, limits: Optional[Limits] = None, force: bool = 
 
     entries_without_path = 0
     shared_labels = _shared_manifest_labels(record)
+    shared_jats = _shared_jats_labels(record, labels)
     for entry in record.get("supplementary") or []:
         path = entry.get("path")
         if not path:
@@ -819,14 +842,15 @@ def extract_article(article_dir, limits: Optional[Limits] = None, force: bool = 
         matched = next((labels[name] for name in _supplement_key(entry) if name in labels),
                        None)
         caption = (matched or {}).get("caption")
-        # JATS beats a synthesised name, which beats the manifest, which is
-        # rejected outright when two entries share it: that is the transport's
-        # name for the request, not the publisher's name for the file.
+        # JATS beats a synthesised name, which beats the manifest. A label two
+        # entries share is rejected whichever it came from: from the manifest it
+        # is the transport's name for the request, and from the JATS it is a
+        # publisher labelling ten files `Supplementary File`. Neither names a file.
         reviewed = overrides.label_for(path) if overrides is not None else None
         if reviewed and (reviewed.get("override") or {}).get("label"):
             label, label_source = reviewed["override"]["label"], "review"
             caption = reviewed["override"].get("caption") or caption
-        elif (matched or {}).get("label"):
+        elif (matched or {}).get("label") and matched["label"] not in shared_jats:
             label, label_source = matched["label"], "jats"
         elif caption and _label_from_caption(caption):
             label, label_source = _label_from_caption(caption), "jats_caption"
@@ -934,7 +958,7 @@ def extract_article(article_dir, limits: Optional[Limits] = None, force: bool = 
         "unextracted_text_files": text_bearing_failures,
         "unreachable_content": unreachable_content,
         "cleared_by_review": cleared_by_review,
-        "supplement_label_rejected": sorted(shared_labels),
+        "supplement_label_rejected": sorted(shared_labels | shared_jats),
         "review_signals": _review_signals(
             all_blocks, main_result, results[1:],
             bool((record.get("fulltext_xml") or {}).get("path")
