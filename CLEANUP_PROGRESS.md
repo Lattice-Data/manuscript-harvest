@@ -174,7 +174,7 @@ audited but untouched — see the bottom of this file.
 
 - **A decision is owed on B9**: whether the two archive unpackers should share the
   media/supplement split. Documented in both docstrings; spawned as a separate task.
-## (C) — 4 of 8 done
+## (C) — 5 of 8 done
 
 - [x] C1 `extract/review.py:337`, `spreadsheet.py:74`, `docxfile.py:142`, `jats.py:376` —
       the table-header override translation existed three times and only the xlsx copy
@@ -201,8 +201,13 @@ audited but untouched — see the bottom of this file.
       have settled on one word and overclaimed. `via` now sorts last in the note JSON:
       cosmetic and unasserted.
 
-Remaining (C): C5 the table-cap and reset_dimensions guards
-(xlsx vs xls, xls copies untested); C6 the identical `_fetch_pdf` body (biorxiv vs
+- [x] C5 `extract/spreadsheet.py:74, 88` — extracted `_reset_dimensions` and
+      `_apply_table_cap`, each duplicated between the .xlsx and .xls readers with the
+      .xls copies uncovered. The cap helper truncates in place (it cannot rebind the
+      caller's local); verified both formats report the cap identically, driving the
+      .xls path through the same xlrd stub the suite uses.
+
+Remaining (C): C6 the identical `_fetch_pdf` body (biorxiv vs
 pmc_oa — do NOT reuse that name, two subclasses have different signatures); C7 the
 adapter `find_supplements` skeleton (5 copies; Nature strips the fragment *first*, so a
 naive predicate re-admits the `#MOESM` anchors); C8 four small test-side/helper merges.
