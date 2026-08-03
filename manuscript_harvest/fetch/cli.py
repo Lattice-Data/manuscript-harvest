@@ -2,6 +2,8 @@
 
     manuscript-fetch get 10.1038/s41586-021-03852-1
     manuscript-fetch batch dois.txt
+    manuscript-fetch usage --by-size     # what is taking the space
+    manuscript-fetch prune --dry-run     # what a budget sweep would evict
     manuscript-fetch login          # one-time Stanford SSO, headed
     manuscript-fetch check          # is the browser session alive?
 

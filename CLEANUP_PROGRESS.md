@@ -241,7 +241,7 @@ audited but untouched — see the bottom of this file.
       `load_config`/`main`, `better_pdf_failure`, `sanitize_filename` vs
       `safe_member_name`, `_shared_*_labels`) already carry their own rationale or were
       covered by C3/B9 — left alone as the audit directed.
-## (E) — 13 of 20 done
+## (E) — 20 of 20 done (COMPLETE)
 
 E1 was covered by B5 and E7 by B9. **Correction: an earlier note claimed B5 also covered
 E2 (the `--role` help string); it did not.** E2 is still open below.
@@ -280,6 +280,22 @@ E2 (the `--role` help string); it did not.** E2 is still open below.
       Documented those 4 (`max_sample_rows`, `max_card_chars`, `max_archive_members`,
       `max_member_mb`) so the claim holds for everything exposed, and softened the
       sentence for the 7 internal ones that are still bare numbers.
+- [x] E2 `extract/cli.py` — `--role` help advertised two of the three roles;
+      `--role non_evidence` already worked (exit 0). **This is the item an earlier note
+      wrongly recorded as covered by B5.**
+- [x] E14 `fetch/cli.py:3` — the command summary omitted `usage` and `prune`, the two
+      commands config.yaml points users at.
+- [x] E16 `pytest.ini` — the comment claimed registration stops a misspelled marker
+      passing silently; it does not. Added `addopts = --strict-markers`, which makes the
+      stated intent real. Verified: `@pytest.mark.netwrok` passed with a warning before
+      and is a collection error now, and `-m "not network"` still deselects.
+- [x] E17 `tests/test_open_access_tiers.py:3` — "Two of the three" -> "Two of the four";
+      the file instantiates all four OA sources.
+- [x] E19 `fetch/fetcher.py:35` — "all three ground-truth papers" where the spec holds 8.
+- [x] E20 `pyproject.toml` — `version` hand-duplicated `manuscript_harvest.__version__`,
+      which had no reader at all. Now `dynamic = ["version"]` reading that attribute.
+      Verified by bumping it to 9.9.9 and watching the wheel name follow. The per-stage
+      versions in `fetch/` and `extract/` stay separate -- they are stamped into records.
 - [x] E18 no change needed: `tests/test_review.py`'s "in what order" became accurate once
       B5 added the ordering test.
 - **(F) 7 README passages carrying knowledge found nowhere else** — must be preserved

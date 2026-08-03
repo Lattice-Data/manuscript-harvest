@@ -432,7 +432,8 @@ def build_parser() -> argparse.ArgumentParser:
     show.add_argument("article")
     show.add_argument("--kind", default=None, help="heading, paragraph, caption, table, metadata")
     show.add_argument("--section", default=None, help="methods, results, abstract, ...")
-    show.add_argument("--role", default=None, help="main_text or supplement")
+    show.add_argument("--role", default=None,
+                      help="main_text, supplement, or non_evidence")
     show.add_argument("--file", default=None, help="only blocks whose source path contains this")
     show.add_argument("--limit", type=int, default=20)
     show.add_argument("--full", action="store_true", help="do not truncate block text")

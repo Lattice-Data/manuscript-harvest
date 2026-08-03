@@ -32,7 +32,7 @@ self-delimiting -- unpacking the archive yields the deposit, and a member list i
 not a guess. Every other route pattern-matches a rendered page: `pmc_supplements`
 regexes PMC's HTML for `/bin/` paths, the browser tier scrapes anchors, bioRxiv
 regexes its supplement page. Those get `fetched_unverified` even when they are in
-fact complete -- as all three ground-truth papers now are. That is not an alarm.
+fact complete -- as most of the eight ground-truth papers are. That is not an alarm.
 It is the difference between "we counted" and "we looked and this is what we saw",
 and only the first licenses "they exist and we have them".
 

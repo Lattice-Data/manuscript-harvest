@@ -1,6 +1,6 @@
 """The open-access tiers, at the level of the whole tier rather than its helpers.
 
-Two of the three reach a file list by pattern-matching rendered HTML rather than by
+Two of the four reach a file list by pattern-matching rendered HTML rather than by
 reading an enumeration, and those two had almost no offline coverage -- 14% and 17%
 -- which is the worst place for it. A markup change on either page shrinks the list
 silently, and the whole point of the status taxonomy is that a shrunk list must not
