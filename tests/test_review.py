@@ -240,6 +240,28 @@ def _write_review(tmp_path, record, answers, sign_off=None):
     return {"extract": {"review_dir": str(directory)}}
 
 
+def test_the_applied_breakdown_sums_to_the_applied_total(tmp_path):
+    """`review --apply` printed a total counted over the whole stored file beside a
+    breakdown counted over the incoming batch, so the two measured different sets.
+    Because the file is append-only, a second apply against an article with fourteen
+    stored answers read "14 override(s) applied: 1 table header"."""
+    directory, record = _extracted(
+        tmp_path, xml=jats_article(METHODS_BODY),
+        supplements=[("s1.xlsx", make_xlsx(AMBIGUOUS)), ("notes.rtf", b"{\\rtf1 x}")])
+    queue = _queue(directory, record)
+    header = next(i for i in queue if i["kind"] == review.TABLE_HEADER)
+    content = next(i for i in queue if i["kind"] == review.FILE_HAS_CONTENT)
+
+    config = _write_review(tmp_path, record, [
+        _answer(header, "corrected", override={"header_row": 1}),
+        _answer(content, "confirmed", override={"has_content": False})])
+    after = extract_article(directory, limits=L, force=True, config=config)
+
+    kinds = after["review"]["overrides_applied_kinds"]
+    assert sum(kinds.values()) == after["review"]["overrides_applied"]
+    assert set(kinds) == {review.TABLE_HEADER, review.FILE_HAS_CONTENT}
+
+
 def test_a_confirmed_header_row_changes_the_next_extraction(tmp_path):
     """A correction that does not change the next extraction is a note, not a
     correction."""

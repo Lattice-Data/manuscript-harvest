@@ -1027,6 +1027,7 @@ def extract_article(article_dir, limits: Optional[Limits] = None, force: bool = 
         "answered": len(stored.get("answers") or []),
         "stale": [i["kind"] for i in stale],
         "overrides_applied": overrides.applied(),
+        "overrides_applied_kinds": overrides.applied_kinds(),
         "sign_off": stored.get("sign_off"),
         "queue_truncated": review.queue_truncated(extraction, blocks_file, limits),
     }

@@ -376,12 +376,18 @@ def _apply_review(args, config, directory, extraction, manifest, stored_path,
 
     after = extractor.extract_article(directory, limits=limits, force=True,
                                       write_markdown=markdown, config=config)
-    applied = (after.get("review") or {}).get("overrides_applied", 0)
-    kinds = Counter(a["kind"] for a in incoming.get("answers") or []
-                    if a.get("override"))
+    # Both numbers come from the extraction that just ran, so the breakdown sums to
+    # the headline. Built from the incoming batch instead, it measured a different
+    # set: this file is append-only, so a second apply against an article with
+    # fourteen stored answers printed "14 override(s) applied: 1 table header".
+    review_record = after.get("review") or {}
+    applied = review_record.get("overrides_applied", 0)
+    kinds = Counter(review_record.get("overrides_applied_kinds") or {})
     detail = ", ".join(f"{n} {kind.replace('_', ' ')}" for kind, n in
                        sorted(kinds.items())) or "none"
-    print(f"{applied} override(s) applied: {detail}", file=sys.stderr)
+    submitted = sum(1 for a in incoming.get("answers") or [] if a.get("override"))
+    print(f"{applied} override(s) applied: {detail} "
+          f"({submitted} submitted in this batch)", file=sys.stderr)
     print(f"{stored_path}")
     return _exit_code(after)
 

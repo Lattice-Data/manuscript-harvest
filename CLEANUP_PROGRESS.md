@@ -9,7 +9,7 @@ Delete this file in the last commit of the cleanup.
 
 Baseline that must hold at every commit:
 
-    python -m pytest tests -q                          # 800 passed, 10 skipped
+    python -m pytest tests -q                          # 801 passed, 10 skipped
     ruff check --select F manuscript_harvest tests     # clean
 
 The full audited plan this comes from is not checked in; it lives in the session
@@ -98,7 +98,7 @@ audited but untouched — see the bottom of this file.
       measurements over the 63-paper development corpus and the `.xls` file they cite is
       not in the shipped corpus.
 
-## (B) lifted into this pass — 3 of 11 done
+## (B) — 4 of 11 done
 
 - [x] B11 `requirements.txt:1`, `pyproject.toml:22` — pymupdf floor raised `>=1.24` to
       `>=1.28`, the version the checked-in section-score baseline was measured on, plus a
@@ -117,6 +117,11 @@ audited but untouched — see the bottom of this file.
       10.1126_science.aat5031: `overrides_applied` 13 -> 14, 52 blocks labelled `results`,
       35 parser labels untouched, `blocks.jsonl` still byte-identical across re-extraction,
       and no other article in the corpus affected.
+- [x] B2 `extract/cli.py:379-383` — the `--apply` headline counted overrides over the
+      whole stored file while the breakdown counted the incoming batch. Added
+      `Overrides.applied_kinds()`, counted where each answer is consumed, surfaced as
+      `review.overrides_applied_kinds`; the breakdown now sums to the headline and the
+      batch size is reported separately. Verified on the 14-answer article.
 - [x] B10 `.github/workflows/tests.yml:44-55` — `--cov-fail-under` raised 70 to 90, and
       the comment claiming the floor was "set just under the current number" replaced with
       the measured pair: **91.8% without a corpus (what CI reports and the badge shows)

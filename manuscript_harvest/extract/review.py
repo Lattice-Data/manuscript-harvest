@@ -37,6 +37,7 @@ non-stale answer for a key wins.
 
 import hashlib
 import json
+from collections import Counter
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -296,6 +297,7 @@ class Overrides:
     def __init__(self, answers: Optional[Dict[str, dict]] = None):
         self._answers = answers or {}
         self._applied = 0
+        self._applied_kinds: Counter = Counter()
 
     @classmethod
     def load(cls, slug: str, manifest: Optional[dict],
@@ -318,11 +320,23 @@ class Overrides:
     def applied(self) -> int:
         return self._applied
 
+    def applied_kinds(self) -> Dict[str, int]:
+        """`applied()` broken down by question kind, counted where each answer is
+        consumed rather than where it was submitted.
+
+        `review --apply` used to print this total beside a breakdown built from the
+        *incoming* batch, which measures something else: on a second apply against
+        an article with fourteen stored answers, the headline said 14 and the
+        breakdown summed to 1.
+        """
+        return dict(self._applied_kinds)
+
     def _take(self, kind: str, key: dict) -> Optional[dict]:
         answer = self._answers.get(answer_key(kind, key))
         if answer is None or not answer.get("override"):
             return None
         self._applied += 1
+        self._applied_kinds[kind] += 1
         return answer
 
     def note_for(self, answer: dict) -> str:
@@ -357,6 +371,7 @@ class Overrides:
         for identity, answer in self._answers.items():
             if answer.get("kind") == MAIN_TEXT_PRESENT and answer.get("override"):
                 self._applied += 1
+                self._applied_kinds[MAIN_TEXT_PRESENT] += 1
                 return answer["override"].get("main_text_source")
         return None
 
