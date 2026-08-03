@@ -319,11 +319,8 @@ class SectionTracker:
     genuine citation after a stray line is still labelled.
     """
 
-    def __init__(self, max_bounded_chars: Optional[int] = None,
-                 limits: Optional[Limits] = None):
-        if max_bounded_chars is None:
-            max_bounded_chars = (limits or Limits()).max_bounded_section_chars
-        self.max_bounded_chars = max_bounded_chars
+    def __init__(self, limits: Optional[Limits] = None):
+        self.max_bounded_chars = (limits or Limits()).max_bounded_section_chars
         self.current: Optional[str] = None
         self.seen: List[str] = []
         """Canonical names met, in document order, deduplicated."""
