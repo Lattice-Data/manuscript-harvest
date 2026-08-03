@@ -241,9 +241,27 @@ audited but untouched — see the bottom of this file.
       `load_config`/`main`, `better_pdf_failure`, `sanitize_filename` vs
       `safe_member_name`, `_shared_*_labels`) already carry their own rationale or were
       covered by C3/B9 — left alone as the audit directed.
-- **(E) 20 stale comments/docstrings**, including `extract/cli.py:426` advertising
-  `--role` as two values when three exist, and `pdf_loader` being a ghost name in three
-  places.
+## (E) — 6 of 20 done
+
+E1 was covered by B5 and E7 by B9. **Correction: an earlier note claimed B5 also covered
+E2 (the `--role` help string); it did not.** E2 is still open below.
+
+- [x] E3 `fetch/validate.py` — `validate_pdf`'s status list omitted `javascript_challenge`
+      (returned via `classify_denial`). Added, with why it is not a refusal, and a note
+      that `publisher_stub_page` is a sibling this function never returns.
+- [x] E4 `extract/cli.py:12-17` — named `extractor_version` as the cache key when it is
+      one of six components, and specifically the one `extract/__init__.py` records as
+      insufficient. Now points at `extraction_key`.
+- [x] E5 `fetch/sources/europepmc.py:16` — future tense that was already past: JATS
+      *is* preferred now, by `extractor._choose_main_text`.
+- [x] E6 `pdf_loader` was a ghost name in three places (`europepmc.py`, `validate.py`,
+      `tests/test_units.py`); no such module or function exists. All three repointed at
+      `extract/pdf.py` / `pdf.blocks_from_pdf`.
+- [x] E13 `fetch/identifiers.py:8` — credited `hasPDF` and `hasSuppl` jointly with the
+      "none" vs "we failed" distinction. Only `has_suppl` drives anything; `has_pdf`
+      appears solely as a field, a `to_dict` entry and an assignment.
+- [x] E18 no change needed: `tests/test_review.py`'s "in what order" became accurate once
+      B5 added the ordering test.
 - **(F) 7 README passages carrying knowledge found nowhere else** — must be preserved
   before the README shrinks.
 - **(G) `EXTRACT_HARDENING_PLAN.md` deletion.** Safe: nothing references it and ~35.5 of

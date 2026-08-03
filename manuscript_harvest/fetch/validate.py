@@ -189,7 +189,14 @@ def validate_pdf(
     Returns `(accepted, status, meta)`. `status` is one of the `fulltext.status`
     values: `ok`, `scanned_pdf_suspected` (accepted, flagged), or one of
     `download_failed`, `not_a_pdf`, `paywalled`, `proxy_not_configured`,
-    `session_expired`, `link_resolver_error` (all rejected).
+    `session_expired`, `javascript_challenge`, `link_resolver_error` (all rejected).
+
+    `javascript_challenge` is not a refusal: the file is public and behind NCBI's
+    proof-of-work page, so it tells the caller to route through the browser tier
+    rather than to give up. It comes from `classify_denial` like the others and was
+    missing from this list. `publisher_stub_page` is a sibling status this function
+    never returns -- the browser tier assigns that one, since only a browser can see
+    a rendered shell.
     """
     meta: dict = {"bytes": len(content or b""), "content_type": content_type}
 
@@ -226,7 +233,7 @@ def validate_pdf(
     if len(text) < _MIN_TEXT_CHARS:
         # Parses fine but has no extractable text: almost certainly scanned.
         # Kept, because it is the real article, but flagged so the caller knows
-        # `pdf_loader` will get nothing out of it without an OCR step.
+        # `extract/pdf.py` will get nothing out of it without an OCR step.
         return True, "scanned_pdf_suspected", meta
 
     return True, "ok", meta

@@ -181,7 +181,8 @@ def test_real_pdf_accepted():
 
 
 def test_scanned_pdf_kept_but_flagged():
-    """Kept because it is the article, flagged because pdf_loader gets nothing."""
+    """Kept because it is the article, flagged because `pdf.blocks_from_pdf` gets
+    nothing out of it."""
     accepted, status, _ = validate_pdf(make_scanned_pdf())
     assert accepted and status == "scanned_pdf_suspected"
 

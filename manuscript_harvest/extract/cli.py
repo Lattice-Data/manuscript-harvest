@@ -10,8 +10,11 @@
     manuscript-extract review <doi> --apply answers.json
 
 Everything here is offline: it reads what the fetch stage already put in the
-corpus. `all` is safe to re-run -- an article whose manifest has not changed and
-whose extraction was made by this extractor version is skipped.
+corpus. `all` is safe to re-run -- an article is skipped when nothing in its cache
+key has moved. That key is `extractor.extraction_key`, and naming only the version
+here would name the one component already proven insufficient: see
+`extract/__init__.py`, where a version number nobody remembers to bump is rejected
+as a cache key in favour of a hash of the parser source.
 """
 
 import argparse

@@ -13,8 +13,10 @@ reporting `hasSuppl: Y`. So a 404 here means "Europe PMC holds no supplementary
 archive", NOT "this article has no supplements". The fetcher reconciles that
 against `hasSuppl` and the next tier tries elsewhere.
 
-The XML is fetched because it is free and structured. The pipeline reads PDFs
-today, but JATS is what would replace `pdf_loader`'s heuristic section detection.
+The XML is fetched because it is free and structured, and the extraction stage
+now prefers it: `extractor._choose_main_text` returns the JATS result whenever it is
+OK and substantial, and records that the PDF was not parsed. Sections come declared
+rather than guessed by `extract/pdf.py`'s heuristics.
 """
 
 import io
