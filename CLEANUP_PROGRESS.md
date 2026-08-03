@@ -98,7 +98,21 @@ Group (A) safe deletions and group (D) requirements fixes only. Groups (B), (C),
 
 ## Not started — audited, deliberately out of this pass
 
-- **(B) 11 items needing care.** Includes the real defects: `Overrides.section_for` is
+### (B) partially started — 2 of 11 done
+
+- [x] B11 `requirements.txt:1`, `pyproject.toml:22` — pymupdf floor raised `>=1.24` to
+      `>=1.28`, the version the checked-in section-score baseline was measured on, plus a
+      note beside `EXPECTED_SCORES` recording the sweep. 1.24.0 also had no cp313 wheel,
+      so the old floor was unsatisfiable on one CI leg. **Nuance the plan missed:** older
+      releases mostly shrink the *alignable sample* (98->70, 125->79 paragraphs) rather
+      than label worse (88.8%->82.9%, 92.0%->91.1%), so this gate can fail on a PyMuPDF
+      change without the labeller regressing. Recorded in the note.
+- [x] B10 `.github/workflows/tests.yml` — coverage floor raised 70 to 90 and the stale
+      "set just under the current number" comment corrected with the real figures.
+
+Remaining 9 items:
+
+- **(B) the other 9 items needing care.** Includes the real defects: `Overrides.section_for` is
   dead so a curator's `section_span` answer is discarded (`review.py:351`); a security
   claim asserted where it is not enforced (`europepmc.py:245`); `Http(max_bytes=)` is a
   cap production cannot set — wire it, do not delete; two `proxy_browser` download paths

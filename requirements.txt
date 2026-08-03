@@ -1,4 +1,4 @@
-pymupdf>=1.24
+pymupdf>=1.28
 requests>=2.31
 pyyaml>=6.0.2
 openpyxl>=3.1
@@ -7,6 +7,13 @@ openpyxl>=3.1
 # development corpus, 172 are .xlsx, and they are where sample-level metadata
 # actually lives. That corpus is not in this repository -- see the note in the
 # README about where these counts come from.
+#
+# The pymupdf floor is the version the checked-in section-score baseline was
+# measured on. `tests/expected_section_scores.json` does not reproduce on any
+# earlier release -- see the note beside it -- and 1.24.0 has no cp313 wheel at
+# all, so the old `>=1.24` was also unsatisfiable on one leg of the CI matrix.
+# 1.28.0 ships a cp310-abi3 wheel, so it covers 3.10 through 3.13 from one build,
+# and its own `requires_python` is `>=3.10`, matching this project's.
 #
 # The pyyaml floor is set by wheel availability across the whole supported range,
 # not by an API this code needs: cp312 wheels start at 6.0.1 and cp313 wheels at
