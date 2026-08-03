@@ -20,7 +20,7 @@ scratchpad. Each item below carries enough detail to be executed without it.
 Group (A) safe deletions and group (D) requirements fixes only. Groups (B), (C), (E),
 (F) and (G) are audited but deliberately untouched — see "Not started" at the bottom.
 
-## (A) Safe deletions — 14 of 20 done
+## (A) Safe deletions — 15 of 20 done
 
 - [x] A1 `extract/review.py:422-423` — duplicate `partially_reviewed` branch; the next
       two lines return the identical tuple for every input that reaches it.
@@ -53,7 +53,7 @@ Group (A) safe deletions and group (D) requirements fixes only. Groups (B), (C),
       the single channel.
 - [x] A14 `extract/blocks.py:124, 148` — never-passed `offset` param on `number_blocks`.
       Keep the docstring verbatim (it records the id-collision measurement).
-- [ ] A15 `extract/pdf.py:200` — never-passed `origin` param; inline `origin="pdf"` at
+- [x] A15 `extract/pdf.py:200` — never-passed `origin` param; inline `origin="pdf"` at
       the four construction sites.
 - [ ] A16 `extract/sections.py:322-326` — never-passed first positional on
       `SectionTracker.__init__`. Keep the class docstring (three measured DOIs).
