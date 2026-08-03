@@ -20,7 +20,7 @@ scratchpad. Each item below carries enough detail to be executed without it.
 Group (A) safe deletions and group (D) requirements fixes only. Groups (B), (C), (E),
 (F) and (G) are audited but deliberately untouched — see "Not started" at the bottom.
 
-## (A) Safe deletions — 5 of 20 done
+## (A) Safe deletions — 6 of 20 done
 
 - [x] A1 `extract/review.py:422-423` — duplicate `partially_reviewed` branch; the next
       two lines return the identical tuple for every input that reaches it.
@@ -31,7 +31,7 @@ Group (A) safe deletions and group (D) requirements fixes only. Groups (B), (C),
       identity test, no `if overrides` anywhere.
 - [x] A5 `extract/section_audit.py:63` — unreferenced `_TOO_SHORT`; keep its comment by
       moving it above the `too_short` counter (~line 123).
-- [ ] A6 `extract/tables.py:308-309, 312-313` — both `detect_header` early guards; the
+- [x] A6 `extract/tables.py:308-309, 312-313` — both `detect_header` early guards; the
       sole caller `build_card` already returns on the identical conditions.
 - [ ] A7 `fetch/store.py:299` — unreachable trailing `return f"{value:.1f}TB"`; the
       loop's `or unit == "TB"` guarantees the fifth iteration returns.

@@ -305,12 +305,10 @@ def detect_header(rows: List[Sequence[Any]], limits: Limits) -> Tuple[Optional[i
     candidate has a different type profile -- numbers under text headers -- which
     is the evidence that separates a header from a first data row of gene names.
     """
-    if not rows:
-        return None, [], LOW
-
+    # No empty-input guard: the sole caller `build_card` already returns on both
+    # "no rows" and "no populated cell", the second computed the same way as
+    # `width` below.
     width = max((sum(1 for v in row if clean_cell(v) is not None) for row in rows), default=0)
-    if width == 0:
-        return None, [], LOW
 
     captions: List[str] = []
     scan = rows[: limits.max_header_scan_rows]
