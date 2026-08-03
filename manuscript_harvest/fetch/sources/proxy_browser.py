@@ -1289,7 +1289,6 @@ class ProxyBrowserSource(Source):
 
 def _filename_for(url: str, headers) -> str:
     """Best available filename: Content-Disposition, the query, then the path."""
-    disposition = ""
     try:
         disposition = headers.get("content-disposition") or ""
     except Exception:
