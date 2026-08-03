@@ -80,7 +80,7 @@ class WileyAdapter(Adapter):
     """
 
     name = "wiley"
-    hosts = ("onlinelibrary.wiley.com", "wiley.com")
+    hosts = ("wiley.com",)
 
     def find_pdf_url(self, page, doi: str) -> Optional[str]:
         value = meta_content(page, "citation_pdf_url")
@@ -187,7 +187,7 @@ class PmcAdapter(Adapter):
     """
 
     name = "pmc"
-    hosts = ("pmc.ncbi.nlm.nih.gov", "ncbi.nlm.nih.gov")
+    hosts = ("ncbi.nlm.nih.gov",)
 
     def find_pdf_url(self, page, doi: str) -> Optional[str]:
         value = meta_content(page, "citation_pdf_url")
