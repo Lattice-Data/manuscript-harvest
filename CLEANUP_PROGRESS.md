@@ -98,7 +98,7 @@ audited but untouched — see the bottom of this file.
       measurements over the 63-paper development corpus and the `.xls` file they cite is
       not in the shipped corpus.
 
-## (B) — 7 of 11 done
+## (B) — 9 of 11 done
 
 - [x] B11 `requirements.txt:1`, `pyproject.toml:22` — pymupdf floor raised `>=1.24` to
       `>=1.28`, the version the checked-in section-score baseline was measured on, plus a
@@ -139,6 +139,16 @@ audited but untouched — see the bottom of this file.
       `test_the_queue_order_is_the_documented_one`, which pins the whole six-kind
       sequence — the only order assertion before was "sign_off last", which is why this
       drifted unnoticed. (This also covers audit items E1 and E2.)
+- [x] B6 `fetch/store.py:113-115` — `manifest_is_complete`'s `_directory` guard is
+      unreachable today. **Kept, as the plan directed**, with a comment: `read_manifest`
+      does not inject `_directory`, so a future caller reading a record off disk arrives
+      without one, and the guard answers "complete" with no file checked. Reading
+      `record["_directory"]` instead would make that input a KeyError.
+- [x] B7 `fetch/sources/proxy_browser.py:789` — the `adapter.name == "elsevier"` operand
+      is always true today. **Kept**, with a comment saying why it is not
+      interchangeable with the guard A18 removed: that one gated the retry and returned
+      a reason that still reaches this line, while this one gates a ScienceDirect URL
+      built from an Elsevier PII. At most one of the two may go.
 - [x] B10 `.github/workflows/tests.yml:44-55` — `--cov-fail-under` raised 70 to 90, and
       the comment claiming the floor was "set just under the current number" replaced with
       the measured pair: **91.8% without a corpus (what CI reports and the badge shows)

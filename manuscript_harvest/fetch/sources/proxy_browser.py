@@ -786,6 +786,15 @@ class ProxyBrowserSource(Source):
                 # *zero* download attempts once the retry failed, even though the
                 # PII is sitting in the stub's own URL and `/pdfft` is a different
                 # endpoint from the shell that was stubbed.
+                #
+                # The `elsevier` test restates what `looks_blocked` above already
+                # implies -- the base returns False and `ElsevierAdapter` is its only
+                # override -- and is kept because it is not interchangeable with the
+                # one `_cell_press_retry` used to carry. That one guarded the retry
+                # and returned a reason, which lands in `recovered is None` and still
+                # arrives here; this one guards a ScienceDirect URL built from an
+                # Elsevier PII, which is meaningless for any other publisher. Delete
+                # at most one of the two.
                 got_pdf = (need_pdf and adapter.name == "elsevier"
                            and self._stub_pdf_attempt(context, ids, final_url, result))
                 result.problems.append(

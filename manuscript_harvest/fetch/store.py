@@ -112,6 +112,13 @@ def manifest_is_complete(record: Optional[dict]) -> bool:
         return False
     directory = Path(record.get("_directory", "")) if record.get("_directory") else None
     if directory is None:
+        # Defensive, and deliberately kept although no caller reaches it today:
+        # `_directory` is injected at run time by the fetcher, not stored in the
+        # manifest and not added by `read_manifest`, so any future caller reading a
+        # record off disk and passing it straight here arrives without one. Note what
+        # this answers in that case -- complete, on the record alone, with no file
+        # checked. Reading `record["_directory"]` instead would turn it into a
+        # KeyError on exactly that input, which is why the guard stays.
         return True
     for entry in [record.get("fulltext") or {}] + list(record.get("supplementary") or []):
         relative = entry.get("path")
