@@ -878,6 +878,25 @@ def test_no_cap_means_no_limit(no_sleep):
     assert len(http.get("https://example.org/big").content) == 5000
 
 
+def test_the_response_cap_is_reachable_from_the_config():
+    """`Http(max_bytes=)` was a cap production could not set: `build_http` passed
+    four keys and not this one, so the only ceiling on a plain-HTTP body existed
+    solely for the tests. Deleting it would have left the client unbounded, so it is
+    wired instead."""
+    from manuscript_harvest.fetch.fetcher import build_http
+    assert build_http({"fetch": {"max_response_mb": 600}}).max_bytes == 600 * 1024 ** 2
+    # Unset stays unbounded, which is what it did while nothing could set it.
+    assert build_http({"fetch": {}}).max_bytes is None
+    assert build_http({}).max_bytes is None
+
+
+def test_a_negative_retry_count_is_refused():
+    """`get`'s retry loop must run at least once for the function to honour its
+    `-> Response`; a negative count makes `range()` empty and would return None."""
+    with pytest.raises(ValueError, match="max_retries must be >= 0"):
+        Http(max_retries=-1)
+
+
 def test_the_response_records_the_final_url_and_a_bare_content_type(no_sleep):
     """`content_type` is compared against exact strings all over `validate.py`, so
     the charset parameter and the casing have to be gone by the time it lands."""

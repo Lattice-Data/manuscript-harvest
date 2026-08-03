@@ -9,7 +9,7 @@ Delete this file in the last commit of the cleanup.
 
 Baseline that must hold at every commit:
 
-    python -m pytest tests -q                          # 803 passed, 10 skipped
+    python -m pytest tests -q                          # 805 passed, 10 skipped
     ruff check --select F manuscript_harvest tests     # clean
 
 The full audited plan this comes from is not checked in; it lives in the session
@@ -98,7 +98,7 @@ audited but untouched — see the bottom of this file.
       measurements over the 63-paper development corpus and the `.xls` file they cite is
       not in the shipped corpus.
 
-## (B) — 5 of 11 done
+## (B) — 6 of 11 done
 
 - [x] B11 `requirements.txt:1`, `pyproject.toml:22` — pymupdf floor raised `>=1.24` to
       `>=1.28`, the version the checked-in section-score baseline was measured on, plus a
@@ -128,6 +128,10 @@ audited but untouched — see the bottom of this file.
       3- or 4-tuple return), which fixes the drift as a side effect. Three tests added,
       including the two page-route cases that had no coverage; the drift was
       re-introduced to confirm the new test catches it.
+- [x] B4 `fetch/http.py:61`, `fetch/fetcher.py:202` — `Http(max_bytes=)` was a cap
+      production could not set. **Wired, not deleted** (it is the only ceiling on a
+      plain-HTTP body): `build_http` now reads `fetch.max_response_mb`, documented
+      commented-out in config.yaml. Unset stays unbounded, matching prior behaviour.
 - [x] B10 `.github/workflows/tests.yml:44-55` — `--cov-fail-under` raised 70 to 90, and
       the comment claiming the floor was "set just under the current number" replaced with
       the measured pair: **91.8% without a corpus (what CI reports and the badge shows)

@@ -201,11 +201,18 @@ def _supplement_status(
 
 def build_http(config: dict) -> Http:
     fetch_cfg = config.get("fetch", {}) or {}
+    # `max_response_mb` is the only ceiling on a plain-HTTP body. The per-file cap
+    # (`max_file_mb`) is enforced by the tiers against a Content-Length they asked
+    # for first, so it does not bound a response that arrives without one, or one
+    # from a lookup endpoint rather than a file. Left unset the client is unbounded,
+    # which is the behaviour this had while nothing could set it.
+    response_mb = fetch_cfg.get("max_response_mb")
     return Http(
         contact_email=fetch_cfg.get("contact_email"),
         min_interval_seconds=fetch_cfg.get("min_interval_seconds", 3.0),
         timeout_seconds=fetch_cfg.get("timeout_seconds", 60),
         ncbi_api_key=fetch_cfg.get("ncbi_api_key"),
+        max_bytes=int(response_mb * 1024 ** 2) if response_mb else None,
     )
 
 

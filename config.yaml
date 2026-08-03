@@ -17,6 +17,13 @@ fetch:
   max_files: 50                           # supplementary files per article; anything dropped is recorded
   max_file_mb: 200
 
+  # A ceiling on any single plain-HTTP response body, as a backstop. Distinct from
+  # max_file_mb, which the tiers enforce against a Content-Length they ask for
+  # first: this one bounds a body that arrives without one. It raises rather than
+  # truncating, because a short body written to disk would look like a valid file.
+  # Unset means unbounded.
+  # max_response_mb: 600
+
   # Disk budget for corpus_dir. Articles average ~40 MB, and the bulk is content
   # the pipeline wants (45% PDF, 25% spreadsheets), so there is no useful
   # "drop the media" saving -- staying inside a budget means giving up whole
