@@ -42,17 +42,18 @@ jobs:
       # must pass without a browser. If that ever stops being true, this job is
       # where it should fail.
       # The floor is set just under the current number so it catches a real
-      # regression without tripping on noise. Note that CI always measures the
-      # no-corpus figure: tests/test_extract_corpus.py skips itself without a local
-      # `corpus/`, so a developer running with one present will read higher than the
-      # badge. That gap is expected, not a discrepancy.
+      # regression without tripping on noise. Measured: 91.8% here, where
+      # tests/test_extract_corpus.py skips itself for want of a local `corpus/`,
+      # against 92.9% on a machine that has fetched the papers. CI always reports
+      # the first, so a developer reads about a point higher than the badge -- that
+      # gap is expected, not a discrepancy, and 90 sits below both.
       - name: Test
         run: >
           python -m pytest tests -q
           --cov=manuscript_harvest
           --cov-report=lcov
           --cov-report=term-missing:skip-covered
-          --cov-fail-under=70
+          --cov-fail-under=90
 
       # Uploaded from one interpreter only. Coverage is a property of the suite, not
       # of the Python version, so four uploads per commit would buy no extra signal

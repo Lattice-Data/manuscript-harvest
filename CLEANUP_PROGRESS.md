@@ -17,8 +17,10 @@ scratchpad. Each item below carries enough detail to be executed without it.
 
 ## Scope of this pass
 
-Group (A) safe deletions and group (D) requirements fixes only. Groups (B), (C), (E),
-(F) and (G) are audited but deliberately untouched — see "Not started" at the bottom.
+Group (A) safe deletions, group (D) requirements fixes, and two items lifted out of
+group (B) because they are the same class of defect as (D): the pymupdf floor (B11)
+and the coverage gate (B10). Groups (C), (E), (F), (G) and the rest of (B) are
+audited but untouched — see the bottom of this file.
 
 ## (A) Safe deletions — 20 of 20 done (COMPLETE)
 
@@ -96,9 +98,7 @@ Group (A) safe deletions and group (D) requirements fixes only. Groups (B), (C),
       measurements over the 63-paper development corpus and the `.xls` file they cite is
       not in the shipped corpus.
 
-## Not started — audited, deliberately out of this pass
-
-### (B) partially started — 2 of 11 done
+## (B) lifted into this pass — 2 of 11 done
 
 - [x] B11 `requirements.txt:1`, `pyproject.toml:22` — pymupdf floor raised `>=1.24` to
       `>=1.28`, the version the checked-in section-score baseline was measured on, plus a
@@ -107,18 +107,19 @@ Group (A) safe deletions and group (D) requirements fixes only. Groups (B), (C),
       releases mostly shrink the *alignable sample* (98->70, 125->79 paragraphs) rather
       than label worse (88.8%->82.9%, 92.0%->91.1%), so this gate can fail on a PyMuPDF
       change without the labeller regressing. Recorded in the note.
-- [x] B10 `.github/workflows/tests.yml` — coverage floor raised 70 to 90 and the stale
-      "set just under the current number" comment corrected with the real figures.
+- [x] B10 `.github/workflows/tests.yml:44-55` — `--cov-fail-under` raised 70 to 90, and
+      the comment claiming the floor was "set just under the current number" replaced with
+      the measured pair: **91.8% without a corpus (what CI reports and the badge shows)
+      and 92.9% with one.** Both verified against the 90 floor. At 70 a regression had to
+      delete a fifth of the exercised code before the gate fired.
 
-Remaining 9 items:
+## Remaining — audited, not started
 
-- **(B) the other 9 items needing care.** Includes the real defects: `Overrides.section_for` is
-  dead so a curator's `section_span` answer is discarded (`review.py:351`); a security
+- **(B) the other 9 items needing care.** Includes the real defects: `Overrides.section_for`
+  is dead so a curator's `section_span` answer is discarded (`review.py:351`); a security
   claim asserted where it is not enforced (`europepmc.py:245`); `Http(max_bytes=)` is a
   cap production cannot set — wire it, do not delete; two `proxy_browser` download paths
-  drifted apart; review-queue order docs contradict code. Also **B11: the `pymupdf>=1.24`
-  floor is four minor releases below what the recorded section-score baseline needs, and
-  `pymupdf==1.24.0` has no py3.13 wheel** — same class of defect as D1, worth doing next.
+  drifted apart; review-queue order docs contradict code.
 - **(C) 8 merges** (highest value: the table-header override translation exists three
   times and only the `spreadsheet.py` copy is tested) **and 8 explicit leave-alones**.
 - **(E) 20 stale comments/docstrings**, including `extract/cli.py:426` advertising
