@@ -292,11 +292,12 @@ def enforce_budget(corpus_dir, max_bytes: Optional[int], dry_run: bool = False) 
 
 def human_bytes(count: int) -> str:
     value = float(count)
+    # `or unit == "TB"` makes the last iteration return unconditionally, so the
+    # loop is the only exit and no fallthrough is needed however large `count` is.
     for unit in ("B", "KB", "MB", "GB", "TB"):
         if value < 1024 or unit == "TB":
             return f"{value:.1f}{unit}" if unit != "B" else f"{int(value)}B"
         value /= 1024
-    return f"{value:.1f}TB"
 
 
 def summarize(record: dict) -> str:
