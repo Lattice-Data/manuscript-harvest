@@ -20,7 +20,7 @@ scratchpad. Each item below carries enough detail to be executed without it.
 Group (A) safe deletions and group (D) requirements fixes only. Groups (B), (C), (E),
 (F) and (G) are audited but deliberately untouched — see "Not started" at the bottom.
 
-## (A) Safe deletions — 9 of 20 done
+## (A) Safe deletions — 10 of 20 done
 
 - [x] A1 `extract/review.py:422-423` — duplicate `partially_reviewed` branch; the next
       two lines return the identical tuple for every input that reaches it.
@@ -39,7 +39,7 @@ Group (A) safe deletions and group (D) requirements fixes only. Groups (B), (C),
       `max_retries < 0` guard in `Http.__init__` so the function cannot fall off the end.
 - [x] A9 `fetch/sources/proxy_browser.py:1292` — `disposition = ""`; both arms rebind
       before the first read.
-- [ ] A10 `fetch/manual_fetch.py:359, 388` — `**extra` on `build_article`; today a typo
+- [x] A10 `fetch/manual_fetch.py:359, 388` — `**extra` on `build_article`; today a typo
       lands verbatim in the reviewed spec instead of raising.
 - [ ] A11 `fetch/identifiers.py:113, 211` — write-only `epmc_id`, collected and never
       reaching a manifest. Deleting it (alternative: add it to `to_dict`).

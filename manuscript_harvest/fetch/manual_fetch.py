@@ -356,7 +356,7 @@ def load_spec(path=None) -> dict:
 
 
 def build_article(doi: str, directory, source_dir: str, main_hint: Optional[str] = None,
-                  main_version: Optional[str] = None, **extra) -> dict:
+                  main_version: Optional[str] = None) -> dict:
     """Fingerprint one folder of downloads into a spec entry.
 
     `main_version` defaults to whatever the file says it is, rather than to
@@ -385,7 +385,6 @@ def build_article(doi: str, directory, source_dir: str, main_hint: Optional[str]
             "no file matched the DOI, so the publisher's article PDF is absent from "
             "this folder; pdf checks are reported but not asserted"
         )
-    entry.update(extra)
     return entry
 
 
