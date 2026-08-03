@@ -9,7 +9,7 @@ Delete this file in the last commit of the cleanup.
 
 Baseline that must hold at every commit:
 
-    python -m pytest tests -q                          # 805 passed, 10 skipped
+    python -m pytest tests -q                          # 806 passed, 10 skipped
     ruff check --select F manuscript_harvest tests     # clean
 
 The full audited plan this comes from is not checked in; it lives in the session
@@ -98,7 +98,7 @@ audited but untouched — see the bottom of this file.
       measurements over the 63-paper development corpus and the `.xls` file they cite is
       not in the shipped corpus.
 
-## (B) — 6 of 11 done
+## (B) — 7 of 11 done
 
 - [x] B11 `requirements.txt:1`, `pyproject.toml:22` — pymupdf floor raised `>=1.24` to
       `>=1.28`, the version the checked-in section-score baseline was measured on, plus a
@@ -132,6 +132,13 @@ audited but untouched — see the bottom of this file.
       production could not set. **Wired, not deleted** (it is the only ceiling on a
       plain-HTTP body): `build_http` now reads `fetch.max_response_mb`, documented
       commented-out in config.yaml. Unset stays unbounded, matching prior behaviour.
+- [x] B5 `extract/review.py:9-24, 182`, `README.md:612` — the queue asks
+      `main_text_present` before table headers; both descriptions said the reverse.
+      **Fixed doc-side, not code-side:** a single gating yes/no before the bounded batch
+      is the better order, since every other answer for the article depends on it. Added
+      `test_the_queue_order_is_the_documented_one`, which pins the whole six-kind
+      sequence — the only order assertion before was "sign_off last", which is why this
+      drifted unnoticed. (This also covers audit items E1 and E2.)
 - [x] B10 `.github/workflows/tests.yml:44-55` — `--cov-fail-under` raised 70 to 90, and
       the comment claiming the floor was "set just under the current number" replaced with
       the measured pair: **91.8% without a corpus (what CI reports and the badge shows)

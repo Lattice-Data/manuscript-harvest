@@ -6,20 +6,25 @@ whether the body of the article is actually here, whether a `.pptx` nobody can
 parse holds the donor table. Those are cheap for a person and impossible for the
 parser, so this module names them, ranks them, and applies the answers.
 
-**What to ask, ranked by value per minute** -- the order the queue is built in:
+**What to ask, ranked by value per minute** -- the order the queue is built in,
+and `test_the_queue_order_is_the_documented_one` holds this list to it:
 
-1. **Table header rows.** Bounded (16 low-confidence cards over the six articles
-   on this machine), about fifteen seconds each, and a wrong header silently
-   corrupts every metadata answer drawn from that sheet.
-2. **Is the article body actually here.** One yes/no per article. If it is wrong,
-   every answer for that article is wrong.
+1. **Is the article body actually here.** One yes/no per article, and it gates
+   everything under it: if it is wrong, every other answer for that article is
+   wrong, so it is not worth confirming thirty header rows first. Cheapest
+   question, widest consequence.
+2. **Table header rows.** The bulk of the work and the highest value per question
+   after the gate: bounded (16 low-confidence cards over the six articles on this
+   machine), about fifteen seconds each, and a wrong header silently corrupts every
+   metadata answer drawn from that sheet.
 3. **Files a human thinks do carry content.** A checkbox, and a rare one: every
    non-`ok` supplement in this corpus is a figure image, which is never queued.
    It matters at scale, not on this sample.
 4. **Supplement label joins.** Fourth, because most of the win was the code fix
    that stopped the fetch transport's name being used as the publisher's.
-5. **Section spans.** Last and narrowly scoped: `section_audit.py` already scores
-   this wherever a JATS reference exists, so only ask where it cannot.
+5. **Section spans.** Second to last and narrowly scoped: `section_audit.py`
+   already scores this wherever a JATS reference exists, so only ask where it
+   cannot.
 6. **Sign-off.** Always, always last: the container, not a competitor, and what
    makes the layer honest.
 
@@ -180,7 +185,7 @@ def queue_for(extraction: dict, blocks_path, limits: Optional[Limits] = None,
         question["source_sha256"] = shas.get(question["key"]["path"])
         items.append(question)
 
-    # -- table headers, the highest value per minute
+    # -- table headers: the bulk of the work, asked after the gate above
     low_confidence = [b for b in read_blocks(blocks_path)
                       if b.get("kind") == TABLE
                       and (b.get("table") or {}).get("header_confidence") == "low"]

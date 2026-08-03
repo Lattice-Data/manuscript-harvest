@@ -51,6 +51,26 @@ def test_a_clean_article_is_asked_only_to_be_signed_off(tmp_path):
     assert [item["kind"] for item in queue] == [review.SIGN_OFF]
 
 
+def test_the_queue_order_is_the_documented_one(tmp_path):
+    """The only order assertion was `sign_off` last, so the queue and the two places
+    that describe it had drifted apart unnoticed: `review.py`'s own numbered list and
+    the README both said table headers came first, and the code asks
+    `main_text_present` before them. This pins the whole sequence."""
+    page = ("Tissue-resident immune cells are important for organ homeostasis. "
+            "We profiled the mature and developing human kidney. ") * 20
+    directory, record = _extracted(
+        tmp_path,
+        fulltext=make_pdf_pages([[page]]),
+        supplements=[("s1.xlsx", make_xlsx(AMBIGUOUS)), ("notes.rtf", b"{\\rtf1 x}")])
+    kinds = [i["kind"] for i in _queue(directory, record)]
+
+    rank = {kind: n for n, kind in enumerate([
+        review.MAIN_TEXT_PRESENT, review.TABLE_HEADER, review.FILE_HAS_CONTENT,
+        review.SUPPLEMENT_LABEL, review.SECTION_SPAN, review.SIGN_OFF])}
+    assert set(kinds) == set(rank), "fixture does not exercise every kind"
+    assert [rank[k] for k in kinds] == sorted(rank[k] for k in kinds), kinds
+
+
 def test_sign_off_is_always_last(tmp_path):
     directory, record = _extracted(
         tmp_path, xml=jats_article(METHODS_BODY),

@@ -609,10 +609,11 @@ table-card lines exceed 100 characters (longest 742), and a terminal gives a cur
 no way to open the spreadsheet next to the question, while CSV turns a multi-line
 card into one unreadable cell and every correction into free text.
 
-Questions are ordered by value per minute: table headers first (bounded, ~15
-seconds each, and a wrong one silently corrupts every metadata answer drawn from
-that sheet), then "is the article here", then unparseable files, then supplement
-labels, then section spans, then sign-off last. Figure images are never queued —
+Questions are ordered by value per minute: "is the article here" first, because it
+is one yes/no and every other answer for that article depends on it; then table
+headers, which are the bulk of the work (bounded, ~15 seconds each, and a wrong one
+silently corrupts every metadata answer drawn from that sheet); then unparseable
+files, then supplement labels, then section spans, then sign-off last. Figure images are never queued —
 76 of the 101 supplements here are figures and nobody can judge a `.jpg` by name.
 Measured over the six articles on this machine: 28 questions, about five per
 article, two thirds of them table headers.
