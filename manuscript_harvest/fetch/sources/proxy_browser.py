@@ -876,8 +876,11 @@ class ProxyBrowserSource(Source):
         publisher route that does work keeps working and the fallback is visible in
         `attempts` when it fires.
         """
-        if adapter.name != "elsevier":
-            return None, "not_elsevier"
+        # No adapter-name guard: the only caller reaches this inside
+        # `adapter.looks_blocked(page)`, and `ElsevierAdapter` is the one class that
+        # overrides it -- the base returns False. Should another publisher start
+        # stubbing and override it too, this falls to the PII check below and refuses
+        # with `no_pii`, which is the accurate reason for a non-Elsevier page.
         pii = pii_from(ids.landing_url or "") or pii_from(page.url or "")
         if not pii:
             result.note("landing_retry", status="no_pii",
