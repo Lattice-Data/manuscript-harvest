@@ -91,7 +91,7 @@ class PmcOaSource(Source):
 
         # The explicit pdf link is authoritative for the article PDF.
         if need_pdf and "pdf" in links:
-            self._fetch_pdf(links["pdf"], result)
+            self._fetch_pdf_url(links["pdf"], result)
 
         wants_package = (need_supplements or (need_pdf and result.pdf is None))
         if wants_package and "tgz" in links:
@@ -148,37 +148,6 @@ class PmcOaSource(Source):
 
         result.note("oa_lookup", status="ok", formats=sorted(links))
         return links, None
-
-    # -- article PDF --------------------------------------------------------
-
-    def _fetch_pdf(self, url: str, result: SourceResult) -> None:
-        try:
-            resp = self.http.get(url, accept="application/pdf")
-        except HttpError as e:
-            result.pdf_status = "download_failed"
-            result.note("pdf", url=url, status="download_failed", error=str(e))
-            return
-
-        if not resp.ok:
-            result.pdf_status = "download_failed"
-            result.note("pdf", url=url, status="download_failed", http_status=resp.status)
-            return
-
-        accepted, status, meta = validate_pdf(
-            resp.content, content_type=resp.content_type, url=resp.url
-        )
-        result.pdf_status = status
-        result.note("pdf", url=url, status=status, **meta)
-        if accepted:
-            result.files.append(
-                FetchedFile(
-                    role=ROLE_PDF,
-                    name="fulltext.pdf",
-                    content=resp.content,
-                    url=resp.url,
-                    content_type=resp.content_type,
-                )
-            )
 
     # -- .tar.gz package ----------------------------------------------------
 

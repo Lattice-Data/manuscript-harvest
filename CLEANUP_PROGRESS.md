@@ -174,7 +174,7 @@ audited but untouched — see the bottom of this file.
 
 - **A decision is owed on B9**: whether the two archive unpackers should share the
   media/supplement split. Documented in both docstrings; spawned as a separate task.
-## (C) — 5 of 8 done
+## (C) — 6 of 8 done
 
 - [x] C1 `extract/review.py:337`, `spreadsheet.py:74`, `docxfile.py:142`, `jats.py:376` —
       the table-header override translation existed three times and only the xlsx copy
@@ -207,8 +207,13 @@ audited but untouched — see the bottom of this file.
       caller's local); verified both formats report the cap identically, driving the
       .xls path through the same xlrd stub the suite uses.
 
-Remaining (C): C6 the identical `_fetch_pdf` body (biorxiv vs
-pmc_oa — do NOT reuse that name, two subclasses have different signatures); C7 the
+- [x] C6 `fetch/sources/base.py:96` — the token-identical `_fetch_pdf` body in biorxiv
+      and pmc_oa is now `Source._fetch_pdf_url`. **Named deliberately unlike
+      `_fetch_pdf`:** EuropePmcSource and ProxyBrowserSource keep their own
+      differently-shaped methods, verified unshadowed. Europe PMC's candidate loop left
+      alone (it folds `better_pdf_failure`).
+
+Remaining (C): C7 the
 adapter `find_supplements` skeleton (5 copies; Nature strips the fragment *first*, so a
 naive predicate re-admits the `#MOESM` anchors); C8 four small test-side/helper merges.
 Plus **8 explicit leave-alones** to record as cross-references, not merges.
