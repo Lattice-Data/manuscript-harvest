@@ -389,3 +389,25 @@ class SectionTracker:
                 f"a later heading tried to reopen {', '.join(self.reopens_refused)} "
                 f"after it had been abandoned; it was left unlabelled instead")
         return "; ".join(parts) or None
+
+    def record(self, meta: dict) -> None:
+        """Write what this tracker did into a parser's `meta`.
+
+        Every counter here is something a rule withheld or refused, and the promise
+        is that none of it is silent -- so the dump belongs to the tracker rather
+        than being restated by each parser that owns one. It was byte-identical in
+        `pdf.py` and `docxfile.py`, and the docx copy was uncovered, so a new counter
+        added to this class would have reached the PDF record and not the docx one.
+
+        Keys are set only when non-empty, which is what keeps `blocks.jsonl` and the
+        extraction record free of a row of zeroes on a clean article.
+        """
+        meta["sections"] = self.seen
+        if self.abandoned:
+            meta["sections_abandoned"] = self.abandoned
+        if self.withheld:
+            meta["low_value_blocks_withheld"] = self.withheld
+        if self.reopens_refused:
+            meta["reopens_refused"] = self.reopens_refused
+        if self.reason():
+            meta["reason"] = self.reason()

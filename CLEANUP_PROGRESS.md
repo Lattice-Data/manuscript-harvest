@@ -174,7 +174,7 @@ audited but untouched — see the bottom of this file.
 
 - **A decision is owed on B9**: whether the two archive unpackers should share the
   media/supplement split. Documented in both docstrings; spawned as a separate task.
-## (C) — 1 of 8 done
+## (C) — 2 of 8 done
 
 - [x] C1 `extract/review.py:337`, `spreadsheet.py:74`, `docxfile.py:142`, `jats.py:376` —
       the table-header override translation existed three times and only the xlsx copy
@@ -182,7 +182,12 @@ audited but untouched — see the bottom of this file.
       table-header tests (previously-uncovered `docxfile:144-147` and `jats:374-377` are
       now covered, and all three fail together if the translation breaks).
 
-Remaining (C): C2 SectionTracker meta dump (2 copies, docx untested); C3 the PDF-usable
+- [x] C2 `extract/sections.py:393`, `pdf.py`, `docxfile.py` — the byte-identical
+      `SectionTracker` meta dump moved onto the class as `record(meta)`. The docx copy was
+      uncovered, so a new counter would have reached the PDF record and not the docx one.
+      Verified the recorded keys are unchanged on 10.1126_science.aat5031.
+
+Remaining (C): C3 the PDF-usable
 status set (3 copies, one an undocumented inline literal); C4 the `max_files` truncation
 block (3 tiers, message already drifted); C5 the table-cap and reset_dimensions guards
 (xlsx vs xls, xls copies untested); C6 the identical `_fetch_pdf` body (biorxiv vs

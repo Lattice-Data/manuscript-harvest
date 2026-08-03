@@ -157,15 +157,7 @@ def blocks_from_docx(
                                 locator=f"table {table_index}", section=tracker.current,
                                 table=card.to_dict()))
 
-    meta["sections"] = tracker.seen
-    if tracker.abandoned:
-        meta["sections_abandoned"] = tracker.abandoned
-    if tracker.withheld:
-        meta["low_value_blocks_withheld"] = tracker.withheld
-    if tracker.reopens_refused:
-        meta["reopens_refused"] = tracker.reopens_refused
-    if tracker.reason():
-        meta["reason"] = tracker.reason()
+    tracker.record(meta)
     if not blocks:
         return [], NO_TEXT, meta
     return blocks, OK, meta

@@ -307,15 +307,7 @@ def blocks_from_pdf(
                                 origin="pdf", locator=locator, locator_ref=ref,
                                 section=tracker.carry(text)))
 
-    meta["sections"] = tracker.seen
-    if tracker.abandoned:
-        meta["sections_abandoned"] = tracker.abandoned
-    if tracker.withheld:
-        meta["low_value_blocks_withheld"] = tracker.withheld
-    if tracker.reopens_refused:
-        meta["reopens_refused"] = tracker.reopens_refused
-    if tracker.reason():
-        meta["reason"] = tracker.reason()
+    tracker.record(meta)
     body_chars = sum(len(b.text) for b in blocks)
     meta["chars"] = body_chars
     if body_chars < limits.min_pdf_text_chars:
