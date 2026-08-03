@@ -174,7 +174,7 @@ audited but untouched — see the bottom of this file.
 
 - **A decision is owed on B9**: whether the two archive unpackers should share the
   media/supplement split. Documented in both docstrings; spawned as a separate task.
-## (C) — 7 of 8 done
+## (C) — 8 of 8 done (merges COMPLETE)
 
 - [x] C1 `extract/review.py:337`, `spreadsheet.py:74`, `docxfile.py:142`, `jats.py:376` —
       the table-header override translation existed three times and only the xlsx copy
@@ -221,8 +221,18 @@ audited but untouched — see the bottom of this file.
       naive predicate would NOT re-admit the `#MOESM` anchors — the stripped URL only
       protects the `"MOESM" in url` test. Docstrings say the accurate version.
 
-Remaining (C): C8 four small test-side/helper merges.
-Plus **8 explicit leave-alones** to record as cross-references, not merges.
+- [x] C8 four small merges. (a) `tests/fakes.py` used a local `sha()` reimplementing
+      `store.sha256_bytes` inside a function whose docstring promises it writes the
+      manifest "the way store.py does" — now it does. (b) the three odd-workbook fixture
+      builders share `_rewrite_xlsx`; all three DOI-citing docstrings survive verbatim.
+      (c) `manual_fetch` squashed `[^a-z0-9]` in three places, two of them the two sides
+      of the same equality test — now `_squash`. (d) the optional one, done because the
+      cost was real: `extract/cli.py` imported the private `_merge` from `fetch/cli.py`,
+      pulling the orchestrator, the HTTP client and all five tiers in to merge two dicts.
+      Now `manuscript_harvest/config.py`; fetch modules imported by extract.cli: **14 -> 5**.
+
+Still to do in (C): the **8 explicit leave-alones**, which want cross-reference
+comments rather than merges.
 - **(E) 20 stale comments/docstrings**, including `extract/cli.py:426` advertising
   `--role` as two values when three exist, and `pdf_loader` being a ghost name in three
   places.

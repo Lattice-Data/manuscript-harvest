@@ -23,8 +23,8 @@ from pathlib import Path
 
 import yaml
 
+from ..config import merge_config
 from ..fetch import store
-from ..fetch.cli import _merge
 from ..fetch.identifiers import doi_slug, normalize_doi
 from . import extractor, review, reviewsheet, spreadsheet
 from .blocks import BLOCKS_NAME, read_blocks
@@ -43,7 +43,7 @@ def load_config(path) -> dict:
     if config_path.exists():
         raw = yaml.safe_load(config_path.read_text()) or {}
     config = dict(raw)
-    config["extract"] = _merge(DEFAULT_EXTRACT_CONFIG, raw.get("extract") or {})
+    config["extract"] = merge_config(DEFAULT_EXTRACT_CONFIG, raw.get("extract") or {})
     # One corpus, two stages. Unless `extract` names its own directory, follow
     # wherever the fetch stage was told to write, so moving the corpus needs one
     # edit rather than two that can drift apart.

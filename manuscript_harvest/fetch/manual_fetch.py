@@ -282,14 +282,25 @@ def hash_universe(paths) -> Dict[str, str]:
 
 # -- classifying a folder of manual downloads --------------------------------
 
+def _squash(text: str) -> str:
+    """Lowercase, keeping only letters and digits.
+
+    The normalisation both sides of `pdf_identity` are reduced by, so it has to be
+    one function: `doi_tail` squashes the DOI and the comparison squashes the PDF's
+    text, and a DOI found only because the two agreed on punctuation would be a
+    false pass. Also what makes a filename comparable to a DOI tail --
+    `PIIS0092-8674(21)00573-0` against `s0092867421005730`.
+    """
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
 def doi_tail(doi: str) -> str:
     """The distinctive half of a DOI, normalised for filename comparison."""
-    tail = normalize_doi(doi).split("/", 1)[-1]
-    return re.sub(r"[^a-z0-9]", "", tail.lower())
+    return _squash(normalize_doi(doi).split("/", 1)[-1])
 
 
 def _stem_key(path: Path) -> str:
-    return re.sub(r"[^a-z0-9]", "", path.stem.lower())
+    return _squash(path.stem)
 
 
 def classify(directory, doi: str, main_hint: Optional[str] = None) -> Tuple[Optional[Path], List[Path]]:
@@ -463,8 +474,7 @@ def compare(article: dict, record: dict, directory, root=None) -> List[dict]:
             # Both ends of the document: the DOI is on page 1 of a PMC rendition and
             # in the closing citation block of an AAAS reprint. See `pdf_tail_text`.
             tail = doi_tail(article["doi"])
-            text = re.sub(r"[^a-z0-9]", "",
-                          (head + " " + pdf_tail_text(fetched_pdf)).lower())
+            text = _squash(head + " " + pdf_tail_text(fetched_pdf))
             checks.append(_check(
                 "pdf_identity", tail in text,
                 "DOI found in the opening or closing pages" if tail in text

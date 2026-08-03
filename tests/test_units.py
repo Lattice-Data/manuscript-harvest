@@ -27,7 +27,8 @@ from manuscript_harvest.fetch.adapters.publishers import (
     PmcAdapter,
     WileyAdapter,
 )
-from manuscript_harvest.fetch.cli import DEFAULT_FETCH_CONFIG, _merge, load_config
+from manuscript_harvest.config import merge_config
+from manuscript_harvest.fetch.cli import DEFAULT_FETCH_CONFIG, load_config
 from manuscript_harvest.fetch.http import Http, HttpError
 from manuscript_harvest.fetch.identifiers import (
     Identifiers,
@@ -962,8 +963,19 @@ def test_empty_params_are_dropped_so_urls_stay_clean(no_sleep):
 # -- config ------------------------------------------------------------------
 
 def test_merge_is_recursive_and_non_destructive():
-    merged = _merge({"a": 1, "b": {"c": 2, "d": 3}}, {"b": {"c": 9}})
+    merged = merge_config({"a": 1, "b": {"c": 2, "d": 3}}, {"b": {"c": 9}})
     assert merged == {"a": 1, "b": {"c": 9, "d": 3}}
+
+
+def test_merge_keeps_a_key_the_defaults_do_not_list():
+    """Load-bearing, not incidental: `config.yaml` documents `try_oa_package`,
+    `max_challenge_failures` and the browser deadlines, none of which appear in
+    `DEFAULT_FETCH_CONFIG`. They reach the code only because a user's value survives
+    this merge without a default to sit on."""
+    merged = merge_config({"a": 1}, {"max_challenge_failures": 7,
+                                     "browser": {"challenge_wait_seconds": 2}})
+    assert merged["max_challenge_failures"] == 7
+    assert merged["browser"] == {"challenge_wait_seconds": 2}
 
 
 def test_load_config_fills_fetch_defaults(tmp_path):
