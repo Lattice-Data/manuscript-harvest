@@ -263,16 +263,6 @@ def looks_like_citation(text: str) -> bool:
     return bool(_CITATION.search(text))
 
 
-MAX_BOUNDED_SECTION_CHARS = Limits().max_bounded_section_chars
-"""How far a `BOUNDED_SECTIONS` heading may carry before it is abandoned.
-
-The number itself lives in `Limits.max_bounded_section_chars`, with the
-measurement that chose it, so it is configurable and so it is recorded in every
-extraction's `limits` block. This alias is the default for a `SectionTracker`
-constructed without one.
-"""
-
-
 class SectionTracker:
     """Carry a heading's section over the text that follows it, and know when to stop.
 

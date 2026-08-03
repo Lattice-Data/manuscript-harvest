@@ -82,7 +82,9 @@ class Limits:
     over the ground-truth papers is 4,653 characters (a Cell Press abstract plus
     its highlights and eTOC blurb, 10.1016/j.xgen.2026.101304); the shortest
     pathological one is 6,294. This sits between them. It decided a third of one
-    article's labels while being a module constant with no config key."""
+    article's labels while being a module constant with no config key -- living
+    here is also what gets it recorded in every extraction's `limits` block, so a
+    label can be read back against the bound that produced it."""
 
     def to_dict(self) -> dict:
         return asdict(self)
