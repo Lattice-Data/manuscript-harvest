@@ -121,7 +121,7 @@ class Block:
         return record
 
 
-def number_blocks(blocks: List[Block], start: int = 0) -> List[Block]:
+def number_blocks(blocks: List[Block]) -> List[Block]:
     """Assign contiguous indices, and a `block_id` that survives a parser change.
 
     `index` is positional: insert one block and every downstream reference moves.
@@ -145,7 +145,7 @@ def number_blocks(blocks: List[Block], start: int = 0) -> List[Block]:
     """
     ordinals: dict = {}
     for offset, block in enumerate(blocks):
-        block.index = start + offset
+        block.index = offset
         key = "\x00".join([
             block.role, block.origin, block.source_file, block.locator, block.kind,
             hashlib.sha256(block.text.encode("utf-8")).hexdigest(),
