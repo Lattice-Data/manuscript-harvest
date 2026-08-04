@@ -117,15 +117,23 @@ def _no_tier_applied(ids: Identifiers, tier_names: List[str]) -> str:
 def suppl_flag_is_authoritative(ids: Identifiers) -> bool:
     """Can `hasSuppl: N` be believed as "this article has no supplements"?
 
-    Only when Europe PMC or PMC actually holds the article. The flag describes
-    *their* holdings, not the article, and two measured cases prove the
-    difference:
+    Only when Europe PMC or PMC actually holds the article *and its files*. The
+    flag describes *their* holdings, not the article, and three measured cases
+    prove the difference:
 
     - Preprints: Europe PMC says hasSuppl=N for 10.1101/2025.07.21.666016 and
       10.1101/2024.01.23.576878, which have 2 and 6 supplementary files.
     - Articles it does not hold: 10.1016/j.stem.2023.12.013 and
       10.1038/s41591-018-0269-2 both come back inEPMC=N, inPMC=N, hasSuppl=N --
       which says only that Europe PMC has nothing, not that the publisher does.
+    - Articles it holds only as a metadata record: 10.1038/s41586-026-10510-x is
+      inEPMC=Y, inPMC=Y, hasSuppl=N, isOpenAccess=N -- PMC13186389 is outside the
+      Open Access subset, so Europe PMC has the record and none of the files. The
+      publisher's page carries MOESM1 through MOESM13, thirteen supplements the
+      flag truthfully denies holding and misleadingly denies existing.
+
+    `is False`, not falsy: isOpenAccess absent means unknown, which is not the
+    same claim as a measured N.
 
     Believing the flag in those cases produced a confident `none_listed` over
     files that exist, which is the exact silent loss this pipeline exists to
@@ -134,6 +142,8 @@ def suppl_flag_is_authoritative(ids: Identifiers) -> bool:
     if ids.has_suppl is not False:
         return False
     if ids.is_preprint:
+        return False
+    if ids.is_open_access is False:
         return False
     return bool(ids.in_epmc) or bool(ids.in_pmc)
 

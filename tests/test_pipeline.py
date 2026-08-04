@@ -333,6 +333,31 @@ def test_suppl_flag_authority_matrix():
         ids(doi="10.1101/x", has_suppl=False, in_pmc=True)) is False          # preprint
 
 
+def test_suppl_flag_is_not_authoritative_for_a_paywalled_indexed_article():
+    """A record Europe PMC holds without the files cannot deny the files exist.
+
+    10.1038/s41586-026-10510-x came back inPMC=Y, hasSuppl=N, isOpenAccess=N and
+    was recorded `none_listed` with zero files -- while the landing page the
+    browser tier had already saved for the PDF listed MOESM1..MOESM13. Outside the
+    Open Access subset Europe PMC has the metadata and none of the supplements, so
+    hasSuppl=N is a true statement about Europe PMC and a false one about the
+    article.
+
+    The open-access row is the no-regression half: an article whose files Europe
+    PMC does hold still gets to say there are none, so this does not turn every
+    `none_listed` into a browser-tier search.
+    """
+    def ids(**kw):
+        return Identifiers(doi=kw.pop("doi", DOI), doi_raw="x", **kw)
+    assert suppl_flag_is_authoritative(
+        ids(has_suppl=False, in_pmc=True, is_open_access=False)) is False
+    assert suppl_flag_is_authoritative(
+        ids(has_suppl=False, in_pmc=True, is_open_access=True)) is True
+    # Unknown is not a measured N: absent isOpenAccess must not revoke authority.
+    assert suppl_flag_is_authoritative(
+        ids(has_suppl=False, in_pmc=True, is_open_access=None)) is True
+
+
 # -- the PDF taxonomy --------------------------------------------------------
 
 def test_paywall_response_is_never_written_as_fulltext(tmp_path):
