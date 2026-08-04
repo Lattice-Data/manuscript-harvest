@@ -45,6 +45,13 @@ class SourceResult:
     suppl_status: Optional[str] = None
     attempts: List[dict] = field(default_factory=list)
     problems: List[str] = field(default_factory=list)
+    #: What the user should *do* about a supplement obstacle this tier hit, kept
+    #: apart from `problems` because the two have different lifetimes. What
+    #: happened is true forever and belongs in the manifest either way; "re-run
+    #: with --headed" stops being true the moment a later tier gets the files.
+    #: `fetch_publication` emits these only if the run ends with supplements
+    #: still missing. See `problems` in `fetcher.fetch_publication`.
+    suppl_advice: List[str] = field(default_factory=list)
 
     def by_role(self, role: str) -> List[FetchedFile]:
         return [f for f in self.files if f.role == role]

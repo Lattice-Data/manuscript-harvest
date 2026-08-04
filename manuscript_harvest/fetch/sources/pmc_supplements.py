@@ -102,8 +102,9 @@ class PmcSupplementsSource(Source):
             result.suppl_status = "partial_failure"
             result.problems.append(
                 f"{challenged} supplementary file(s) are behind NCBI's "
-                "proof-of-work page; the browser tier is required for them"
+                "proof-of-work page"
             )
+            result.suppl_advice.append("the browser tier is required for them")
         elif failed:
             result.suppl_status = "partial_failure"
 

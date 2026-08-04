@@ -639,8 +639,11 @@ class ProxyBrowserSource(Source):
             if classify_denial(referer, body) == "javascript_challenge":
                 result.suppl_status = "page_not_parsed"
                 result.problems.append(
-                    "PMC served a bot check to the headless browser; re-run with "
-                    "--headed to collect these supplementary files"
+                    "PMC served a bot check to the headless browser"
+                )
+                result.suppl_advice.append(
+                    "re-run with --headed to collect the supplementary files PMC "
+                    "would not serve headless"
                 )
                 result.note("pmc_page", url=url, status="bot_check_headless")
                 return

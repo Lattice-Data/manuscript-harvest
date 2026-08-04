@@ -633,8 +633,11 @@ def test_everything_behind_the_gate_says_the_browser_tier_is_required():
 
     assert result.suppl_status == "partial_failure"
     assert result.files == []
-    assert any("proof-of-work page; the browser tier is required" in p
+    # The obstacle is a problem and stays in the manifest; "use the browser tier"
+    # is advice, which `fetch_publication` drops if a later tier gets the files.
+    assert any("2 supplementary file(s) are behind NCBI's proof-of-work page" in p
                for p in result.problems)
+    assert any("browser tier is required" in a for a in result.suppl_advice)
     assert any(a["action"] == "supplements" and a["javascript_challenge"] == 2
                for a in result.attempts)
 

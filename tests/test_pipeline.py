@@ -333,6 +333,31 @@ def test_suppl_flag_authority_matrix():
         ids(doi="10.1101/x", has_suppl=False, in_pmc=True)) is False          # preprint
 
 
+def test_suppl_flag_is_not_authoritative_for_a_paywalled_indexed_article():
+    """A record Europe PMC holds without the files cannot deny the files exist.
+
+    10.1038/s41586-026-10510-x came back inPMC=Y, hasSuppl=N, isOpenAccess=N and
+    was recorded `none_listed` with zero files -- while the landing page the
+    browser tier had already saved for the PDF listed MOESM1..MOESM13. Outside the
+    Open Access subset Europe PMC has the metadata and none of the supplements, so
+    hasSuppl=N is a true statement about Europe PMC and a false one about the
+    article.
+
+    The open-access row is the no-regression half: an article whose files Europe
+    PMC does hold still gets to say there are none, so this does not turn every
+    `none_listed` into a browser-tier search.
+    """
+    def ids(**kw):
+        return Identifiers(doi=kw.pop("doi", DOI), doi_raw="x", **kw)
+    assert suppl_flag_is_authoritative(
+        ids(has_suppl=False, in_pmc=True, is_open_access=False)) is False
+    assert suppl_flag_is_authoritative(
+        ids(has_suppl=False, in_pmc=True, is_open_access=True)) is True
+    # Unknown is not a measured N: absent isOpenAccess must not revoke authority.
+    assert suppl_flag_is_authoritative(
+        ids(has_suppl=False, in_pmc=True, is_open_access=None)) is True
+
+
 # -- the PDF taxonomy --------------------------------------------------------
 
 def test_paywall_response_is_never_written_as_fulltext(tmp_path):
@@ -392,6 +417,64 @@ def test_dedup_on_bytes_and_name(tmp_path):
     record = fetcher.fetch_publication(DOI, fetch_config(tmp_path, ["europepmc"]), http=http)
     assert sorted(e["original_name"] for e in record["supplementary"]) == \
         ["other.xlsx", "shared.xlsx"]
+
+
+def _advising_tier(monkeypatch, *, hands_over_a_file: bool):
+    """Patch the first tier to hit an obstacle it has advice about.
+
+    `hands_over_a_file` is the whole variable: a later tier getting the
+    supplements is what makes the advice stale.
+    """
+    from manuscript_harvest.fetch.sources.base import FetchedFile, ROLE_SUPPLEMENT
+    from manuscript_harvest.fetch.sources.europepmc import EuropePmcSource
+
+    def blocked(self, ids, need_pdf, need_supplements):
+        from manuscript_harvest.fetch.sources.base import SourceResult
+        result = SourceResult(tier="europepmc")
+        result.problems.append("2 supplementary file(s) are behind NCBI's proof-of-work page")
+        result.suppl_advice.append("the browser tier is required for them")
+        if hands_over_a_file:
+            result.suppl_status = "fetched_unverified"
+            result.files.append(FetchedFile(role=ROLE_SUPPLEMENT, name="mmc1.pdf",
+                                            content=b"x", url="http://x/mmc1.pdf"))
+        else:
+            result.suppl_status = "partial_failure"
+        return result
+
+    monkeypatch.setattr(EuropePmcSource, "fetch", blocked)
+
+
+def test_advice_is_dropped_once_another_tier_got_the_supplements(tmp_path, monkeypatch):
+    """"Re-run with --headed" must not outlive the obstacle it describes.
+
+    10.1016/j.cell.2021.04.038 finished `fetched_unverified` with all 6 of its
+    supplements -- the count `manual_fetch.yaml` records from the publisher by
+    hand -- and still printed "13 supplementary file(s) are behind NCBI's
+    proof-of-work page; the browser tier is required for them" and "re-run with
+    --headed to collect these supplementary files". Both were true of a tier that
+    ran; neither was true of the finished article. Acting on them costs a headed
+    run over files already on disk.
+
+    What happened still has to survive, so the obstacle stays in `problems`
+    either way. Only the instruction is conditional.
+    """
+    _advising_tier(monkeypatch, hands_over_a_file=True)
+    record = fetcher.fetch_publication(DOI, fetch_config(tmp_path, ["europepmc"]), http=_http())
+
+    assert record["supplementary_status"] in store.SUPPL_SETTLED
+    assert any("behind NCBI's proof-of-work page" in p for p in record["problems"])
+    assert not any("browser tier is required" in p for p in record["problems"])
+
+
+def test_advice_survives_when_the_supplements_really_are_missing(tmp_path, monkeypatch):
+    """The other half: silencing advice on an unresolved obstacle would be worse
+    than repeating it, because then nothing tells the user what to do next."""
+    _advising_tier(monkeypatch, hands_over_a_file=False)
+    record = fetcher.fetch_publication(DOI, fetch_config(tmp_path, ["europepmc"]), http=_http())
+
+    assert record["supplementary_status"] not in store.SUPPL_SETTLED
+    assert any("behind NCBI's proof-of-work page" in p for p in record["problems"])
+    assert any("browser tier is required" in p for p in record["problems"])
 
 
 def test_a_raising_tier_is_recorded_not_fatal(tmp_path, monkeypatch):
