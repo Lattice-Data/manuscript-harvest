@@ -312,4 +312,33 @@ E2 (the `--role` help string); it did not.** E2 is still open below.
       for side-by-side tables is knowingly not implemented. Reproduced by construction
       before writing it down — two tables either side of a blank column give
       `split_blocks() == []` and one card containing `column_4`.
-- **The README rewrite** (981 lines to ~330-380) and its ~18 factual corrections.
+## README rewrite — COMPLETE
+
+981 -> 638 lines (35% cut). **Above the audit's 330-380 estimate, deliberately:** that
+figure was inconsistent with the same audit's own per-section instructions, which said
+to keep the three status tables, the caveat table, the exit-code table, the tests table
+and the block and card examples at or near full length. Those sum to ~422 content lines
+before any prose. The file is now 60 lines of contract tables, 69 of examples, 364 of
+prose. Cutting to 380 would mean deleting a contract, not prose.
+
+All 18 `R-` corrections applied, each re-measured first rather than taken from the plan:
+caveat blocking set (rows 1, 3, 4 — not "the first three"); `fulltext.status` 10 -> 12
+values; `supplementary_status` 8 -> 9; the headline `table` example (exited 2 — now shown
+with `--all`); `bootstrap` listing 7 of 8 DOIs; `media/` claim dropped; block example
+regenerated from a real record with `block_id` and `section_path`; `metadata` added as a
+fifth kind; card example's column numbering made emittable with the real elision line;
+generic `data_ref` provenance form; review order corrected; per-machine counts dropped;
+audit framing fixed to the 2 slugs the baseline pins; exit-code table gained `review`
+and `table` rows; 11 undocumented flags now covered incl. `show --limit`'s silent 20;
+`tests/test_review.py` added to the table; the ruff job documented.
+
+Verified after writing: every repo path and dotted symbol the file names resolves, every
+flag exists (incl. the module-CLI ones `--cached`/`--replace`/`--fail-under`), every
+stated constant matches code (20, 3.0s, 90%, 8-word shingle, 129 chars, row 4), and all
+seven offline examples exit 0.
+
+## Done — delete this file
+
+Groups (A), (B), (C), (D), (E), (F), (G) and the README rewrite are complete. One
+decision is still owed, spawned as its own task: whether the two archive unpackers
+should share the media/supplement split (B9).
