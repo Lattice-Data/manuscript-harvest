@@ -16,6 +16,12 @@ So the file *list* comes from PMC and the *bytes* come from the publisher. When 
 publisher pattern is known, the `/bin/` URL is tried anyway and a proof-of-work
 response is reported as `javascript_challenge` -- an accurate statement that the
 browser tier is needed, rather than a silent zero.
+
+One route deliberately not taken, recorded so it is not tried again: NCBI documents
+a FAIR-SMART supplementary-materials API at `bionlp/RESTful/supplmat.cgi`, which
+would replace the HTML scrape above with an enumeration. It returns an error for
+every input, including the example IDs in NCBI's own documentation, so there is
+nothing here to call.
 """
 
 import re

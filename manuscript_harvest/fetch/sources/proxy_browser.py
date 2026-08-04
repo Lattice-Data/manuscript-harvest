@@ -199,6 +199,12 @@ def save_state(context, fetch_cfg: dict) -> Optional[Path]:
     *session* cookies, which Chrome discards on restart. Playwright's
     `storage_state()` captures them (with `expires: -1`) so they can be re-injected
     into the next run, which is what actually keeps a library-proxy login alive.
+
+    **The file this writes is a live credential.** Anyone holding it has your
+    institutional library session until it expires -- no password, no second factor.
+    It is the only secret this package creates, so it is worth saying here rather
+    than only in the README: treat it like an SSH key, do not copy it between
+    machines, and do not commit it.
     """
     target = state_path(fetch_cfg)
     try:

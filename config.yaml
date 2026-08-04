@@ -79,6 +79,11 @@ fetch:
     # before assuming its script has run. The challenge is per session, not per
     # file, so this is paid once per run and every later file fetches normally.
     # challenge_wait_seconds: 8
+    # The article `login` lands on and `check` probes. It MUST be one your library
+    # licenses but the public cannot read: pointed at an open-access article, `check`
+    # passes with no session at all and tells you nothing. `check` downloads the PDF
+    # and validates it, because finding a `citation_pdf_url` is not evidence of
+    # access -- publishers emit that on paywalled articles too, for Google Scholar.
     check_url: "https://www.nature.com/articles/s41586-026-10510-x"
 
 # Extraction stage: corpus files -> blocks of text with provenance.

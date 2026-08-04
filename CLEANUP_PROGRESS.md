@@ -298,9 +298,18 @@ E2 (the `--role` help string); it did not.** E2 is still open below.
       versions in `fetch/` and `extract/` stay separate -- they are stamped into records.
 - [x] E18 no change needed: `tests/test_review.py`'s "in what order" became accurate once
       B5 added the ordering test.
-- **(F) 7 README passages carrying knowledge found nowhere else** — must be preserved
-  before the README shrinks.
-- **(G) `EXTRACT_HARDENING_PLAN.md` deletion.** Safe: nothing references it and ~35.5 of
-  its 36 items are implemented. One item to carry forward — 3.3 bullet 3, the
-  side-by-side-table split on an interior all-blank column.
+## (F) and (G) — COMPLETE
+
+- [x] F the three passages the audit said should also live in code now do:
+      `proxy_browser.save_state` says the storage_state file is a live credential (the
+      only secret this package creates); `config.yaml` says `check_url` must be a
+      *paywalled* article, since an open-access one makes `check` pass with no session;
+      and the dead FAIR-SMART API result moved into `pmc_supplements`' docstring beside
+      the routes that were tried. The other four (config-from-cwd, exit codes, prior art,
+      audit payoff) belong in the README and are kept there by the rewrite.
+- [x] G `EXTRACT_HARDENING_PLAN.md` deleted (966 lines). The one unfinished item, 3.3
+      bullet 3, is carried into `tables.split_blocks`' docstring: the column-wise split
+      for side-by-side tables is knowingly not implemented. Reproduced by construction
+      before writing it down — two tables either side of a blank column give
+      `split_blocks() == []` and one card containing `column_4`.
 - **The README rewrite** (981 lines to ~330-380) and its ~18 factual corrections.
