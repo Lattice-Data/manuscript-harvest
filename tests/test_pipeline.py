@@ -419,6 +419,64 @@ def test_dedup_on_bytes_and_name(tmp_path):
         ["other.xlsx", "shared.xlsx"]
 
 
+def _advising_tier(monkeypatch, *, hands_over_a_file: bool):
+    """Patch the first tier to hit an obstacle it has advice about.
+
+    `hands_over_a_file` is the whole variable: a later tier getting the
+    supplements is what makes the advice stale.
+    """
+    from manuscript_harvest.fetch.sources.base import FetchedFile, ROLE_SUPPLEMENT
+    from manuscript_harvest.fetch.sources.europepmc import EuropePmcSource
+
+    def blocked(self, ids, need_pdf, need_supplements):
+        from manuscript_harvest.fetch.sources.base import SourceResult
+        result = SourceResult(tier="europepmc")
+        result.problems.append("2 supplementary file(s) are behind NCBI's proof-of-work page")
+        result.suppl_advice.append("the browser tier is required for them")
+        if hands_over_a_file:
+            result.suppl_status = "fetched_unverified"
+            result.files.append(FetchedFile(role=ROLE_SUPPLEMENT, name="mmc1.pdf",
+                                            content=b"x", url="http://x/mmc1.pdf"))
+        else:
+            result.suppl_status = "partial_failure"
+        return result
+
+    monkeypatch.setattr(EuropePmcSource, "fetch", blocked)
+
+
+def test_advice_is_dropped_once_another_tier_got_the_supplements(tmp_path, monkeypatch):
+    """"Re-run with --headed" must not outlive the obstacle it describes.
+
+    10.1016/j.cell.2021.04.038 finished `fetched_unverified` with all 6 of its
+    supplements -- the count `manual_fetch.yaml` records from the publisher by
+    hand -- and still printed "13 supplementary file(s) are behind NCBI's
+    proof-of-work page; the browser tier is required for them" and "re-run with
+    --headed to collect these supplementary files". Both were true of a tier that
+    ran; neither was true of the finished article. Acting on them costs a headed
+    run over files already on disk.
+
+    What happened still has to survive, so the obstacle stays in `problems`
+    either way. Only the instruction is conditional.
+    """
+    _advising_tier(monkeypatch, hands_over_a_file=True)
+    record = fetcher.fetch_publication(DOI, fetch_config(tmp_path, ["europepmc"]), http=_http())
+
+    assert record["supplementary_status"] in store.SUPPL_SETTLED
+    assert any("behind NCBI's proof-of-work page" in p for p in record["problems"])
+    assert not any("browser tier is required" in p for p in record["problems"])
+
+
+def test_advice_survives_when_the_supplements_really_are_missing(tmp_path, monkeypatch):
+    """The other half: silencing advice on an unresolved obstacle would be worse
+    than repeating it, because then nothing tells the user what to do next."""
+    _advising_tier(monkeypatch, hands_over_a_file=False)
+    record = fetcher.fetch_publication(DOI, fetch_config(tmp_path, ["europepmc"]), http=_http())
+
+    assert record["supplementary_status"] not in store.SUPPL_SETTLED
+    assert any("behind NCBI's proof-of-work page" in p for p in record["problems"])
+    assert any("browser tier is required" in p for p in record["problems"])
+
+
 def test_a_raising_tier_is_recorded_not_fatal(tmp_path, monkeypatch):
     from manuscript_harvest.fetch.sources.europepmc import EuropePmcSource
 

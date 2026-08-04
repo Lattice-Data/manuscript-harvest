@@ -587,7 +587,11 @@ def test_pmc_bot_check_says_use_headed():
 
     source._pmc_supplements(FakeContext(pages=[page]), Ids(), result)
     assert result.suppl_status == "page_not_parsed"
-    assert any("--headed" in p for p in result.problems)
+    # What happened is a problem; what to do about it is advice, and only the
+    # advice is dropped when a later tier gets the files anyway.
+    assert any("bot check" in p for p in result.problems)
+    assert any("--headed" in a for a in result.suppl_advice)
+    assert not any("--headed" in p for p in result.problems)
 
 
 def test_link_resolver_error_is_reported_not_parsed():

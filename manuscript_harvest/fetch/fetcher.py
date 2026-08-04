@@ -269,6 +269,7 @@ def fetch_publication(
 
     pdf_statuses: List[str] = []
     suppl_statuses: List[str] = []
+    suppl_advice: List[str] = []
     pdf_file = None
     pdf_tier = None
     xml_file = None
@@ -300,6 +301,7 @@ def fetch_publication(
 
         record["attempts"].extend(result.attempts)
         record["problems"].extend(result.problems)
+        suppl_advice.extend(result.suppl_advice)
         if result.pdf_status:
             pdf_statuses.append(result.pdf_status)
         if result.suppl_status:
@@ -366,6 +368,17 @@ def fetch_publication(
     record["supplementary_status"] = _supplement_status(
         ids, want_supplements, len(supplements), suppl_statuses
     )
+    # Advice outlives its obstacle unless something retires it. A tier that hit
+    # PMC's bot check says "re-run with --headed"; if a later tier then collected
+    # the supplements from the publisher, that sentence sends the user to spend a
+    # headed run on files already on disk. Measured on 10.1016/j.cell.2021.04.038,
+    # which finished `fetched_unverified` with all 6 of its supplements -- matching
+    # the hand-verified count in `manual_fetch.yaml` -- and still advised a re-run.
+    #
+    # Only the instruction is conditional. What each tier ran into stays in
+    # `problems` either way, because that is a record of the run and stays true.
+    if want_supplements and record["supplementary_status"] not in store.SUPPL_SETTLED:
+        record["problems"].extend(suppl_advice)
     store.finalize_status(record)
     store.write_manifest(directory, {k: v for k, v in record.items() if k != "_directory"})
 
