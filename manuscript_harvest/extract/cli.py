@@ -26,7 +26,7 @@ from pathlib import Path
 
 import yaml
 
-from ..config import merge_config
+from ..config import merge_config, warn_if_config_missing
 from ..fetch import store
 from ..fetch.identifiers import doi_slug, normalize_doi
 from . import extractor, review, reviewsheet, spreadsheet
@@ -45,6 +45,8 @@ def load_config(path) -> dict:
     config_path = Path(path)
     if config_path.exists():
         raw = yaml.safe_load(config_path.read_text()) or {}
+    else:
+        warn_if_config_missing(config_path)
     config = dict(raw)
     config["extract"] = merge_config(DEFAULT_EXTRACT_CONFIG, raw.get("extract") or {})
     # One corpus, two stages. Unless `extract` names its own directory, follow

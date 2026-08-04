@@ -21,7 +21,7 @@ from pathlib import Path
 
 import yaml
 
-from ..config import merge_config
+from ..config import merge_config, warn_if_config_missing
 from . import store
 from .fetcher import build_http, fetch_publication
 from .identifiers import normalize_doi
@@ -57,6 +57,8 @@ def load_config(path) -> dict:
     config_path = Path(path)
     if config_path.exists():
         config = yaml.safe_load(config_path.read_text()) or {}
+    else:
+        warn_if_config_missing(config_path)
     config["fetch"] = merge_config(DEFAULT_FETCH_CONFIG, config.get("fetch") or {})
     return config
 

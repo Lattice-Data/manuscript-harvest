@@ -763,6 +763,29 @@ def test_config_survives_a_missing_file(tmp_path):
     assert load_config(tmp_path / "nope.yaml")["extract"]["corpus_dir"] == "corpus"
 
 
+def test_a_missing_config_says_so_instead_of_defaulting_in_silence(tmp_path, capsys):
+    """Falling back to defaults is fine; doing it mutely is not.
+
+    `--config` defaults to the bare name `config.yaml`, resolved against the
+    current directory, so running either CLI from a subdirectory picks up none of
+    the repo's settings -- including `corpus_dir`, which sends the fetch to a
+    different corpus than the extract stage reads. The run still reports
+    `complete` and exits 0, so nothing else in the output gives it away.
+
+    On stderr, so it cannot corrupt piped output, and not an error, because
+    running on defaults is legitimate when deliberate.
+    """
+    load_config(tmp_path / "nope.yaml")
+    err = capsys.readouterr().err
+    assert "no config file at" in err
+    assert str((tmp_path / "nope.yaml").resolve()) in err
+
+    path = tmp_path / "config.yaml"
+    path.write_text("extract:\n  corpus_dir: /data/mine\n")
+    load_config(path)
+    assert capsys.readouterr().err == ""
+
+
 def test_limits_from_dict_ignores_unknown_keys():
     limits = Limits.from_dict({"max_scan_rows": 3, "not_a_cap": 9})
     assert limits.max_scan_rows == 3
