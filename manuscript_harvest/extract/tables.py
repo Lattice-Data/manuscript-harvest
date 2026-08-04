@@ -171,6 +171,23 @@ def split_blocks(rows: List[Sequence[Any]], limits: Limits) -> List[Tuple[int, i
     every xlsx sheet here: it fires on 12 sheets and correctly collapses
     `STable 4.1` `[1, 13]`, `STable 4.2` `[1, 3086]` and `STable 4.5` `[1, 3086]`
     back to a single card.
+
+    **Rows only: the column-wise case is knowingly not handled.** A sheet holding two
+    tables *side by side* is separated by an all-blank column, and nothing here cuts
+    on one -- so the separator is profiled as a real column and both tables become a
+    single card. Reproduced by construction: two three-column tables either side of a
+    blank column give `split_blocks(...) == []` and one card whose columns are
+    `cluster, virus+, virus-, column_4, cluster (2), virus+ (2), virus- (2)`.
+
+    An `column_<n>` name is the signature, since it is what an unheaded column gets:
+    200 of the 670 cards in the local corpus carry at least one. Most are ordinary
+    trailing blanks rather than separators, so that is an upper bound, not a count of
+    the defect.
+
+    Implementing it means a column-wise companion cutting on interior all-blank
+    columns, with `data_ref` carrying a column range as it already carries a row one.
+    Left undone deliberately, and written down here rather than in a plan document
+    nobody reads, so the next person meets it at the function that would change.
     """
     parts: List[Tuple[int, int]] = []
     start: Optional[int] = None
@@ -305,12 +322,10 @@ def detect_header(rows: List[Sequence[Any]], limits: Limits) -> Tuple[Optional[i
     candidate has a different type profile -- numbers under text headers -- which
     is the evidence that separates a header from a first data row of gene names.
     """
-    if not rows:
-        return None, [], LOW
-
+    # No empty-input guard: the sole caller `build_card` already returns on both
+    # "no rows" and "no populated cell", the second computed the same way as
+    # `width` below.
     width = max((sum(1 for v in row if clean_cell(v) is not None) for row in rows), default=0)
-    if width == 0:
-        return None, [], LOW
 
     captions: List[str] = []
     scan = rows[: limits.max_header_scan_rows]

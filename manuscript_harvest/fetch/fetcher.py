@@ -32,7 +32,7 @@ self-delimiting -- unpacking the archive yields the deposit, and a member list i
 not a guess. Every other route pattern-matches a rendered page: `pmc_supplements`
 regexes PMC's HTML for `/bin/` paths, the browser tier scrapes anchors, bioRxiv
 regexes its supplement page. Those get `fetched_unverified` even when they are in
-fact complete -- as all three ground-truth papers now are. That is not an alarm.
+fact complete -- as most of the eight ground-truth papers are. That is not an alarm.
 It is the difference between "we counted" and "we looked and this is what we saw",
 and only the first licenses "they exist and we have them".
 
@@ -56,8 +56,10 @@ from .sources.base import (
     ROLE_XML,
 )
 
-# Statuses that mean the PDF is on disk and usable.
-_PDF_SUCCESS = {"ok", "scanned_pdf_suspected"}
+# Statuses that mean the PDF is on disk and usable. Defined in `store`, which is
+# where `finalize_status` reads it, so the orchestrator and the record it writes
+# cannot disagree about what counts as having the article.
+_PDF_SUCCESS = store.PDF_USABLE
 
 
 def _best_pdf_status(reported: List[str]) -> str:
@@ -201,11 +203,18 @@ def _supplement_status(
 
 def build_http(config: dict) -> Http:
     fetch_cfg = config.get("fetch", {}) or {}
+    # `max_response_mb` is the only ceiling on a plain-HTTP body. The per-file cap
+    # (`max_file_mb`) is enforced by the tiers against a Content-Length they asked
+    # for first, so it does not bound a response that arrives without one, or one
+    # from a lookup endpoint rather than a file. Left unset the client is unbounded,
+    # which is the behaviour this had while nothing could set it.
+    response_mb = fetch_cfg.get("max_response_mb")
     return Http(
         contact_email=fetch_cfg.get("contact_email"),
         min_interval_seconds=fetch_cfg.get("min_interval_seconds", 3.0),
         timeout_seconds=fetch_cfg.get("timeout_seconds", 60),
         ncbi_api_key=fetch_cfg.get("ncbi_api_key"),
+        max_bytes=int(response_mb * 1024 ** 2) if response_mb else None,
     )
 
 
@@ -214,7 +223,6 @@ def fetch_publication(
     config: dict,
     force: bool = False,
     want_supplements: bool = True,
-    tiers: Optional[List[str]] = None,
     http: Optional[Http] = None,
 ) -> dict:
     """Fetch one publication into the corpus. Returns the manifest record.
@@ -224,7 +232,7 @@ def fetch_publication(
     """
     fetch_cfg = config.get("fetch", {}) or {}
     corpus_dir = fetch_cfg.get("corpus_dir", "corpus")
-    tier_names = list(tiers if tiers is not None else fetch_cfg.get("tiers", DEFAULT_TIERS))
+    tier_names = list(fetch_cfg.get("tiers", DEFAULT_TIERS))
 
     normalized = normalize_doi(doi)
     directory = store.article_dir(corpus_dir, normalized)

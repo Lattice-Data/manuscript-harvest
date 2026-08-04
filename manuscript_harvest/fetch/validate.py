@@ -93,11 +93,22 @@ _JS_CHALLENGE_MARKERS = [
     "enable javascript and cookies to continue",
 ]
 
+# Magic bytes, not Content-Type: a publisher that serves a paywall page as
+# `application/pdf` will also mislabel a supplement.
+# `extract/extractor.py`'s `sniff_extension` applies the same ordering for the same
+# reason over fifteen formats. Deliberately NOT shared: that one is a dispatcher on
+# unstripped `data[:8]` that opens the zip container to separate .xlsx from .docx,
+# while this is one whitespace-tolerant question about one format. If either gains a
+# format, read the other rather than copying from it.
 _PDF_MAGIC = b"%PDF"
 # Below this much extracted text we assume the PDF is scanned images.
 _MIN_TEXT_CHARS = 200
 # A PDF this small is only accepted if it reads like a real article.
 _SMALL_PDF_BYTES = 30_000
+# Below this a body is a failed download rather than a refusal page. Kept low on
+# purpose: a small PDF is usually a "purchase this article" stub, and calling that
+# `download_failed` would hide why it failed.
+_MIN_DOWNLOAD_BYTES = 100
 
 #: Failure statuses that name a cause the user can act on, most decisive first.
 #: These beat a generic miss wherever they appear, because "your session expired"
@@ -172,21 +183,25 @@ def validate_pdf(
     content: bytes,
     content_type: str = "",
     url: str = "",
-    min_bytes: int = 100,
 ) -> Tuple[bool, str, dict]:
     """Decide whether `content` may be stored as the article PDF.
 
     Returns `(accepted, status, meta)`. `status` is one of the `fulltext.status`
     values: `ok`, `scanned_pdf_suspected` (accepted, flagged), or one of
     `download_failed`, `not_a_pdf`, `paywalled`, `proxy_not_configured`,
-    `session_expired`, `link_resolver_error` (all rejected).
+    `session_expired`, `javascript_challenge`, `link_resolver_error` (all rejected).
+
+    `javascript_challenge` is not a refusal: the file is public and behind NCBI's
+    proof-of-work page, so it tells the caller to route through the browser tier
+    rather than to give up. It comes from `classify_denial` like the others and was
+    missing from this list. `publisher_stub_page` is a sibling status this function
+    never returns -- the browser tier assigns that one, since only a browser can see
+    a rendered shell.
     """
     meta: dict = {"bytes": len(content or b""), "content_type": content_type}
 
     # Only a genuinely empty or absurdly short body counts as a failed download.
-    # The floor is kept low on purpose: a small PDF is usually a "purchase this
-    # article" stub, and calling that `download_failed` would hide why it failed.
-    if not content or len(content) < min_bytes:
+    if not content or len(content) < _MIN_DOWNLOAD_BYTES:
         return False, "download_failed", meta
 
     if not looks_like_pdf(content):
@@ -218,7 +233,7 @@ def validate_pdf(
     if len(text) < _MIN_TEXT_CHARS:
         # Parses fine but has no extractable text: almost certainly scanned.
         # Kept, because it is the real article, but flagged so the caller knows
-        # `pdf_loader` will get nothing out of it without an OCR step.
+        # `extract/pdf.py` will get nothing out of it without an OCR step.
         return True, "scanned_pdf_suspected", meta
 
     return True, "ok", meta

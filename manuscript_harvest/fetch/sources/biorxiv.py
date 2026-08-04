@@ -1,4 +1,4 @@
-"""Tier 3: bioRxiv and medRxiv preprints.
+"""bioRxiv and medRxiv preprints.
 
 Preprints under the 10.1101 prefix are open by definition, so no authentication
 is involved. The details API gives the version number and a JATS XML link:
@@ -10,8 +10,9 @@ from which the PDF and supplementary-material URLs are constructed:
     https://www.biorxiv.org/content/<doi>v<version>.full.pdf
     https://www.biorxiv.org/content/<doi>v<version>.supplementary-material
 
-The supplementary-material page is HTML, so this is the one open-access tier that
-scrapes. It is a narrow scrape -- media links follow a fixed
+The supplementary-material page is HTML, so this tier scrapes -- as
+`pmc_supplements` also does, over PMC's `/bin/` paths. It is a narrow scrape --
+media links follow a fixed
 `/DC<n>/embed/media-<n>.<ext>` shape -- and when the pattern does not match, the
 result is `page_not_parsed` rather than a silent zero.
 """
@@ -21,8 +22,7 @@ from typing import List, Optional, Tuple
 from urllib.parse import urljoin
 
 from ..http import HttpError
-from ..validate import validate_pdf
-from .base import ROLE_PDF, ROLE_SUPPLEMENT, ROLE_XML, FetchedFile, Source, SourceResult
+from .base import ROLE_SUPPLEMENT, ROLE_XML, FetchedFile, Source, SourceResult
 
 DETAILS_API = "https://api.biorxiv.org/details/{server}/{doi}"
 CONTENT_BASE = {
@@ -56,7 +56,7 @@ class BiorxivSource(Source):
         stem = f"{base}/content/{ids.doi}v{version}"
 
         if need_pdf:
-            self._fetch_pdf(f"{stem}.full.pdf", result)
+            self._fetch_pdf_url(f"{stem}.full.pdf", result)
             if jats_url:
                 self._fetch_jats(jats_url, result)
         if need_supplements:
@@ -98,29 +98,6 @@ class BiorxivSource(Source):
         return None
 
     # -- artifacts ----------------------------------------------------------
-
-    def _fetch_pdf(self, url: str, result: SourceResult) -> None:
-        try:
-            resp = self.http.get(url, accept="application/pdf")
-        except HttpError as e:
-            result.pdf_status = "download_failed"
-            result.note("pdf", url=url, status="download_failed", error=str(e))
-            return
-        if not resp.ok:
-            result.pdf_status = "download_failed"
-            result.note("pdf", url=url, status="download_failed", http_status=resp.status)
-            return
-
-        accepted, status, meta = validate_pdf(
-            resp.content, content_type=resp.content_type, url=resp.url
-        )
-        result.pdf_status = status
-        result.note("pdf", url=url, status=status, **meta)
-        if accepted:
-            result.files.append(
-                FetchedFile(role=ROLE_PDF, name="fulltext.pdf", content=resp.content,
-                            url=resp.url, content_type=resp.content_type)
-            )
 
     def _fetch_jats(self, url: str, result: SourceResult) -> None:
         """The details API hands us structured XML for free; keep it."""
@@ -169,14 +146,9 @@ class BiorxivSource(Source):
                         detail="page loaded; no supplementary links present")
             return
 
-        attempted = links[: self.max_files]
-        dropped = len(links) - len(attempted)
-        if dropped > 0:
-            result.problems.append(
-                f"{dropped} supplementary link(s) not fetched: max_files cap "
-                f"({self.max_files}) reached"
-            )
-            result.note("cap", status="truncated", dropped=dropped, max_files=self.max_files)
+        # "link": these are anchors matched on a rendered page, so a dropped one is
+        # not known to have been a distinct file.
+        attempted = self.apply_files_cap(links, result, noun="link")
 
         fetched = 0
         for url in attempted:

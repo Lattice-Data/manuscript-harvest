@@ -291,6 +291,21 @@ def test_block_ids_are_unique_over_the_corpus():
 # -- the section labeller as a regression metric -----------------------------
 
 EXPECTED_SCORES = Path("tests/expected_section_scores.json")
+#: Recorded on PyMuPDF 1.28.0, and it does not reproduce on any earlier release --
+#: measured on 1.24.0, 1.24.14, 1.25.5, 1.26.7, 1.27.1, 1.27.2, 1.27.2.2 and
+#: 1.27.2.3, all of which fail this gate. That is why `requirements.txt` floors
+#: pymupdf at 1.28.
+#:
+#: Read the failure carefully before believing an older release labels badly. What
+#: moves is mostly the *alignable sample*, not the accuracy: on 1.27.2.3 the two
+#: pinned papers align 70 and 79 paragraphs against 98 and 125, because PyMuPDF
+#: segments the text differently, and the hit rate only slips from 88.8% to 82.9%
+#: and from 92.0% to 91.1%. Since the assertion below compares absolute `correct`
+#: counts, it is sensitive to how many paragraphs aligned at all -- so a change to
+#: PyMuPDF can fail it without the labeller having got worse.
+#:
+#: A real improvement rewrites this file in the same commit. Never re-record it
+#: downward to make a version pass.
 
 
 def test_no_article_regressed_against_the_recorded_section_scores():

@@ -279,7 +279,7 @@ def test_an_abandoned_section_is_not_reopened_by_its_own_heading():
 def test_the_abandonment_bound_is_a_configurable_cap():
     """It decided a third of one article's labels while being a module constant
     with no config key, which the README said outright."""
-    assert Limits().max_bounded_section_chars == sections.MAX_BOUNDED_SECTION_CHARS
+    assert sections.SectionTracker().max_bounded_chars == Limits().max_bounded_section_chars
     tracker = sections.SectionTracker(limits=Limits(max_bounded_section_chars=100))
     tracker.heading(sections.ABSTRACT)
     assert tracker.carry("x" * 200) == sections.ABSTRACT

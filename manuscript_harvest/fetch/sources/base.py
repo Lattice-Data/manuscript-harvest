@@ -10,6 +10,9 @@ supplements -- that judgement belongs to the fetcher, which has the publisher's
 from dataclasses import dataclass, field
 from typing import List, Optional
 
+from ..http import HttpError
+from ..validate import validate_pdf
+
 ROLE_PDF = "fulltext_pdf"
 ROLE_XML = "fulltext_xml"
 ROLE_SUPPLEMENT = "supplement"
@@ -74,6 +77,76 @@ class Source:
     @property
     def max_files(self) -> int:
         return int(self.config.get("max_files", 50))
+
+    def apply_files_cap(self, items: list, result, via: Optional[str] = None,
+                        noun: str = "file") -> list:
+        """Trim `items` to `max_files`, recording anything dropped. Returns the kept.
+
+        Nothing a cap drops is silent, and this was written out in three tiers whose
+        wording had already come apart -- `pmc_supplements` said "supplementary
+        file(s)" while `biorxiv` and the browser tier said "link(s)". No test pinned
+        either, so the drift was free.
+
+        `noun` stays a parameter rather than being settled on one word, because the
+        difference is real: `pmc_supplements` counts files PMC listed, while bioRxiv
+        and the browser tier count anchors matched on a rendered page, and a dropped
+        anchor may not have been a distinct file at all. Saying "file" there would
+        claim more than the tier knows.
+        """
+        kept = items[: self.max_files]
+        dropped = len(items) - len(kept)
+        if dropped > 0:
+            result.problems.append(
+                f"{dropped} supplementary {noun}(s) not fetched: max_files cap "
+                f"({self.max_files}) reached"
+            )
+            note = {"status": "truncated", "dropped": dropped, "max_files": self.max_files}
+            if via is not None:
+                note["via"] = via
+            result.note("cap", **note)
+        return kept
+
+    def _fetch_pdf_url(self, url: str, result) -> None:
+        """GET one URL, validate it as the article PDF, and record the outcome.
+
+        Deliberately *not* named `_fetch_pdf`. Three subclasses already define that
+        name with three different signatures -- `EuropePmcSource._fetch_pdf(ids,
+        result)` loops over candidate URLs and folds their failures with
+        `better_pdf_failure`, and `ProxyBrowserSource._fetch_pdf(context, page,
+        adapter, ids, referer, result, denial)` drives a browser -- so a base method
+        under that name would be shadowed by two subclasses for which its contract is
+        false, which is worse than the duplication it removes.
+
+        The bioRxiv and PMC-OA bodies were token-identical, which is what makes them
+        safe to share: one URL, already known, fetched over plain HTTP. Europe PMC's
+        candidate loop is not this function and is left alone -- collapsing it would
+        lose the `better_pdf_failure` folding that picks the most useful of several
+        refusals.
+
+        A refusal is never written as `fulltext.pdf`: acceptance needs PDF magic
+        bytes, a successful parse, and a body that does not read like a purchase page.
+        """
+        try:
+            resp = self.http.get(url, accept="application/pdf")
+        except HttpError as e:
+            result.pdf_status = "download_failed"
+            result.note("pdf", url=url, status="download_failed", error=str(e))
+            return
+        if not resp.ok:
+            result.pdf_status = "download_failed"
+            result.note("pdf", url=url, status="download_failed", http_status=resp.status)
+            return
+
+        accepted, status, meta = validate_pdf(
+            resp.content, content_type=resp.content_type, url=resp.url
+        )
+        result.pdf_status = status
+        result.note("pdf", url=url, status=status, **meta)
+        if accepted:
+            result.files.append(
+                FetchedFile(role=ROLE_PDF, name="fulltext.pdf", content=resp.content,
+                            url=resp.url, content_type=resp.content_type)
+            )
 
     def applies(self, ids) -> bool:
         raise NotImplementedError

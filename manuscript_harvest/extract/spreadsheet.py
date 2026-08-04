@@ -71,16 +71,48 @@ def _load(data: bytes):
         io.BytesIO(relaxed), read_only=True, data_only=True, keep_links=False), True
 
 
+def _reset_dimensions(sheet) -> None:
+    """Make an unsized worksheet yield rows. Silent when the reader cannot.
+
+    `44161_2025_612_MOESM5_ESM.xlsx` has worksheets with no declared dimensions, and
+    a read-only openpyxl sheet yields nothing at all for those until this is called.
+    The three exception types are what different openpyxl versions raise for a sheet
+    that has no dimensions to reset, none of which is a problem with the file.
+    """
+    try:
+        sheet.reset_dimensions()
+    except (AttributeError, TypeError, ValueError):
+        pass
+
+
+def _apply_table_cap(cards: List[tables.TableCard], limits: Limits, meta: dict) -> bool:
+    """Trim to `max_tables_per_file`, recording it. True when the caller should stop.
+
+    Shared by the .xlsx and .xls readers; the .xls copy of this was uncovered, so a
+    change to how the cap is reported would have reached one format and not the
+    other. `setdefault` on `reason` is deliberate -- an earlier, more specific
+    reason (a sheet that failed to scan) outranks this one.
+    """
+    if len(cards) < limits.max_tables_per_file:
+        return False
+    del cards[limits.max_tables_per_file:]
+    meta["tables_capped"] = True
+    meta.setdefault(
+        "reason",
+        f"stopped at the {limits.max_tables_per_file}-table cap; later "
+        f"sheets in this workbook were not profiled")
+    return True
+
+
 def _forced(overrides, source_file: str, locator: str) -> dict:
-    """A human's answer about this card's header row, as build_card keywords."""
+    """A human's answer about this card's header row, as build_card keywords.
+
+    The translation itself is `review.Overrides.header_kwargs`; this only tolerates
+    an article with no review file at all.
+    """
     if overrides is None:
         return {}
-    answer = overrides.header_for(source_file, locator)
-    if answer is None:
-        return {}
-    row = (answer.get("override") or {}).get("header_row")
-    return {"forced_header_row": row, "forced_headerless": row is None,
-            "review_note": overrides.note_for(answer)}
+    return overrides.header_kwargs(source_file, locator)
 
 
 def _cards_from_sheet(rows: List[Sequence[Any]], source_file: str, title: str,
@@ -174,11 +206,7 @@ def _cards_from_xlsx(
             # None even for a sheet that said how big it was.
             declared = sheet.max_row
             total = declared if isinstance(declared, int) and declared > 0 else None
-            # Unsized worksheets yield nothing until their dimensions are reset.
-            try:
-                sheet.reset_dimensions()
-            except (AttributeError, TypeError, ValueError):
-                pass
+            _reset_dimensions(sheet)
             try:
                 rows, truncated = _scan_rows(sheet.iter_rows(values_only=True), limits)
             except Exception as e:
@@ -189,13 +217,7 @@ def _cards_from_xlsx(
             cards.extend(_cards_from_sheet(rows, source_file, sheet.title, limits,
                                            total, truncated, meta, sha256,
                                            overrides))
-            if len(cards) >= limits.max_tables_per_file:
-                cards = cards[: limits.max_tables_per_file]
-                meta["tables_capped"] = True
-                meta.setdefault(
-                    "reason",
-                    f"stopped at the {limits.max_tables_per_file}-table cap; later "
-                    f"sheets in this workbook were not profiled")
+            if _apply_table_cap(cards, limits, meta):
                 break
     finally:
         workbook.close()
@@ -208,11 +230,14 @@ def _cards_from_xlsx(
 def cards_from_xls(
     data: bytes, source_file: str, limits: Limits, overrides=None
 ) -> Tuple[List[tables.TableCard], str, dict]:
-    """Legacy binary `.xls`. One file in this corpus needs it.
+    """Legacy binary `.xls`. One file in the 63-paper development corpus needs it.
 
     `xlrd` 2.x reads only this format, which is exactly the reason to keep it
     optional: without it the single file is reported as unsupported rather than
     dragging in a dependency for 1 of 191 spreadsheets.
+
+    That file is not in a fetched corpus here, so this path is tested against a
+    stub standing in for `xlrd` rather than against real bytes.
     """
     try:
         import xlrd
@@ -234,12 +259,7 @@ def cards_from_xls(
         cards.extend(_cards_from_sheet(rows, source_file, sheet.name, limits,
                                        sheet.nrows, sheet.nrows > limit, meta,
                                        sha256, overrides))
-        if len(cards) >= limits.max_tables_per_file:
-            cards = cards[: limits.max_tables_per_file]
-            meta["tables_capped"] = True
-            meta.setdefault("reason",
-                            f"stopped at the {limits.max_tables_per_file}-table cap; "
-                            f"later sheets in this workbook were not profiled")
+        if _apply_table_cap(cards, limits, meta):
             break
     if not cards:
         return [], NO_TEXT, meta
@@ -264,10 +284,7 @@ def _source_rows(data: bytes, data_ref: dict, extension: str):
             workbook, _ = _load(data)
             try:
                 sheet = workbook[data_ref["sheet"]]
-                try:
-                    sheet.reset_dimensions()
-                except (AttributeError, TypeError, ValueError):
-                    pass
+                _reset_dimensions(sheet)
                 for number, row in enumerate(sheet.iter_rows(values_only=True), start=1):
                     yield number, list(row)
             finally:

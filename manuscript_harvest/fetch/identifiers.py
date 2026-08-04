@@ -5,11 +5,13 @@ where it lives.
 
 Europe PMC's search endpoint answers, in a single request, everything needed to
 route a fetch: the PMCID and PMID, whether the article is in PMC at all, and --
-critically -- whether a PDF and supplementary files exist. Those last two flags
-(`hasPDF`, `hasSuppl`) are publisher-supplied metadata, which is what lets the
-fetcher tell "this article has no supplements" apart from "we failed to find
-them". Guessing that distinction from our own scraping is exactly the kind of
-silent ambiguity this pipeline is built to avoid.
+critically -- whether supplementary files exist. `hasSuppl` is publisher-supplied
+metadata, and it is what lets the fetcher tell "this article has no supplements"
+apart from "we failed to find them". Guessing that distinction from our own scraping
+is exactly the kind of silent ambiguity this pipeline is built to avoid.
+`hasPDF` is recorded in the manifest for provenance and drives nothing -- see
+`suppl_flag_is_authoritative` for the conditions under which even `hasSuppl` is
+believed.
 
 NCBI's ID Converter and Crossref are fallbacks for records Europe PMC lacks.
 """
@@ -156,6 +158,12 @@ class Identifiers:
             "pmid": self.pmid,
             "pmcid": self.pmcid,
             "epmc_source": self.epmc_source,
+            # `source` and `id` are one composite key -- `MED/12345`, `PPR/998877` --
+            # so recording the source alone left the manifest with half an
+            # identifier. It matters most for preprints, where the `PPR` number is
+            # the only handle Europe PMC answers to: neither `pmid` nor `pmcid` is
+            # set for them.
+            "epmc_id": self.epmc_id,
             "title": self.title,
             "journal": self.journal,
             "year": self.year,

@@ -1,28 +1,33 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "manuscript-harvest"
-version = "0.1.0"
+# Read from `manuscript_harvest.__version__` rather than repeated here. That
+# attribute had no reader at all while this line was its hand-kept twin, so the two
+# could disagree with nothing to notice. The per-stage `__version__` values in
+# `fetch/` and `extract/` are deliberately separate: they are stamped into every
+# manifest and extraction record as `fetcher_version` and `extractor_version`, and
+# move independently of the distribution.
+dynamic = ["version"]
 description = "Fetch published papers from a DOI and extract their text and supplementary tables with provenance"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
 authors = [{ name = "Lattice Data Coordination" }]
 keywords = ["bibliometrics", "text-mining", "open-access", "jats", "curation"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Topic :: Scientific/Engineering :: Bio-Informatics",
     "Topic :: Text Processing",
 ]
 dependencies = [
-    "pymupdf>=1.24",
+    "pymupdf>=1.28",
     "requests>=2.31",
-    "pyyaml>=6.0",
+    "pyyaml>=6.0.2",
     "openpyxl>=3.1",
 ]
 
@@ -38,5 +43,18 @@ dev = ["pytest>=7.0", "pytest-cov>=4.0"]
 manuscript-fetch = "manuscript_harvest.fetch.cli:main"
 manuscript-extract = "manuscript_harvest.extract.cli:main"
 
+[tool.setuptools.dynamic]
+version = { attr = "manuscript_harvest.__version__" }
+
 [tool.setuptools.packages.find]
 include = ["manuscript_harvest*"]
+
+# Statement coverage, stated rather than left to whichever flags a run happens to
+# carry. The figure CI gates on and the badge both mean statements, so a run that
+# silently switched to branch mode would report a lower number for the same suite.
+# Being explicit also heads off `coverage.exceptions.DataError: Can't combine
+# statement coverage data with branch data`, which is what a `--cov-append` run
+# onto data from a `--cov-branch` run raises -- after the tests have already
+# passed, so it reads as a test failure rather than a mode mismatch.
+[tool.coverage.run]
+branch = false

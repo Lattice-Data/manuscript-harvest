@@ -28,8 +28,15 @@ class Limits:
     max_value_chars: int = 60
     """Longer cell values are not enumerated as a value set; they get examples."""
     max_sample_rows: int = 3
+    """Example rows printed under the column profile. Three is enough to show the
+    shape of a value -- an accession, a date format, a free-text note -- without the
+    card turning into a copy of the data it is describing."""
     max_rendered_columns: int = 60
     max_card_chars: int = 4000
+    """Budget for one rendered card. A card is meant to fit in a prompt beside
+    thirty others, so a single 88-column sheet must not be able to crowd them out;
+    whatever this drops is counted in the card's notes rather than trimmed away
+    quietly."""
 
     # -- files
     max_sheets: int = 30
@@ -54,7 +61,11 @@ class Limits:
 
     # -- archives
     max_archive_members: int = 25
+    """Files read out of one zip. A supplementary archive holding more than this is
+    a dataset rather than a set of tables, and the overflow is recorded."""
     max_member_mb: int = 50
+    """Per file inside a zip, separate from `max_file_mb` for the archive itself:
+    one 500 MB member should not be read because its container was small."""
     max_archive_depth: int = 2
     """Three of this corpus's zips contain only more zips, so one level of
     nesting has to be followed or those supplements read as empty."""
@@ -82,7 +93,9 @@ class Limits:
     over the ground-truth papers is 4,653 characters (a Cell Press abstract plus
     its highlights and eTOC blurb, 10.1016/j.xgen.2026.101304); the shortest
     pathological one is 6,294. This sits between them. It decided a third of one
-    article's labels while being a module constant with no config key."""
+    article's labels while being a module constant with no config key -- living
+    here is also what gets it recorded in every extraction's `limits` block, so a
+    label can be read back against the bound that produced it."""
 
     def to_dict(self) -> dict:
         return asdict(self)

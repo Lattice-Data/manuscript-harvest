@@ -3,7 +3,7 @@
     corpus/<doi_slug>/
         manifest.json
         fulltext.pdf
-        fulltext.nxml            only when an OA package supplied it
+        fulltext.nxml            when Europe PMC, bioRxiv or an OA package had JATS
         supplementary/01_...     original filenames, sanitised and ordered
         landing.html             browser tier only, for adapter debugging
 
@@ -112,6 +112,13 @@ def manifest_is_complete(record: Optional[dict]) -> bool:
         return False
     directory = Path(record.get("_directory", "")) if record.get("_directory") else None
     if directory is None:
+        # Defensive, and deliberately kept although no caller reaches it today:
+        # `_directory` is injected at run time by the fetcher, not stored in the
+        # manifest and not added by `read_manifest`, so any future caller reading a
+        # record off disk and passing it straight here arrives without one. Note what
+        # this answers in that case -- complete, on the record alone, with no file
+        # checked. Reading `record["_directory"]` instead would turn it into a
+        # KeyError on exactly that input, which is why the guard stays.
         return True
     for entry in [record.get("fulltext") or {}] + list(record.get("supplementary") or []):
         relative = entry.get("path")
@@ -161,6 +168,13 @@ def new_record(ids) -> dict:
 #: than restating the set, so the two cannot drift apart.
 SUPPL_SETTLED = {"none_listed", "fetched", "fetched_unverified"}
 
+#: `fulltext.status` values that mean the PDF is on disk and usable.
+#: `scanned_pdf_suspected` is in here because the file *is* the article -- it needs
+#: OCR, which is a separate problem from not having it. Same rule as above: this is
+#: the only definition, so read it rather than restating the pair. It had been
+#: restated as a bare literal eleven lines below that instruction.
+PDF_USABLE = {"ok", "scanned_pdf_suspected"}
+
 
 def finalize_status(record: dict) -> dict:
     """Derive the top-level status from the per-artifact statuses.
@@ -170,7 +184,7 @@ def finalize_status(record: dict) -> dict:
     partial  -> we have something useful but not everything.
     failed   -> no usable PDF.
     """
-    pdf_ok = (record.get("fulltext") or {}).get("status") in {"ok", "scanned_pdf_suspected"}
+    pdf_ok = (record.get("fulltext") or {}).get("status") in PDF_USABLE
     supplements_settled = record.get("supplementary_status") in SUPPL_SETTLED
 
     if pdf_ok and supplements_settled:
@@ -292,11 +306,12 @@ def enforce_budget(corpus_dir, max_bytes: Optional[int], dry_run: bool = False) 
 
 def human_bytes(count: int) -> str:
     value = float(count)
+    # `or unit == "TB"` makes the last iteration return unconditionally, so the
+    # loop is the only exit and no fallthrough is needed however large `count` is.
     for unit in ("B", "KB", "MB", "GB", "TB"):
         if value < 1024 or unit == "TB":
             return f"{value:.1f}{unit}" if unit != "B" else f"{int(value)}B"
         value /= 1024
-    return f"{value:.1f}TB"
 
 
 def summarize(record: dict) -> str:

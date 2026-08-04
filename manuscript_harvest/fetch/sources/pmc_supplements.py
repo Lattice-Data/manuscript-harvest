@@ -1,4 +1,4 @@
-"""Tier 2: supplementary files listed by PMC, fetched from the publisher.
+"""Supplementary files listed by PMC, fetched from the publisher.
 
 This tier exists because of a split discovered while testing against the live
 services:
@@ -16,6 +16,12 @@ So the file *list* comes from PMC and the *bytes* come from the publisher. When 
 publisher pattern is known, the `/bin/` URL is tried anyway and a proof-of-work
 response is reported as `javascript_challenge` -- an accurate statement that the
 browser tier is needed, rather than a silent zero.
+
+One route deliberately not taken, recorded so it is not tried again: NCBI documents
+a FAIR-SMART supplementary-materials API at `bionlp/RESTful/supplmat.cgi`, which
+would replace the HTML scrape above with an enumeration. It returns an error for
+every input, including the example IDs in NCBI's own documentation, so there is
+nothing here to call.
 """
 
 import re
@@ -66,14 +72,8 @@ class PmcSupplementsSource(Source):
             result.note("listing", status="no_files_listed", count=0)
             return result
 
-        attempted = listing[: self.max_files]
-        dropped = len(listing) - len(attempted)
-        if dropped > 0:
-            result.problems.append(
-                f"{dropped} supplementary file(s) not fetched: max_files cap "
-                f"({self.max_files}) reached"
-            )
-            result.note("cap", status="truncated", dropped=dropped, max_files=self.max_files)
+        # "file", not "link": PMC listed these, so a dropped one is a known file.
+        attempted = self.apply_files_cap(listing, result, noun="file")
 
         fetched, challenged, failed = 0, 0, 0
         for bin_path, filename in attempted:

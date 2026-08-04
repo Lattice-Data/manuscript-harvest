@@ -29,23 +29,31 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt -r requirements-dev.txt
+          # Then the package itself, so pyproject's own dependency list is
+          # exercised rather than taken on trust. It has to agree with the two
+          # requirements files -- the same pins are already installed by the line
+          # above, so this resolves to nothing new and fails loudly if a
+          # requirement was added to one place and not the other. It is also what
+          # puts the console scripts on PATH for the smoke test below.
+          pip install -e .
 
       # Playwright is deliberately NOT installed. The browser tier imports it
       # lazily inside a function, and its tests run against fakes, so the suite
       # must pass without a browser. If that ever stops being true, this job is
       # where it should fail.
       # The floor is set just under the current number so it catches a real
-      # regression without tripping on noise. Note that CI always measures the
-      # no-corpus figure: tests/test_extract_corpus.py skips itself without a local
-      # `corpus/`, so a developer running with one present will read higher than the
-      # badge. That gap is expected, not a discrepancy.
+      # regression without tripping on noise. Measured: 91.8% here, where
+      # tests/test_extract_corpus.py skips itself for want of a local `corpus/`,
+      # against 92.9% on a machine that has fetched the papers. CI always reports
+      # the first, so a developer reads about a point higher than the badge -- that
+      # gap is expected, not a discrepancy, and 90 sits below both.
       - name: Test
         run: >
           python -m pytest tests -q
           --cov=manuscript_harvest
           --cov-report=lcov
           --cov-report=term-missing:skip-covered
-          --cov-fail-under=70
+          --cov-fail-under=90
 
       # Uploaded from one interpreter only. Coverage is a property of the suite, not
       # of the Python version, so four uploads per commit would buy no extra signal
@@ -68,6 +76,12 @@ jobs:
           import manuscript_harvest.fetch.cli, manuscript_harvest.extract.cli  # must import regardless
           print("ok: both CLIs import with no browser installed")
           PY
+          # And as the installed console scripts, which is how the README tells
+          # people to run them. An entry point can be wrong in pyproject while the
+          # module import above still passes.
+          manuscript-fetch --help > /dev/null
+          manuscript-extract --help > /dev/null
+          echo "ok: both console scripts run with no browser installed"
 
   lint:
     runs-on: ubuntu-latest

@@ -11,18 +11,29 @@ fetch:
   # out without one -- which works, but is not the documented convention.
   contact_email: "gabdank@stanford.edu"
 
-  ncbi_api_key: null                      # optional; raises the NCBI rate limit from 3 to 10 req/s
+  # Optional. Raises NCBI's own ceiling from 3 to 10 req/s -- but this client is
+  # throttled by min_interval_seconds below, which is per host and does not drop
+  # when a key is present, so lowering that is what makes a key worth having.
+  ncbi_api_key: null
   min_interval_seconds: 3.0               # per host; 1-10 papers needs nothing cleverer
   timeout_seconds: 60
   max_files: 50                           # supplementary files per article; anything dropped is recorded
   max_file_mb: 200
+
+  # A ceiling on any single plain-HTTP response body, as a backstop. Distinct from
+  # max_file_mb, which the tiers enforce against a Content-Length they ask for
+  # first: this one bounds a body that arrives without one. It raises rather than
+  # truncating, because a short body written to disk would look like a valid file.
+  # Unset means unbounded.
+  # max_response_mb: 600
 
   # Disk budget for corpus_dir. Articles average ~40 MB, and the bulk is content
   # the pipeline wants (45% PDF, 25% spreadsheets), so there is no useful
   # "drop the media" saving -- staying inside a budget means giving up whole
   # articles. When exceeded, the oldest are evicted oldest-first; their manifests
   # are kept, so you keep the record of what was there and can re-fetch with
-  # --force. null = unlimited. Inspect with `usage`, apply by hand with `prune`.
+  # --force. null = unlimited. Applied automatically after every fetch whenever
+  # this key is set; inspect with `usage`, or force a sweep now with `prune`.
   max_corpus_gb: 25
 
   # Tried in order. The first four need no credentials and no browser; the last
@@ -48,6 +59,12 @@ fetch:
     enabled: true
     prefix: "https://stanford.idm.oclc.org/login?url="
 
+  # Clearing a JavaScript challenge costs a page load each, so a host that
+  # challenges every file would burn one timeout per file. After this many
+  # consecutive failures the tier stops trying that fallback and records the
+  # remaining files as not attempted, rather than reproving the point per file.
+  # max_challenge_failures: 3
+
   browser:
     profile_dir: "~/.manuscript-harvest/chrome-profile"
     headless: true
@@ -58,11 +75,22 @@ fetch:
     # dead-session fetch took 7.5 minutes to say so.
     settle_deadline_seconds: 20
     content_deadline_seconds: 12
+    # How long to sit on PMC's proof-of-work page ("Preparing to download ...")
+    # before assuming its script has run. The challenge is per session, not per
+    # file, so this is paid once per run and every later file fetches normally.
+    # challenge_wait_seconds: 8
+    # The article `login` lands on and `check` probes. It MUST be one your library
+    # licenses but the public cannot read: pointed at an open-access article, `check`
+    # passes with no session at all and tells you nothing. `check` downloads the PDF
+    # and validates it, because finding a `citation_pdf_url` is not evidence of
+    # access -- publishers emit that on paywalled articles too, for Google Scholar.
     check_url: "https://www.nature.com/articles/s41586-026-10510-x"
 
 # Extraction stage: corpus files -> blocks of text with provenance.
 # Only the caps you want to change need to appear here; anything omitted comes
-# from manuscript_harvest/extract/limits.py, where each default says why it exists.
+# from manuscript_harvest/extract/limits.py. Every cap this file exposes carries its
+# reasoning there; a handful of internal ones are bare numbers, which is the honest
+# signal that nothing has yet needed them changed.
 extract:
   # Defaults to fetch.corpus_dir, so moving the corpus needs one edit, not two.
   # corpus_dir: "corpus"

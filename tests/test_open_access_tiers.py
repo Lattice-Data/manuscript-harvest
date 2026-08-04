@@ -1,6 +1,6 @@
 """The open-access tiers, at the level of the whole tier rather than its helpers.
 
-Two of the three reach a file list by pattern-matching rendered HTML rather than by
+Two of the four reach a file list by pattern-matching rendered HTML rather than by
 reading an enumeration, and those two had almost no offline coverage -- 14% and 17%
 -- which is the worst place for it. A markup change on either page shrinks the list
 silently, and the whole point of the status taxonomy is that a shrunk list must not
@@ -492,6 +492,22 @@ def test_the_list_comes_from_pmc_and_the_bytes_from_the_publisher():
     assert all(f.label == "listed by PMC" for f in result.files)
     assert http.called_matching(SPRINGER) == 2
     assert http.called_matching(PMC_BIN) == 0, "the /bin/ URL is a fallback, not the first try"
+
+
+def test_the_pmc_cap_counts_files_where_a_scrape_counts_links():
+    """The `max_files` cap is written once in `Source.apply_files_cap`, and the noun
+    is deliberately a parameter: PMC *listed* these, so a dropped one is a known
+    file, while bioRxiv and the browser tier count anchors matched on a rendered page
+    and cannot claim that. Only the browser tier's wording was pinned, so nothing
+    stopped a merge from settling on one word and overclaiming here."""
+    http = _pmc_http()
+    result = PmcSupplementsSource(http, config={"max_files": 1}).fetch(
+        _pmc_ids(), need_pdf=False, need_supplements=True)
+
+    assert [f.name for f in result.files] == [MOESM1]
+    assert any("1 supplementary file(s) not fetched" in p for p in result.problems), \
+        result.problems
+    assert any(a["action"] == "cap" and a["dropped"] == 1 for a in result.attempts)
 
 
 def test_the_listing_dedupes_on_filename():

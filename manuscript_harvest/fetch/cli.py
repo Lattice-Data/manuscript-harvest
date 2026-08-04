@@ -2,6 +2,8 @@
 
     manuscript-fetch get 10.1038/s41586-021-03852-1
     manuscript-fetch batch dois.txt
+    manuscript-fetch usage --by-size     # what is taking the space
+    manuscript-fetch prune --dry-run     # what a budget sweep would evict
     manuscript-fetch login          # one-time Stanford SSO, headed
     manuscript-fetch check          # is the browser session alive?
 
@@ -19,6 +21,7 @@ from pathlib import Path
 
 import yaml
 
+from ..config import merge_config
 from . import store
 from .fetcher import build_http, fetch_publication
 from .identifiers import normalize_doi
@@ -48,23 +51,13 @@ DEFAULT_FETCH_CONFIG = {
 }
 
 
-def _merge(base: dict, override: dict) -> dict:
-    out = dict(base)
-    for key, value in (override or {}).items():
-        if isinstance(value, dict) and isinstance(out.get(key), dict):
-            out[key] = _merge(out[key], value)
-        else:
-            out[key] = value
-    return out
-
-
 def load_config(path) -> dict:
     """Load config.yaml and fill in the fetch defaults it does not specify."""
     config = {}
     config_path = Path(path)
     if config_path.exists():
         config = yaml.safe_load(config_path.read_text()) or {}
-    config["fetch"] = _merge(DEFAULT_FETCH_CONFIG, config.get("fetch") or {})
+    config["fetch"] = merge_config(DEFAULT_FETCH_CONFIG, config.get("fetch") or {})
     return config
 
 

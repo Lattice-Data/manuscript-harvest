@@ -322,6 +322,39 @@ def test_transport_limit_is_named_not_swallowed():
         context, "https://x/huge", "https://x", result, "test"
     )
     assert content is None and why == "too_large_for_transport"
+    assert any("fetch it manually" in p for p in result.problems)
+
+
+def test_the_page_route_names_the_transport_limit_too():
+    """The two download paths had drifted: only `_download_one` told the user the
+    file has to be fetched by hand. `_download_all` still appended its aggregate
+    "N of M could not be fetched" line either way, so what was lost was the advice,
+    not the fact -- and raising fetch.max_file_mb cannot help, which is exactly why
+    the advice is the useful part."""
+    source = _source()
+    result = SourceResult(tier="proxy_browser")
+    boom = Exception("Cannot create a string longer than 0x1fffffe8 characters")
+    context = FakeContext(request=FakeRequest({"huge": FakeResponse(200, boom)}))
+    content, _name, why = source._download_via_page(
+        context, "https://x/huge", result, "test"
+    )
+    assert content is None and why == "too_large_for_transport"
+    assert any("fetch it manually" in p for p in result.problems)
+
+
+def test_the_page_route_refuses_an_oversize_file_with_the_cap_named():
+    """The same sharing, for the size cap: before the challenge is cleared
+    Content-Length describes the challenge page, so this path re-checks and has to
+    report the refusal the same way."""
+    source = _source(max_file_mb=1)
+    result = SourceResult(tier="proxy_browser")
+    context = FakeContext(request=FakeRequest(
+        {"big.gz": FakeResponse(200, b"x", {"content-length": str(9 * 1024 ** 2)})}))
+    content, _name, why = source._download_via_page(
+        context, "https://x/big.gz", result, "test"
+    )
+    assert content is None and why == "too_large"
+    assert any("exceeds the 1 MB cap" in p for p in result.problems)
 
 
 def test_challenge_is_cleared_once_then_reused():

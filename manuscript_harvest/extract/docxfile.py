@@ -139,14 +139,8 @@ def blocks_from_docx(
             caption = next((b.text for b in reversed(blocks)
                             if b.kind in {HEADING, PARAGRAPH} and len(b.text) < 400), None)
             locator = f"table {table_index}"
-            forced = {}
-            if overrides is not None:
-                answer = overrides.header_for(source_file, locator)
-                if answer is not None:
-                    row = (answer.get("override") or {}).get("header_row")
-                    forced = {"forced_header_row": row,
-                              "forced_headerless": row is None,
-                              "review_note": overrides.note_for(answer)}
+            forced = (overrides.header_kwargs(source_file, locator)
+                      if overrides is not None else {})
             card = tables.build_card(
                 rows, source_file=source_file, locator=locator,
                 limits=limits, title=f"Table {table_index}", caption=caption,
@@ -163,15 +157,7 @@ def blocks_from_docx(
                                 locator=f"table {table_index}", section=tracker.current,
                                 table=card.to_dict()))
 
-    meta["sections"] = tracker.seen
-    if tracker.abandoned:
-        meta["sections_abandoned"] = tracker.abandoned
-    if tracker.withheld:
-        meta["low_value_blocks_withheld"] = tracker.withheld
-    if tracker.reopens_refused:
-        meta["reopens_refused"] = tracker.reopens_refused
-    if tracker.reason():
-        meta["reason"] = tracker.reason()
+    tracker.record(meta)
     if not blocks:
         return [], NO_TEXT, meta
     return blocks, OK, meta

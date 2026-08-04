@@ -1,4 +1,4 @@
-"""Tier 2: the PMC Open Access package.
+"""The PMC Open Access package.
 
     GET https://www.ncbi.nlm.nih.gov/pmc/utils/oa/oa.fcgi?id=PMC3258128
 
@@ -55,6 +55,13 @@ _HTTPS_PREFIX = "https://ftp.ncbi.nlm.nih.gov"
 _IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".tif", ".tiff", ".bmp", ".eps"}
 # Names PMC uses for genuine supplementary material, as opposed to the article's
 # own figure images which also sit in the package.
+#
+# Related to but deliberately not `adapters.base.SUPPLEMENT_HINT`, which answers the
+# same question about a *rendered page*. The inputs differ, and so does what is safe:
+# that one matches href plus anchor text, where a bare `suppl` also prefixes
+# "supplier", "supply" and "supplant", so it anchors on whole path segments. This one
+# only ever sees a tarball member's basename, where bare `suppl` is unambiguous. If
+# either list gains a publisher pattern, review both.
 _SUPPLEMENT_MARKERS = re.compile(
     r"(suppl|_s\d+\b|-s\d+\b|moesm|esm|additional[_-]?file|media-?\d|table[_-]?s\d|data[_-]?s\d)",
     re.IGNORECASE,
@@ -91,7 +98,7 @@ class PmcOaSource(Source):
 
         # The explicit pdf link is authoritative for the article PDF.
         if need_pdf and "pdf" in links:
-            self._fetch_pdf(links["pdf"], result)
+            self._fetch_pdf_url(links["pdf"], result)
 
         wants_package = (need_supplements or (need_pdf and result.pdf is None))
         if wants_package and "tgz" in links:
@@ -148,37 +155,6 @@ class PmcOaSource(Source):
 
         result.note("oa_lookup", status="ok", formats=sorted(links))
         return links, None
-
-    # -- article PDF --------------------------------------------------------
-
-    def _fetch_pdf(self, url: str, result: SourceResult) -> None:
-        try:
-            resp = self.http.get(url, accept="application/pdf")
-        except HttpError as e:
-            result.pdf_status = "download_failed"
-            result.note("pdf", url=url, status="download_failed", error=str(e))
-            return
-
-        if not resp.ok:
-            result.pdf_status = "download_failed"
-            result.note("pdf", url=url, status="download_failed", http_status=resp.status)
-            return
-
-        accepted, status, meta = validate_pdf(
-            resp.content, content_type=resp.content_type, url=resp.url
-        )
-        result.pdf_status = status
-        result.note("pdf", url=url, status=status, **meta)
-        if accepted:
-            result.files.append(
-                FetchedFile(
-                    role=ROLE_PDF,
-                    name="fulltext.pdf",
-                    content=resp.content,
-                    url=resp.url,
-                    content_type=resp.content_type,
-                )
-            )
 
     # -- .tar.gz package ----------------------------------------------------
 
@@ -281,6 +257,24 @@ def _classify(members: List[Tuple[str, bytes]]):
     supplementary material. Keeping them apart matters: `supplementary/` is where
     a curator looks for supplementary tables, and padding it with figure JPEGs
     would bury them.
+
+    **This split is this tier's alone, and the tier that delivers the supplements
+    does not do it.** `europepmc._unpack_zip` marks every ZIP member a supplement,
+    and the OA-package route is off by default (`fetch.try_oa_package`), so the
+    policy above currently describes no file on disk. Measured over the 36 local
+    articles: 435 supplementary entries, 382 of them from `europepmc` and none from
+    here, and 297 of those 382 are `.jpg`/`.gif` -- so the burying this docstring
+    warns about is what a corpus actually looks like, and no `media/` directory
+    exists. `10.1038_s41586-021-03465-8` holds the mixture plainly, with an article
+    figure (`01_..._Fig5_HTML.gif`) beside a real supplement
+    (`02_..._Fig9_ESM.gif`).
+
+    Sharing the split is the obvious fix and is deliberately not done here: it would
+    move those files out of `supplementary/` on every future fetch, which changes
+    per-file extraction statuses and can move an article's own status, and
+    `_unpack_zip`'s caller sets `suppl_status = "fetched"` unconditionally where this
+    one guards on `if supplements:` -- so a figures-only ZIP needs a decision first.
+    Recorded rather than done, so the inconsistency is at least not silent.
     """
     supplements: List[Tuple[str, bytes]] = []
     media: List[Tuple[str, bytes]] = []

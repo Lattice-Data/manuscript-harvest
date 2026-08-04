@@ -52,8 +52,9 @@ DEFAULT_MANUAL_DIR = "manual_fetch"
 SPEC_NAME = "manual_fetch.yaml"
 
 # Statuses that mean the PDF is on disk and usable. Kept in step with
-# fetcher._PDF_SUCCESS; duplicated rather than imported so that reading this file
-# does not require reading the tier orchestrator.
+# `store.PDF_USABLE`, which is the definition; duplicated rather than imported so
+# that this verification harness reads on its own, without the fetch stage's
+# internals. If that pair ever changes, it changes in `store` first.
 PDF_SUCCESS = {"ok", "scanned_pdf_suspected"}
 
 # Elsevier names every supplementary component mmc<N>, and the article PDF is
@@ -281,14 +282,25 @@ def hash_universe(paths) -> Dict[str, str]:
 
 # -- classifying a folder of manual downloads --------------------------------
 
+def _squash(text: str) -> str:
+    """Lowercase, keeping only letters and digits.
+
+    The normalisation both sides of `pdf_identity` are reduced by, so it has to be
+    one function: `doi_tail` squashes the DOI and the comparison squashes the PDF's
+    text, and a DOI found only because the two agreed on punctuation would be a
+    false pass. Also what makes a filename comparable to a DOI tail --
+    `PIIS0092-8674(21)00573-0` against `s0092867421005730`.
+    """
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
 def doi_tail(doi: str) -> str:
     """The distinctive half of a DOI, normalised for filename comparison."""
-    tail = normalize_doi(doi).split("/", 1)[-1]
-    return re.sub(r"[^a-z0-9]", "", tail.lower())
+    return _squash(normalize_doi(doi).split("/", 1)[-1])
 
 
 def _stem_key(path: Path) -> str:
-    return re.sub(r"[^a-z0-9]", "", path.stem.lower())
+    return _squash(path.stem)
 
 
 def classify(directory, doi: str, main_hint: Optional[str] = None) -> Tuple[Optional[Path], List[Path]]:
@@ -356,7 +368,7 @@ def load_spec(path=None) -> dict:
 
 
 def build_article(doi: str, directory, source_dir: str, main_hint: Optional[str] = None,
-                  main_version: Optional[str] = None, **extra) -> dict:
+                  main_version: Optional[str] = None) -> dict:
     """Fingerprint one folder of downloads into a spec entry.
 
     `main_version` defaults to whatever the file says it is, rather than to
@@ -385,7 +397,6 @@ def build_article(doi: str, directory, source_dir: str, main_hint: Optional[str]
             "no file matched the DOI, so the publisher's article PDF is absent from "
             "this folder; pdf checks are reported but not asserted"
         )
-    entry.update(extra)
     return entry
 
 
@@ -463,8 +474,7 @@ def compare(article: dict, record: dict, directory, root=None) -> List[dict]:
             # Both ends of the document: the DOI is on page 1 of a PMC rendition and
             # in the closing citation block of an AAAS reprint. See `pdf_tail_text`.
             tail = doi_tail(article["doi"])
-            text = re.sub(r"[^a-z0-9]", "",
-                          (head + " " + pdf_tail_text(fetched_pdf)).lower())
+            text = _squash(head + " " + pdf_tail_text(fetched_pdf))
             checks.append(_check(
                 "pdf_identity", tail in text,
                 "DOI found in the opening or closing pages" if tail in text

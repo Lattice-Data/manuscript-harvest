@@ -27,7 +27,8 @@ from manuscript_harvest.fetch.adapters.publishers import (
     PmcAdapter,
     WileyAdapter,
 )
-from manuscript_harvest.fetch.cli import DEFAULT_FETCH_CONFIG, _merge, load_config
+from manuscript_harvest.config import merge_config
+from manuscript_harvest.fetch.cli import DEFAULT_FETCH_CONFIG, load_config
 from manuscript_harvest.fetch.http import Http, HttpError
 from manuscript_harvest.fetch.identifiers import (
     Identifiers,
@@ -180,7 +181,8 @@ def test_real_pdf_accepted():
 
 
 def test_scanned_pdf_kept_but_flagged():
-    """Kept because it is the article, flagged because pdf_loader gets nothing."""
+    """Kept because it is the article, flagged because `pdf.blocks_from_pdf` gets
+    nothing out of it."""
     accepted, status, _ = validate_pdf(make_scanned_pdf())
     assert accepted and status == "scanned_pdf_suspected"
 
@@ -480,6 +482,26 @@ def test_nature_adapter_finds_files_not_anchors():
     links, parsed = adapter.find_supplements(page, DOI)
     assert parsed and len(links) == 2
     assert all("MediaObjects" in link["url"] for link in links)
+
+
+def test_the_shared_supplement_skeleton_offers_both_url_forms():
+    """`supplements_from_links` hands its predicate the raw anchor *and* the
+    fragment-stripped URL, because the five adapters disagree about which to match --
+    Nature tests the stripped form, Wiley, Elsevier and PMC the raw href. A
+    single-argument skeleton would have changed one of them with nothing to notice."""
+    from manuscript_harvest.fetch.adapters.base import supplements_from_links
+
+    article = "https://www.nature.com/articles/x"
+    page = FakePage(url=article, links=[{"url": article + "#MOESM4", "text": "4"}])
+
+    seen = []
+    supplements_from_links(page, lambda link, url: seen.append((link["url"], url)) or False)
+    assert seen == [(article + "#MOESM4", article)], seen
+
+    # And the `(links, parsed)` contract the skeleton exists to get right: a page that
+    # rendered and listed nothing is not the same as a page that did not render.
+    assert supplements_from_links(page, lambda link, url: False) == ([], True)
+    assert supplements_from_links(FakePage(links=[]), lambda link, url: True) == ([], False)
 
 
 def test_empty_page_is_unparsed_not_empty():
@@ -878,6 +900,25 @@ def test_no_cap_means_no_limit(no_sleep):
     assert len(http.get("https://example.org/big").content) == 5000
 
 
+def test_the_response_cap_is_reachable_from_the_config():
+    """`Http(max_bytes=)` was a cap production could not set: `build_http` passed
+    four keys and not this one, so the only ceiling on a plain-HTTP body existed
+    solely for the tests. Deleting it would have left the client unbounded, so it is
+    wired instead."""
+    from manuscript_harvest.fetch.fetcher import build_http
+    assert build_http({"fetch": {"max_response_mb": 600}}).max_bytes == 600 * 1024 ** 2
+    # Unset stays unbounded, which is what it did while nothing could set it.
+    assert build_http({"fetch": {}}).max_bytes is None
+    assert build_http({}).max_bytes is None
+
+
+def test_a_negative_retry_count_is_refused():
+    """`get`'s retry loop must run at least once for the function to honour its
+    `-> Response`; a negative count makes `range()` empty and would return None."""
+    with pytest.raises(ValueError, match="max_retries must be >= 0"):
+        Http(max_retries=-1)
+
+
 def test_the_response_records_the_final_url_and_a_bare_content_type(no_sleep):
     """`content_type` is compared against exact strings all over `validate.py`, so
     the charset parameter and the casing have to be gone by the time it lands."""
@@ -923,8 +964,19 @@ def test_empty_params_are_dropped_so_urls_stay_clean(no_sleep):
 # -- config ------------------------------------------------------------------
 
 def test_merge_is_recursive_and_non_destructive():
-    merged = _merge({"a": 1, "b": {"c": 2, "d": 3}}, {"b": {"c": 9}})
+    merged = merge_config({"a": 1, "b": {"c": 2, "d": 3}}, {"b": {"c": 9}})
     assert merged == {"a": 1, "b": {"c": 9, "d": 3}}
+
+
+def test_merge_keeps_a_key_the_defaults_do_not_list():
+    """Load-bearing, not incidental: `config.yaml` documents `try_oa_package`,
+    `max_challenge_failures` and the browser deadlines, none of which appear in
+    `DEFAULT_FETCH_CONFIG`. They reach the code only because a user's value survives
+    this merge without a default to sit on."""
+    merged = merge_config({"a": 1}, {"max_challenge_failures": 7,
+                                     "browser": {"challenge_wait_seconds": 2}})
+    assert merged["max_challenge_failures"] == 7
+    assert merged["browser"] == {"challenge_wait_seconds": 2}
 
 
 def test_load_config_fills_fetch_defaults(tmp_path):

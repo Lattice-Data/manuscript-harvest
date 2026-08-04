@@ -6,20 +6,25 @@ whether the body of the article is actually here, whether a `.pptx` nobody can
 parse holds the donor table. Those are cheap for a person and impossible for the
 parser, so this module names them, ranks them, and applies the answers.
 
-**What to ask, ranked by value per minute** -- the order the queue is built in:
+**What to ask, ranked by value per minute** -- the order the queue is built in,
+and `test_the_queue_order_is_the_documented_one` holds this list to it:
 
-1. **Table header rows.** Bounded (16 low-confidence cards over the six articles
-   on this machine), about fifteen seconds each, and a wrong header silently
-   corrupts every metadata answer drawn from that sheet.
-2. **Is the article body actually here.** One yes/no per article. If it is wrong,
-   every answer for that article is wrong.
+1. **Is the article body actually here.** One yes/no per article, and it gates
+   everything under it: if it is wrong, every other answer for that article is
+   wrong, so it is not worth confirming thirty header rows first. Cheapest
+   question, widest consequence.
+2. **Table header rows.** The bulk of the work and the highest value per question
+   after the gate: bounded (16 low-confidence cards over the six articles on this
+   machine), about fifteen seconds each, and a wrong header silently corrupts every
+   metadata answer drawn from that sheet.
 3. **Files a human thinks do carry content.** A checkbox, and a rare one: every
    non-`ok` supplement in this corpus is a figure image, which is never queued.
    It matters at scale, not on this sample.
 4. **Supplement label joins.** Fourth, because most of the win was the code fix
    that stopped the fetch transport's name being used as the publisher's.
-5. **Section spans.** Last and narrowly scoped: `section_audit.py` already scores
-   this wherever a JATS reference exists, so only ask where it cannot.
+5. **Section spans.** Second to last and narrowly scoped: `section_audit.py`
+   already scores this wherever a JATS reference exists, so only ask where it
+   cannot.
 6. **Sign-off.** Always, always last: the container, not a competitor, and what
    makes the layer honest.
 
@@ -37,6 +42,7 @@ non-stale answer for a key wins.
 
 import hashlib
 import json
+from collections import Counter
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -179,7 +185,7 @@ def queue_for(extraction: dict, blocks_path, limits: Optional[Limits] = None,
         question["source_sha256"] = shas.get(question["key"]["path"])
         items.append(question)
 
-    # -- table headers, the highest value per minute
+    # -- table headers: the bulk of the work, asked after the gate above
     low_confidence = [b for b in read_blocks(blocks_path)
                       if b.get("kind") == TABLE
                       and (b.get("table") or {}).get("header_confidence") == "low"]
@@ -296,6 +302,7 @@ class Overrides:
     def __init__(self, answers: Optional[Dict[str, dict]] = None):
         self._answers = answers or {}
         self._applied = 0
+        self._applied_kinds: Counter = Counter()
 
     @classmethod
     def load(cls, slug: str, manifest: Optional[dict],
@@ -315,17 +322,26 @@ class Overrides:
             kept[answer_key(answer.get("kind", ""), key)] = answer
         return cls(kept)
 
-    def __bool__(self) -> bool:
-        return bool(self._answers)
-
     def applied(self) -> int:
         return self._applied
+
+    def applied_kinds(self) -> Dict[str, int]:
+        """`applied()` broken down by question kind, counted where each answer is
+        consumed rather than where it was submitted.
+
+        `review --apply` used to print this total beside a breakdown built from the
+        *incoming* batch, which measures something else: on a second apply against
+        an article with fourteen stored answers, the headline said 14 and the
+        breakdown summed to 1.
+        """
+        return dict(self._applied_kinds)
 
     def _take(self, kind: str, key: dict) -> Optional[dict]:
         answer = self._answers.get(answer_key(kind, key))
         if answer is None or not answer.get("override"):
             return None
         self._applied += 1
+        self._applied_kinds[kind] += 1
         return answer
 
     def note_for(self, answer: dict) -> str:
@@ -340,6 +356,26 @@ class Overrides:
     def header_for(self, source_file: str, locator: str) -> Optional[dict]:
         return self._take(TABLE_HEADER,
                           {"source_file": source_file, "locator": locator})
+
+    def header_kwargs(self, source_file: str, locator: str) -> dict:
+        """A reviewed header row as `tables.build_card` keywords, `{}` if unanswered.
+
+        The translation lives here because it was written out three times -- in the
+        xlsx, docx and JATS table paths -- and only the xlsx copy was ever executed:
+        every table-header test builds its supplement with `make_xlsx`. Three copies
+        of an untested four-step translation is how a curator's answer quietly stops
+        being applied to one file type.
+
+        Note `forced_headerless`: a stored `header_row` of `None` is an answer, not a
+        missing one. It means "this sheet has no header", which is why the two keys
+        cannot be collapsed into one.
+        """
+        answer = self.header_for(source_file, locator)
+        if answer is None:
+            return {}
+        row = (answer.get("override") or {}).get("header_row")
+        return {"forced_header_row": row, "forced_headerless": row is None,
+                "review_note": self.note_for(answer)}
 
     def label_for(self, path: str) -> Optional[dict]:
         return self._take(SUPPLEMENT_LABEL, {"path": path})
@@ -360,6 +396,7 @@ class Overrides:
         for identity, answer in self._answers.items():
             if answer.get("kind") == MAIN_TEXT_PRESENT and answer.get("override"):
                 self._applied += 1
+                self._applied_kinds[MAIN_TEXT_PRESENT] += 1
                 return answer["override"].get("main_text_source")
         return None
 
@@ -419,8 +456,6 @@ def state_of(review: Optional[dict], extraction: dict,
         return "stale", stale
     if sign_off:
         return "reviewed", stale
-    if answered and answered < queued:
-        return "partially_reviewed", stale
     if answered:
         return "partially_reviewed", stale
     return ("queued" if queued else "unreviewed"), stale

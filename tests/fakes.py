@@ -108,6 +108,26 @@ _STRICT_SWAPS = [
 ]
 
 
+def _rewrite_xlsx(data: bytes, member_matches, transform) -> bytes:
+    """Repack a workbook, running `transform` over the members that match.
+
+    `member_matches(filename) -> bool` picks them. The three builders below each
+    needed this frame -- open, rewrite some members, write the rest through -- and it
+    is the same eight lines every time. openpyxl cannot *save* any of the shapes they
+    produce, which is why all three start from a normal workbook and edit its parts.
+    """
+    source = zipfile.ZipFile(io.BytesIO(data))
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as target:
+        for info in source.infolist():
+            content = source.read(info)
+            if member_matches(info.filename):
+                content = transform(content)
+            target.writestr(info.filename, content)
+    source.close()
+    return buffer.getvalue()
+
+
 def make_strict_xlsx(sheets) -> bytes:
     """A strict ISO-29500 workbook, the shape openpyxl reads as having no sheets.
 
@@ -116,17 +136,14 @@ def make_strict_xlsx(sheets) -> bytes:
     10.1016/j.cell.2021.01.053's `mmc7.xlsx`, which held three worksheets and
     reported as empty.
     """
-    source = zipfile.ZipFile(io.BytesIO(make_xlsx(sheets)))
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w") as target:
-        for info in source.infolist():
-            content = source.read(info)
-            if info.filename.lower().endswith((".xml", ".rels")):
-                for transitional, strict in _STRICT_SWAPS:
-                    content = content.replace(transitional, strict)
-            target.writestr(info.filename, content)
-    source.close()
-    return buffer.getvalue()
+    def to_strict(content: bytes) -> bytes:
+        for transitional, strict in _STRICT_SWAPS:
+            content = content.replace(transitional, strict)
+        return content
+
+    return _rewrite_xlsx(make_xlsx(sheets),
+                         lambda name: name.lower().endswith((".xml", ".rels")),
+                         to_strict)
 
 
 def make_zero_sheet_xlsx() -> bytes:
@@ -139,16 +156,10 @@ def make_zero_sheet_xlsx() -> bytes:
     is the one case where zero sheets is the file's own answer rather than an
     openpyxl limitation.
     """
-    source = zipfile.ZipFile(io.BytesIO(make_xlsx({"S": [["a"]]})))
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w") as target:
-        for info in source.infolist():
-            content = source.read(info)
-            if info.filename == "xl/workbook.xml":
-                content = re.sub(rb"<sheets>.*?</sheets>", b"<sheets/>", content, flags=re.S)
-            target.writestr(info.filename, content)
-    source.close()
-    return buffer.getvalue()
+    return _rewrite_xlsx(
+        make_xlsx({"S": [["a"]]}),
+        lambda name: name == "xl/workbook.xml",
+        lambda content: re.sub(rb"<sheets>.*?</sheets>", b"<sheets/>", content, flags=re.S))
 
 
 def make_dimensionless_xlsx(sheets) -> bytes:
@@ -158,16 +169,10 @@ def make_dimensionless_xlsx(sheets) -> bytes:
     `calculate_dimension()` for these. Observed on
     10.1038/s44161-025-00612-6's `MOESM5_ESM.xlsx`.
     """
-    source = zipfile.ZipFile(io.BytesIO(make_xlsx(sheets)))
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w") as target:
-        for info in source.infolist():
-            content = source.read(info)
-            if info.filename.startswith("xl/worksheets/"):
-                content = re.sub(rb"<dimension[^>]*/>", b"", content)
-            target.writestr(info.filename, content)
-    source.close()
-    return buffer.getvalue()
+    return _rewrite_xlsx(
+        make_xlsx(sheets),
+        lambda name: name.startswith("xl/worksheets/"),
+        lambda content: re.sub(rb"<dimension[^>]*/>", b"", content))
 
 
 # -- Word documents ----------------------------------------------------------
@@ -777,18 +782,14 @@ def make_article(directory, fulltext=None, xml=None, supplements=(), landing=Non
         "fulltext": {"status": "not_found", "path": None},
         "fulltext_xml": None, "supplementary": [],
     }
-    def sha(data: bytes) -> str:
-        import hashlib
-        return hashlib.sha256(data).hexdigest()
-
     if fulltext is not None:
         (directory / store.FULLTEXT_PDF).write_bytes(fulltext)
         record["fulltext"] = {"path": store.FULLTEXT_PDF, "status": "ok",
-                             "bytes": len(fulltext), "sha256": sha(fulltext)}
+                             "bytes": len(fulltext), "sha256": store.sha256_bytes(fulltext)}
     if xml is not None:
         (directory / store.FULLTEXT_XML).write_bytes(xml)
         record["fulltext_xml"] = {"path": store.FULLTEXT_XML, "bytes": len(xml),
-                                  "sha256": sha(xml)}
+                                  "sha256": store.sha256_bytes(xml)}
     if landing is not None:
         (directory / store.LANDING_HTML).write_bytes(landing)
     for index, entry in enumerate(supplements, start=1):
@@ -799,7 +800,7 @@ def make_article(directory, fulltext=None, xml=None, supplements=(), landing=Non
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content)
         record["supplementary"].append({
-            "path": stored, "bytes": len(content), "sha256": sha(content),
+            "path": stored, "bytes": len(content), "sha256": store.sha256_bytes(content),
             "index": index, "original_name": original, "content_type": "",
         })
     store.write_manifest(directory, record)

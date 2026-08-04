@@ -10,8 +10,11 @@
     manuscript-extract review <doi> --apply answers.json
 
 Everything here is offline: it reads what the fetch stage already put in the
-corpus. `all` is safe to re-run -- an article whose manifest has not changed and
-whose extraction was made by this extractor version is skipped.
+corpus. `all` is safe to re-run -- an article is skipped when nothing in its cache
+key has moved. That key is `extractor.extraction_key`, and naming only the version
+here would name the one component already proven insufficient: see
+`extract/__init__.py`, where a version number nobody remembers to bump is rejected
+as a cache key in favour of a hash of the parser source.
 """
 
 import argparse
@@ -23,8 +26,8 @@ from pathlib import Path
 
 import yaml
 
+from ..config import merge_config
 from ..fetch import store
-from ..fetch.cli import _merge
 from ..fetch.identifiers import doi_slug, normalize_doi
 from . import extractor, review, reviewsheet, spreadsheet
 from .blocks import BLOCKS_NAME, read_blocks
@@ -43,7 +46,7 @@ def load_config(path) -> dict:
     if config_path.exists():
         raw = yaml.safe_load(config_path.read_text()) or {}
     config = dict(raw)
-    config["extract"] = _merge(DEFAULT_EXTRACT_CONFIG, raw.get("extract") or {})
+    config["extract"] = merge_config(DEFAULT_EXTRACT_CONFIG, raw.get("extract") or {})
     # One corpus, two stages. Unless `extract` names its own directory, follow
     # wherever the fetch stage was told to write, so moving the corpus needs one
     # edit rather than two that can drift apart.
@@ -376,12 +379,18 @@ def _apply_review(args, config, directory, extraction, manifest, stored_path,
 
     after = extractor.extract_article(directory, limits=limits, force=True,
                                       write_markdown=markdown, config=config)
-    applied = (after.get("review") or {}).get("overrides_applied", 0)
-    kinds = Counter(a["kind"] for a in incoming.get("answers") or []
-                    if a.get("override"))
+    # Both numbers come from the extraction that just ran, so the breakdown sums to
+    # the headline. Built from the incoming batch instead, it measured a different
+    # set: this file is append-only, so a second apply against an article with
+    # fourteen stored answers printed "14 override(s) applied: 1 table header".
+    review_record = after.get("review") or {}
+    applied = review_record.get("overrides_applied", 0)
+    kinds = Counter(review_record.get("overrides_applied_kinds") or {})
     detail = ", ".join(f"{n} {kind.replace('_', ' ')}" for kind, n in
                        sorted(kinds.items())) or "none"
-    print(f"{applied} override(s) applied: {detail}", file=sys.stderr)
+    submitted = sum(1 for a in incoming.get("answers") or [] if a.get("override"))
+    print(f"{applied} override(s) applied: {detail} "
+          f"({submitted} submitted in this batch)", file=sys.stderr)
     print(f"{stored_path}")
     return _exit_code(after)
 
@@ -423,7 +432,8 @@ def build_parser() -> argparse.ArgumentParser:
     show.add_argument("article")
     show.add_argument("--kind", default=None, help="heading, paragraph, caption, table, metadata")
     show.add_argument("--section", default=None, help="methods, results, abstract, ...")
-    show.add_argument("--role", default=None, help="main_text or supplement")
+    show.add_argument("--role", default=None,
+                      help="main_text, supplement, or non_evidence")
     show.add_argument("--file", default=None, help="only blocks whose source path contains this")
     show.add_argument("--limit", type=int, default=20)
     show.add_argument("--full", action="store_true", help="do not truncate block text")

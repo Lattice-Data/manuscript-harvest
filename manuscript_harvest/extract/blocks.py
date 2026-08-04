@@ -73,6 +73,21 @@ class Block:
     block was locatable only to a page -- which is not enough to point a human at
     a paragraph on it."""
     section: Optional[str] = None
+    section_source: Optional[str] = None
+    """Set to `review` where a human supplied the section the heuristic could not,
+    and left unset -- not `"heuristic"` -- everywhere else, so it costs nothing on
+    the blocks that did not need one.
+
+    A reviewed section is a different kind of claim from a derived one and has to
+    read that way in `blocks.jsonl`. The answer behind it is one value for a whole
+    unlabelled span, which a curator may know is only mostly right: on
+    10.1126/science.aat5031 the recorded note says the span is "overwhelmingly
+    results" while naming two introduction paragraphs and one discussion paragraph
+    inside it. A consumer weighing that against a heading the parser actually found
+    needs to be able to tell them apart.
+
+    Excluded from `block_id` for the same reason `section` is -- see
+    `number_blocks`."""
     section_path: Optional[List[str]] = None
     """The heading path down to this block, verbatim, e.g.
     `["Methods", "Nuclei isolation"]`. Set only where the tree is real: JATS
@@ -110,6 +125,8 @@ class Block:
             "text_sha256": hashlib.sha256(self.text.encode("utf-8")).hexdigest(),
             "text": self.text,
         }
+        if self.section_source:
+            record["section_source"] = self.section_source
         if self.section_path:
             record["section_path"] = list(self.section_path)
         if self.caption:
@@ -121,7 +138,7 @@ class Block:
         return record
 
 
-def number_blocks(blocks: List[Block], start: int = 0) -> List[Block]:
+def number_blocks(blocks: List[Block]) -> List[Block]:
     """Assign contiguous indices, and a `block_id` that survives a parser change.
 
     `index` is positional: insert one block and every downstream reference moves.
@@ -145,7 +162,7 @@ def number_blocks(blocks: List[Block], start: int = 0) -> List[Block]:
     """
     ordinals: dict = {}
     for offset, block in enumerate(blocks):
-        block.index = start + offset
+        block.index = offset
         key = "\x00".join([
             block.role, block.origin, block.source_file, block.locator, block.kind,
             hashlib.sha256(block.text.encode("utf-8")).hexdigest(),
