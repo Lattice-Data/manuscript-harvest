@@ -518,6 +518,32 @@ def test_the_sheet_is_one_self_contained_page(tmp_path):
     assert 'id="out"' in page and "Download the answers" in page
 
 
+def test_the_sheet_base_payload_is_json_parseable_as_script_text(tmp_path):
+    """html.escape broke Download: script data keeps &quot; literal, so
+    JSON.parse threw and nothing was saved. Pin the browser's reading of the
+    #base script -- raw source bytes, no entity expansion."""
+    directory, record = _extracted(
+        tmp_path, xml=jats_article(METHODS_BODY),
+        supplements=[("s1.xlsx", make_xlsx(AMBIGUOUS))])
+    page = reviewsheet.render(record, _queue(directory, record), None,
+                              article_dir=directory)
+    marker = '<script type="application/json" id="base">'
+    start = page.index(marker) + len(marker)
+    end = page.index("</script>", start)
+    raw = page[start:end]
+    assert "&quot;" not in raw
+    payload = json.loads(raw)
+    assert payload["slug"] == record["slug"]
+    assert payload["doi"] == record["doi"]
+    assert payload["answers"] == []
+
+
+def test_json_for_script_neutralizes_a_closing_script_tag():
+    encoded = reviewsheet._json_for_script({"note": "see </script><script>x"})
+    assert "<" not in encoded
+    assert json.loads(encoded)["note"] == "see </script><script>x"
+
+
 def test_the_sheet_escapes_what_a_publisher_put_in_a_cell(tmp_path):
     directory, record = _extracted(tmp_path, xml=jats_article(METHODS_BODY),
                                    supplements=[("s1.xlsx", make_xlsx(

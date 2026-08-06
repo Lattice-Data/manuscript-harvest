@@ -91,12 +91,21 @@ function collect() {
 document.addEventListener('input', collect);
 document.addEventListener('DOMContentLoaded', collect);
 function download() {
-  const payload = collect();
-  const blob = new Blob([JSON.stringify(payload, null, 2)], {type: 'application/json'});
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'review-' + payload.slug + '.json';
-  a.click();
+  try {
+    const payload = collect();
+    const text = JSON.stringify(payload, null, 2);
+    document.getElementById('out').value = text;
+    const blob = new Blob([text], {type: 'application/json'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'review-' + payload.slug + '.json';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(a.href);
+  } catch (err) {
+    document.getElementById('out').value = String(err);
+  }
 }
 """
 
@@ -115,6 +124,17 @@ _FIELDS = {
     review.SECTION_SPAN: ("Which section does the unlabelled text belong to?",
                           "e.g. methods", "label"),
 }
+
+
+def _json_for_script(value: dict) -> str:
+    """JSON that stays parseable inside a ``<script>`` element.
+
+    ``html.escape`` is wrong here: HTML5 script data does not expand character
+    references, so ``&quot;`` reaches ``JSON.parse`` literally and the Download
+    button throws. Escape only ``<``, which is what could terminate the element
+    (a ``</script>`` inside a string becomes ``\\u003c/script>``).
+    """
+    return json.dumps(value, sort_keys=True).replace("<", "\\u003c")
 
 
 def _link(article_dir: Optional[Path], relative: str) -> str:
@@ -204,13 +224,16 @@ def render(extraction: dict, queue: List[dict], existing: Optional[dict] = None,
         f"<title>Review {html.escape(str(extraction.get('slug')))}</title>"
         f"<style>{_STYLE}</style>"
         f'<script type="application/json" id="base">'
-        f"{html.escape(json.dumps(base, sort_keys=True))}</script>"
+        f"{_json_for_script(base)}</script>"
         + "".join(body)
         + '<footer><p>Who are you? <input type="text" id="by" '
           'placeholder="you@example.edu"></p>'
           '<textarea id="out" readonly></textarea>'
-          '<p><button onclick="download()">Download the answers</button> '
+          '<p><button type="button" onclick="download()">Download the answers'
+          '</button> '
           'then <code>manuscript-extract review &lt;doi&gt; --apply '
-          'review-&lt;slug&gt;.json</code></p></footer>'
+          'review-&lt;slug&gt;.json</code> '
+          '(if the file does not appear, copy the JSON from the box above)</p>'
+          '</footer>'
         f"<script>{_SCRIPT}</script>"
     )
