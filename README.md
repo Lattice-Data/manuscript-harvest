@@ -8,13 +8,16 @@ and turn it into blocks of text with provenance: paragraphs, headings, captions,
 and structured summaries of supplementary tables, each carrying the file and
 location it came from.
 
-Two stages and nothing else. There is no model in this repository: what to ask of
-the extracted text, and with what, is a separate decision.
+Three stages and nothing else. There is still no model in this repository: what to
+ask of the extracted text, and with what, is a separate decision.
 
     DOI ──▶ fetch (open-access APIs, then library proxy) ──▶ PDF + supplements
                                     │
                                     ▼
              extract ──▶ extracted/blocks.jsonl + extraction.json
+                                    │
+                                    ▼
+             select ──▶ evidence packs, candidates, verified quotes, scores
 
 ## Design
 
@@ -49,10 +52,12 @@ Needs **Python 3.10 or newer** (CI runs 3.10 through 3.13).
 
     manuscript-fetch get 10.1038/s41467-023-40505-5   # download
     manuscript-extract all                            # extract
+    manuscript-select readiness                       # ask something of it
 
-Without installing, both entry points are reachable as
-`python -m manuscript_harvest.fetch.cli` and
-`python -m manuscript_harvest.extract.cli`; `pip install -r requirements.txt` is
+Without installing, all three entry points are reachable as
+`python -m manuscript_harvest.fetch.cli`,
+`python -m manuscript_harvest.extract.cli` and
+`python -m manuscript_harvest.select.cli`; `pip install -r requirements.txt` is
 enough for that.
 
 Optional extras, as requirements files or as pip extras — they install the same
@@ -236,6 +241,9 @@ Scripting either stage means reading the taxonomy off the exit code:
 | `fetch check` | session works | it does not | — |
 | `extract review` | nothing queued | questions are queued | — |
 | `extract table` | a card was printed | re-read failed | ambiguous match |
+| `select readiness` | every article can carry a negative | at least one cannot | no articles |
+| `select verify` | every quote verified | at least one did not | no article, or nothing to verify against |
+| `select eval` | scored | below `--fail-under` | no labels, or nothing to score |
 
 Other subcommands use 2 for "nothing to do" — `extract status` and `show` when
 nothing is extracted, `fetch prune` with no budget set. So
@@ -468,6 +476,96 @@ and in the affected table card's notes, so a thin result reads as "capped" rathe
 than "empty". Because `limits` is part of the extraction key, changing one
 re-extracts rather than reusing a result made under the old value.
 
+## Select: blocks → the evidence one question needs
+
+    manuscript-select readiness                  # can a "not found" be believed?
+    manuscript-select candidates <doi>           # what a regex finds, with no role
+    manuscript-select pack <doi> --sections methods,data_availability
+    manuscript-select sheet --out labels.html    # a page to hand-label
+    manuscript-select label --apply labels.json --truth truth/accessions
+    manuscript-select verify answers.json --article <doi>
+    manuscript-select eval answers/ --truth truth/accessions --baseline
+
+Offline like the extract stage. Four jobs, and the reason they are here rather than
+downstream is that every one of them can be tested without a model.
+
+**`readiness` — what emptiness is allowed to mean.** Ask "which datasets did this
+paper deposit?" of 10.1016/j.cell.2019.08.008 and the honest answer is *unknown*: its
+`fulltext.status` is `download_failed`, its main text is the publisher's saved landing
+page, and its extraction carries `landing_page_only`. There is no Methods section to
+have missed anything in. Five states — `ready`, `ready_with_caveats`,
+`text_unavailable`, `not_extracted`, `not_fetched` — of which the first two mean a
+negative answer is worth recording, and 27 of the 37 development-corpus directories
+reach them. `ready_with_caveats` carries a `gaps` list, so the answer states its own
+bound instead of implying there wasn't one.
+
+**`pack` — filter, rank, budget.** The subtle part is that **a section preference is
+never a filter**. Corpus-wide 599 of 4,009 main-text paragraphs carry `section: null`,
+because an unrecognised heading leaves the field unset rather than guessing — and not
+only on the broken articles: 39 of the 86 in 10.1126/science.abo0510, which is `ready`
+with no caveats. So `prefer` ranks in three tiers — the sections asked for, then
+`null`, then everything else — and an unlabelled block outranks a known-other one,
+because a null section is missing information about a block rather than information
+that the block is elsewhere. Only the character budget drops anything, and it records
+`dropped_ids` rather than a count, because a pack that skipped a higher-ranked block
+to fit a lower one is exactly the silent reordering that makes a wrong negative look
+considered.
+
+**`candidates` — the half a regex does better.** Over the 27 believable articles the
+finder gets 69 distinct study-level accessions in 21 of them, and says nothing about
+what any of them are. That gap is the point:
+
+| DOI | found | actually deposited | naive precision |
+|---|---|---|---|
+| 10.1002/ctm2.1356 | 5 | 1 (GSE208532) | 0.20 |
+| 10.1016/j.isci.2023.106877 | 10 | 0 — every one reanalysed | 0.00 |
+
+Deciding `own` from `reused` needs the sentence around the identifier, so nothing here
+does it; a candidate carries `role: None` and the mentions that let something else
+decide. Sample-level ids (`GSM`, `SRR`, `ERS`, `SAMEA`) are found, marked, and kept out
+of what gets adjudicated: on 10.1126/science.aat5031 they live in a table card whose
+column enumeration stops at `max_unique_values`, so whatever the finder returns is a
+sample of a cap rather than the paper's deposit.
+
+**`verify` — a quote against the block it cites, not the article.** Confirming a quote
+is a substring of a concatenated article cannot tell whether the sentence came from
+Methods or from the peer-review PDF bundled as a supplement. Four levels are tried and
+**which one matched is recorded**: `exact`, `normalized` (NFKC, folded dashes and
+quotes, collapsed whitespace), `loose` (alphanumerics only), and `fuzzy` above 0.92
+coverage. A quote that is real but real *elsewhere* returns `wrong_block` and names
+where. `fuzzy` is refused below 40 comparable characters, because "abcd" against
+"abXcd" scores coverage 1.00 on what is not a quotation.
+
+### Measuring it: `truth/` and `eval`
+
+`eval` scores an answer against hand labels, per article and micro-averaged.
+`--baseline` scores "every study accession found is a deposit" — what a pipeline does
+when nobody adjudicates the role — so the number a change must beat is recomputed from
+the same labels rather than remembered.
+
+**`complete: true` in a label is what makes recall a number.** A label listing one
+deposit bounds precision immediately, but says nothing about recall unless the labeller
+asserts they looked for others and found none. So recall is computed only over complete
+labels, the rest are reported as `partial`, and the headline says how many were
+excluded — the same rule as `none_listed` against `unknown_none_found`, applied to the
+gold standard. A label also carries `finder_missed`, so the labelling pass doubles as a
+test of the pattern list.
+
+The labels themselves are **not in this repository**: what counts as an "own deposit"
+is defined by the question that produced it, so they travel with that question and
+reach this code through `--truth`. Same arrangement as `manual_fetch.yaml`, whose spec
+is checked in while the bytes are not. Note that a truth label and a `reviews/` answer
+have opposite lifetimes and must not be filed together: a review answer is about bytes
+and parser shape, so a re-fetch expires it, while "GSE208532 is this paper's deposit"
+survives a re-fetch, a parser rewrite and a PyMuPDF upgrade.
+
+`sheet` writes one self-contained HTML page for the whole corpus — 69 candidates across
+21 articles plus 6 with none to confirm, one sitting — with the sentence each accession
+appeared in quoted underneath and closed-set radios. `label --apply` splits the download
+into per-article files and **refuses a half-filled one** unless `--partial`: a blank role
+scores as a deliberate `reused` call, quietly rewarding a model for the labeller's
+unfinished work.
+
 ## Tests
 
     pip install -r requirements-dev.txt
@@ -499,6 +597,8 @@ with one present reads about a point higher than the badge.
 | `tests/test_section_audit.py` | the section audit: alignment, scoring, and what must *not* count as an error |
 | `tests/test_manual_fetch_units.py` | the comparison rules: publisher filename conventions, archives, versions |
 | `tests/test_manual_fetch_live.py` | fetches those same DOIs for real and compares — off unless asked for twice |
+| `tests/test_select_units.py` | readiness states, the section rule, the accession finder, the quote verifier, scoring |
+| `tests/test_select_cli.py` | the select CLI: exit codes, and the warnings that stop a bad answer being kept |
 
 They lean on failure cases rather than happy paths, because every bug found so far
 was a *plausible-looking success*. Where a test pins a rule a live batch disproved,
@@ -573,11 +673,17 @@ Deliberate non-goals first — scope commitments, not gaps:
   measurably worse on every article tested; pinned by
   `test_pdf_reading_order_is_not_improved_by_sorting` rather than argued about.
 - **An unrecognised heading leaves `section` as `null`** rather than guessing. A
-  wrong section is worse than none — it makes a filter silently drop the text it was
-  looking for.
-- **No model-facing "evidence pack".** The boundary is `blocks.jsonl`.
+  wrong section is worse than none — which is why `select`'s section preference ranks
+  instead of filtering.
+- **No model client, no prompts, no schemas.** `select` packs evidence, finds
+  candidates and verifies quotes; it never asks anything. The boundary moved from
+  `blocks.jsonl` to "code that can be tested without a model".
+- **One aspect implemented, not a general extractor.** `candidates` knows accession
+  syntax. Donor counts, ages, assays and perturbation each need their own finder, and
+  only the accession one has been measured.
 - **A reviewer's answer is scoped to bytes, not to the parser.** There is
   deliberately no way to record one that outlives a change to the file it was about.
+  A truth label is the opposite and is stored elsewhere for that reason.
 
 Gaps and dead ends, each with the detail at the code that handles it:
 
@@ -626,10 +732,19 @@ MIT — see [LICENSE](LICENSE).
 
 ## Not in this repository
 
-Deliberately: no model client, no prompts, no schemas, no scoring. This repo's job
-ends at `blocks.jsonl`. Consuming those blocks — retrieval, an LLM skill, a gold
-standard to measure against — belongs downstream, and forcing a choice of model
-here would make the harvesting code harder to reuse than it needs to be.
+Deliberately: **no model client, no prompts, no schemas, no rubrics, and no labels.**
+
+The line is *code that can be tested without a model.* Retrieval, candidate finding,
+quote verification and the eval runner all clear it, so they are the `select` stage,
+tested offline like everything else. What does not clear it stays out: the question
+text, the output schema, the confidence rubric, and the truth labels — whose meaning
+depends on the question that produced them, and which reach `eval` through `--truth`.
+
+This is narrower than the boundary this file first drew at `blocks.jsonl`. That
+version had `select`'s four jobs downstream too, which meant every consumer
+re-implemented the section-ranking rule slightly differently and none of them had
+tests. Forcing a *choice of model* here would still make the harvesting code harder to
+reuse; shipping a tested regex for GEO accession syntax does not.
 
 Also absent, and gitignored: `corpus/`, the fetched papers, because the bytes are
 the publishers' and every article can be re-fetched from its DOI; and the
