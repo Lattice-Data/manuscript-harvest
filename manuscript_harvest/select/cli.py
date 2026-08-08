@@ -180,10 +180,17 @@ def cmd_pack(args) -> int:
 
 
 def cmd_sheet(args) -> int:
-    """Write the hand-labelling sheet for the whole corpus."""
+    """Write the hand-labelling sheet, for the whole corpus or one named article.
+
+    One article is worth supporting rather than leaving to `--limit`, which takes the
+    first N in slug order and cannot name the one you meant. Labelling a single paper
+    is how the mechanism gets checked before anyone spends an afternoon on the rest.
+    """
     corpus_dir = _corpus_dir(args)
+    chosen = ([_resolve(corpus_dir, args.article)] if args.article
+              else _article_dirs(corpus_dir))
     entries = []
-    for directory in _article_dirs(corpus_dir):
+    for directory in chosen:
         verdict = readiness.assess(directory)
         entries.append({"slug": directory.name, "doi": verdict.get("doi"),
                         "verdict": verdict,
@@ -394,6 +401,8 @@ def build_parser() -> argparse.ArgumentParser:
     packing.set_defaults(func=cmd_pack)
 
     sheeting = subparsers.add_parser("sheet", help="write the hand-labelling sheet")
+    sheeting.add_argument("article", nargs="?", default=None,
+                          help="one DOI, slug or directory; omit for the whole corpus")
     sheeting.add_argument("--out", default="accession-labels.html")
     sheeting.add_argument("--limit", type=int, default=None)
     add_common(sheeting)

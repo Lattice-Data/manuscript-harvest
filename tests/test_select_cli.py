@@ -188,6 +188,23 @@ def test_sheet_writes_a_page_covering_the_believable_articles(corpus, tmp_path, 
     assert "1 article(s)" in capsys.readouterr().err
 
 
+def test_sheet_can_be_asked_for_one_named_article(corpus, tmp_path):
+    """`--limit` takes the first N in slug order and cannot name the one you meant.
+    Labelling a single paper is how the mechanism gets checked before anyone spends an
+    afternoon on the rest."""
+    _, config, _ = corpus
+    out = tmp_path / "one.html"
+    assert _run(config, "sheet", DOI, "--out", str(out)) == 0
+    assert out.read_text().count("<article ") == 1
+
+
+def test_sheet_for_one_unreadable_article_refuses_rather_than_writing_an_empty_page(
+        tmp_path, capsys):
+    assert _run(_landing_corpus(tmp_path), "sheet", LANDING_DOI,
+                "--out", str(tmp_path / "x.html")) == 2
+    assert "no article has believable text" in capsys.readouterr().err
+
+
 def test_sheet_refuses_a_corpus_with_nothing_worth_labelling(tmp_path, capsys):
     """A `complete: true` on a landing-page article would assert something the labeller
     has no way to know, and would then count toward recall as though they did."""
