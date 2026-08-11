@@ -29,3 +29,13 @@ manual_fetch/*
 manual-fetch-run/
 
 curation/
+
+# Hand-labelled answers the select stage scores against, and the sheets they come
+# from. Ignored to make the boundary in the README mechanical rather than a matter of
+# remembering: what counts as an "own deposit" is defined by the question that
+# produced the label, so the labels travel with that question and reach `eval`
+# through --truth. They also outlive a re-fetch and a parser change, which is the
+# opposite of a reviews/ answer -- filing them here would invite the wrong lifecycle.
+# The sheet is regenerable with `manuscript-select sheet`.
+truth/
+accession-labels.html
