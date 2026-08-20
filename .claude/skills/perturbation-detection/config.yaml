@@ -1,0 +1,54 @@
+# Perturbation extraction configuration.
+# This file is READ by pe.prepare and pe.validate — it is not documentation.
+
+# Where the extracted papers live: one directory per paper, each containing
+# extracted/blocks.jsonl. Override per run with --corpus, which is the normal
+# way to use this skill; the value here is only a default.
+corpus_dir: ./corpus
+
+# Text reconstruction. Sections are matched as substrings of the block's
+# `section` field. 'back_matter' is what JATS-derived articles actually use for
+# acknowledgments / author contributions / declaration of interests, so the
+# flat names below are not sufficient on their own.
+exclude_sections:
+  - references
+  - supplementary
+  - acknowledgments
+  - competing_interests
+  - funding
+  - back_matter
+  - data_availability
+
+# Supplementary content is caught primarily by source_file (see
+# pe/paper_text.py); `section` is often null for PDF-derived articles, so
+# section-only filtering leaks whole supplementary PDFs into the paper text.
+
+# Block kinds fed to the model. 'table' is excluded on purpose: the Cell Press
+# KEY RESOURCES TABLE lists every reagent in the lab, and this task turns on
+# the ROLE a reagent plays, not its presence.
+include_kinds:
+  - metadata
+  - heading
+  - paragraph
+  - caption
+
+# Quote validation
+fuzzy_match:
+  enabled: true
+  threshold: 0.85  # similarity below which a quote counts as unlocatable
+  normalize_unicode: true
+  normalize_punctuation: true
+
+# Confidence bands from prompt.md's rubric, for reading the summary CSV.
+confidence_thresholds:
+  high: 0.80
+  medium: 0.40
+  low: 0.20
+
+# Every paper goes to a human curator regardless of confidence, so there is no
+# auto-accept/auto-reject routing to build.
+flag_all_for_review: true
+
+output_dir: ./output
+include_supplementary: true
+budget_chars: 400000
