@@ -8,8 +8,12 @@ and turn it into blocks of text with provenance: paragraphs, headings, captions,
 and structured summaries of supplementary tables, each carrying the file and
 location it came from.
 
-Three stages and nothing else. There is still no model in this repository: what to
-ask of the extracted text, and with what, is a separate decision.
+Three stages, and the `manuscript_harvest` package still holds no model client: what
+to ask of the extracted text, and with what, remains a separate decision. One answer
+to that question now ships *alongside* the package rather than inside it — a
+perturbation-detection skill under `.claude/skills/`, which does carry a prompt and
+does call a model. See [Skills](#skills) for why that is a different kind of artifact
+and not a hole in the boundary.
 
     DOI ──▶ fetch (open-access APIs, then library proxy) ──▶ PDF + supplements
                                     │
@@ -18,6 +22,11 @@ ask of the extracted text, and with what, is a separate decision.
                                     │
                                     ▼
              select ──▶ evidence packs, candidates, verified quotes, scores
+
+`blocks.jsonl` is also where anything model-shaped attaches, from outside the
+package:
+
+             extracted/blocks.jsonl ──▶ .claude/skills/ ──▶ per-paper answers
 
 ## Design
 
@@ -566,6 +575,69 @@ into per-article files and **refuses a half-filled one** unless `--partial`: a b
 scores as a deliberate `reused` call, quietly rewarding a model for the labeller's
 unfinished work.
 
+## Skills
+
+`.claude/skills/` holds packaged answers to the question the three stages
+deliberately do not answer: *what to ask of the extracted text.* They are Claude
+Code skills — a directory with a `SKILL.md` and whatever files it needs — and they
+load automatically for anyone working in this repo.
+
+### Why they are here and not in the package
+
+They fail the `manuscript_harvest` admission test: a prompt cannot be tested without
+a model. So they are kept as a sibling of the package, not a part of it. That
+separation is mechanical, not just stated:
+
+- nothing under `manuscript_harvest/` imports them,
+- `pytest.ini`'s `testpaths = tests` means their tests are not collected by this
+  repo's suite, and `ruff` is scoped to `manuscript_harvest` and `tests`,
+- each skill vendors its own copy of what it needs and takes the corpus path as an
+  argument, so it runs against any directory of extracted papers, not just this one.
+
+The trade-off is real and worth naming: a skill's own tests do not run in this
+repo's CI, so a skill can rot while the badge stays green.
+
+### `perturbation-detection`
+
+Classifies extracted papers as **perturbed / not perturbed / unclear**, for
+single-cell biocuration. The rule that makes it non-trivial: a paper counts only if
+a perturbed sample was *itself* profiled by a single-cell or single-nucleus
+sequencing assay. A perturbation somewhere in the paper plus a qualifying assay
+somewhere in the paper is not enough — papers routinely perturb cells for a bulk
+RNA-seq, qPCR, Western or flow readout while the single-cell dataset comes from
+separate untreated material.
+
+    cd .claude/skills/perturbation-detection
+    python -m pe.prepare  --set papers.txt --work work --corpus ../../../corpus
+    ./pe/run_headless.sh work 4
+    python -m pe.validate --work work --write-corpus --corpus ../../../corpus
+    python -m pe.summarize --work work
+    ./pe/watch.sh work            # in another shell: progress, then a notification
+
+Only the second step needs a model, and it needs no API key: it runs `claude -p`
+against the logged-in Claude Code session. `pe/pending.py` makes a run resumable,
+which matters because session limits rather than papers are the binding constraint
+at scale — a paper counts as done only if its result parses, carries every required
+field, and its `sources_seen` matches the manifest, so a partial write is re-run
+instead of silently accepted.
+
+The design choice worth copying into any similar skill: **the harness does not trust
+the model's own answer.** Every quote is verified against the specific source it
+claims, unlocatable quotes are dropped, a perturbation left with no verified quote is
+dropped whole, and only then is the paper-level call recomputed. Both values are
+kept, so the gap between them measures fabricated evidence directly. Over 77 papers
+it has been 0, with 544/544 quotes verified and no misattributions.
+
+This mirrors the `## Design` principle above: emptiness you cannot account for is
+worthless, so a paper whose text is truncated or missing its Methods can never be
+reported as "not perturbed" — it is capped at "unclear" and routed to re-fetch.
+Positives are not capped, because missing text can conceal evidence but cannot
+manufacture it.
+
+Read `.claude/skills/perturbation-detection/SKILL.md` to run it, and `prompt.md` in
+the same directory for the criteria — that file, not this one, is the source of
+truth for what counts as a perturbation.
+
 ## Tests
 
     pip install -r requirements-dev.txt
@@ -675,9 +747,12 @@ Deliberate non-goals first — scope commitments, not gaps:
 - **An unrecognised heading leaves `section` as `null`** rather than guessing. A
   wrong section is worse than none — which is why `select`'s section preference ranks
   instead of filtering.
-- **No model client, no prompts, no schemas.** `select` packs evidence, finds
-  candidates and verifies quotes; it never asks anything. The boundary moved from
-  `blocks.jsonl` to "code that can be tested without a model".
+- **No model client, no prompts, no schemas — in the package.** `select` packs
+  evidence, finds candidates and verifies quotes; it never asks anything. The
+  boundary moved from `blocks.jsonl` to "code that can be tested without a model".
+  Prompts now exist in the repo, under `.claude/skills/`, and are outside that
+  line by construction: nothing in `manuscript_harvest` imports them and the test
+  suite does not collect them. See [Skills](#skills).
 - **One aspect implemented, not a general extractor.** `candidates` knows accession
   syntax. Donor counts, ages, assays and perturbation each need their own finder, and
   only the accession one has been measured.
@@ -732,7 +807,11 @@ MIT — see [LICENSE](LICENSE).
 
 ## Not in this repository
 
-Deliberately: **no model client, no prompts, no schemas, no rubrics, and no labels.**
+Deliberately, **in the `manuscript_harvest` package: no model client, no prompts, no
+schemas, no rubrics, and no labels.** Since the skill landed this needs saying
+precisely rather than as a slogan — prompts, a schema and a confidence rubric now do
+exist in the repo, under `.claude/skills/`, and the paragraph below is about where
+they are *not*.
 
 The line is *code that can be tested without a model.* Retrieval, candidate finding,
 quote verification and the eval runner all clear it, so they are the `select` stage,
