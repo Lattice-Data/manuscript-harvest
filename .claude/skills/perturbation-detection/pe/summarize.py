@@ -138,10 +138,11 @@ def row_for(doi: str, result: dict, entry: dict) -> dict:
         "perturbations_dropped": validation.get("perturbations_dropped", ""),
         "max_pert_confidence": max(confidences) if confidences else "",
         "sources": "|".join(entry.get("source_ids") or []),
-        # Truncated so the CSV stays readable in a spreadsheet; full detail
-        # lives in work/validated/<doi>.json. _join_truncated marks every cut
-        # with '…' so a shortened entry is never mistaken for broken data.
-        "perturbation_agents": _join_truncated((p.get("agent", "") for p in perts)),
+        # Full sentences, not truncated: a curator reads this column directly
+        # to judge each perturbation, and a cut mid-sentence ("forward genetic
+        # CRISPR…") cannot be judged. The untruncated value already lived in
+        # work/validated/<doi>.json; this just stops shortening it for display.
+        "perturbation_agents": "|".join(str(p.get("agent", "")) for p in perts),
         "n_issues": len(validation.get("issues") or []),
         "chars": entry.get("chars", ""),
         "needs_review": result.get("needs_review", True),
