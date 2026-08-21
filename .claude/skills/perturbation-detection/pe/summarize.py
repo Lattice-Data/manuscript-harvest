@@ -38,8 +38,29 @@ COLUMNS = [
     "n_samples_sc_assay",
     "quotes_checked", "quotes_failed", "quotes_wrong_source",
     "perturbations_dropped", "max_pert_confidence",
-    "sources", "agents", "n_issues", "chars", "needs_review",
+    "sources", "perturbation_agents", "n_issues", "chars", "needs_review",
 ]
+
+
+def _join_truncated(items, per_item: int = 60, total: int = 400) -> str:
+    """Join with '|', shortening long entries -- but mark every cut with '…'.
+
+    A silent [:60] is indistinguishable from broken data: "forward genetic
+    CRISPR " with the closing paren missing looks identical whether it was
+    truncated on purpose or the pipeline lost the rest. Marking it makes clear
+    this is intentional shortening for spreadsheet readability, and that the
+    untruncated value is in work/validated/<doi>.json, not lost.
+    """
+    parts = []
+    for item in items:
+        text = str(item or "")
+        if len(text) > per_item:
+            text = text[: per_item - 1] + "…"
+        parts.append(text)
+    joined = "|".join(parts)
+    if len(joined) > total:
+        joined = joined[: total - 1] + "…"
+    return joined
 
 
 def triage_priority(result: dict) -> int:
@@ -89,7 +110,7 @@ def row_for(doi: str, result: dict, entry: dict) -> dict:
         "processing_status": result.get("processing_status", ""),
         "text_completeness": result.get("text_completeness", ""),
         "has_single_cell_assay": result.get("has_single_cell_assay", ""),
-        "single_cell_assay_types": "|".join(str(a) for a in assay_types)[:200],
+        "single_cell_assay_types": _join_truncated(assay_types, per_item=60, total=200),
         "paper_confidence": result.get("paper_confidence", ""),
         "n_perturbations": len(perts),
         "n_paired_yes": validation.get("paired_yes", ""),
@@ -117,9 +138,11 @@ def row_for(doi: str, result: dict, entry: dict) -> dict:
         "perturbations_dropped": validation.get("perturbations_dropped", ""),
         "max_pert_confidence": max(confidences) if confidences else "",
         "sources": "|".join(entry.get("source_ids") or []),
-        # Truncated so the CSV stays readable in a spreadsheet; full detail
-        # lives in work/validated/<doi>.json.
-        "agents": "|".join(str(p.get("agent", ""))[:60] for p in perts)[:400],
+        # Full sentences, not truncated: a curator reads this column directly
+        # to judge each perturbation, and a cut mid-sentence ("forward genetic
+        # CRISPR…") cannot be judged. The untruncated value already lived in
+        # work/validated/<doi>.json; this just stops shortening it for display.
+        "perturbation_agents": "|".join(str(p.get("agent", "")) for p in perts),
         "n_issues": len(validation.get("issues") or []),
         "chars": entry.get("chars", ""),
         "needs_review": result.get("needs_review", True),
