@@ -66,13 +66,23 @@ Reply with only the word DONE when the file is written."
 }
 export -f run_one
 
+# "Pending" means the same thing here as in pe.pending: a raw file existing
+# and non-empty is NOT enough -- it must parse and carry every required field.
+# A malformed write (seen in practice: one `claude -p` call produced JSON with
+# a doubled closing quote) is a non-empty file that a naive existence check
+# would treat as finished forever. Import pe.pending's own status_of rather
+# than re-implementing a weaker version of it.
 DOIS=$("$PY" - "$WORK" <<'PYEOF'
 import json, os, sys
+sys.path.insert(0, os.getcwd())
+from pe.pending import status_of
+
 work = sys.argv[1]
 for e in json.load(open(os.path.join(work, "manifest.json"))):
     if "error" in e:
         continue
-    if not os.path.exists(e["raw_file"]) or os.path.getsize(e["raw_file"]) == 0:
+    state, _ = status_of(e)
+    if state != "done":
         print(e["doi"])
 PYEOF
 )
