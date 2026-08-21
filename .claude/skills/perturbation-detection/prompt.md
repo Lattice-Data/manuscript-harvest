@@ -416,7 +416,7 @@ Flatten to one row per paper for curator review, sorted by this priority:
 4. `perturbation_present = "no"` with `perturbation_present_any_assay = "yes"` (the v0.0.3 filter doing its job; sample it, do not read all of it).
 5. Any row with a non-empty `consistency_flags` or `evidence_flags`.
 
-Columns: `paper_id`, `doi`, `perturbation_present`, `perturbation_present_any_assay`, `has_single_cell_assay`, `paper_confidence`, `unresolved_reason`, `n_perturbations`, `processing_status`, `text_completeness`, `consistency_flags`, `evidence_flags`, `agents` (semicolon-joined), `single_cell_assay_types`.
+Columns: `paper_id`, `doi`, `perturbation_present`, `perturbation_present_any_assay`, `has_single_cell_assay`, `paper_confidence`, `unresolved_reason`, `n_perturbations`, `processing_status`, `text_completeness`, `consistency_flags`, `evidence_flags`, `perturbation_agents` (semicolon-joined), `single_cell_assay_types`.
 
 ### 11. Corpus-level counters
 Emit these per run. They are the acceptance criteria for the version, not decoration.

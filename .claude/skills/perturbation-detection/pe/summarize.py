@@ -38,7 +38,7 @@ COLUMNS = [
     "n_samples_sc_assay",
     "quotes_checked", "quotes_failed", "quotes_wrong_source",
     "perturbations_dropped", "max_pert_confidence",
-    "sources", "agents", "n_issues", "chars", "needs_review",
+    "sources", "perturbation_agents", "n_issues", "chars", "needs_review",
 ]
 
 
@@ -119,7 +119,7 @@ def row_for(doi: str, result: dict, entry: dict) -> dict:
         "sources": "|".join(entry.get("source_ids") or []),
         # Truncated so the CSV stays readable in a spreadsheet; full detail
         # lives in work/validated/<doi>.json.
-        "agents": "|".join(str(p.get("agent", ""))[:60] for p in perts)[:400],
+        "perturbation_agents": "|".join(str(p.get("agent", ""))[:60] for p in perts)[:400],
         "n_issues": len(validation.get("issues") or []),
         "chars": entry.get("chars", ""),
         "needs_review": result.get("needs_review", True),
