@@ -46,6 +46,7 @@ OK = "ok"
 NO_TEXT = "no_text"
 SCANNED = "no_text_scanned_pdf"
 UNREADABLE = "unreadable"
+GARBLED = "garbled_text_encoding"
 
 _HYPHEN_BREAK = re.compile(r"(\w)[-‐‑]\s*\n\s*(\w)")
 _PAGE_NUMBER = re.compile(r"^\s*(?:page\s*)?\d{1,4}\s*(?:of\s*\d{1,4})?\s*$", re.IGNORECASE)
@@ -98,26 +99,435 @@ def _is_pua(codepoint: int) -> bool:
     return _PUA_START <= codepoint <= _PUA_END
 
 
-def _symbol_map(page) -> Dict[int, str]:
-    """The private-use codepoints on this page that came out of a symbol font.
+# -- fonts that do not say what their glyphs mean ----------------------------
+#
+# 10.1126/science.adf5357's Supplementary Materials -- the file holding that
+# paper's Materials and Methods -- extracted 124,178 characters of
+# `TheVe VWXdLeV ZeUe LQWeQded` where the page reads `These studies were
+# intended`, and was reported `ok`. The page itself renders correctly, so the
+# glyph outlines are right and only the *text* is wrong.
+#
+# The cause is structural, not a corruption. Its text is drawn with subsetted
+# TrueType fonts under `/Encoding /Identity-H`, where a character code in the
+# content stream is a glyph id rather than a character. A `/ToUnicode` CMap is
+# what turns those back into characters, and this document's covers glyph ids
+# 8-75 and stops: every glyph from `i` upward has no entry. MuPDF's fallback for
+# a code it cannot map is to emit the code itself, and in this font's glyph order
+# a codepoint happens to sit 29 above its glyph id, so `i` (glyph 76) surfaces as
+# `L` and the file reads as a Caesar cipher.
+#
+# That offset is a property of one font's glyph order and nothing else, which is
+# why the repair below reads the *font* instead of shifting the string. The font
+# program the PDF embeds carries its own `cmap` -- the table a viewer uses to
+# draw the page -- and it names every glyph the ToUnicode CMap left out. Reading
+# it also settles the one case a string shift cannot: the extracted `T` is a real
+# `T` (glyph 55, which the publisher's CMap does map) when it comes from a mapped
+# code and a `q` (glyph 84) when it does not, and the two are different glyphs
+# even though they are the same character on the way out.
 
-    Built per page from `page.get_text("dict")` spans so that a PUA codepoint
-    from an unrelated subsetted font is never turned into a Greek letter.
+#: What MuPDF reports through `get_texttrace` for a glyph it could not turn into
+#: a character. It is not a character the document contains; it is the absence of
+#: an answer, and it is the only place MuPDF admits the substitution happened --
+#: `get_text` shows the fallback codepoint with nothing to mark it.
+_NO_UNICODE = 0xFFFD
+
+#: A `beginbfchar`/`beginbfrange` section of a ToUnicode CMap.
+_CMAP_SECTION = re.compile(rb"begin(bfchar|bfrange)(.*?)end\1", re.S)
+#: The only two token shapes a ToUnicode section holds: a hex string, and the
+#: brackets around an array of them (`<lo> <hi> [<d0> <d1> ...]`).
+_CMAP_TOKEN = re.compile(rb"<([0-9A-Fa-f]*)>|(\[)|(\])")
+
+#: A single `bfrange` wider than this is not a font's character set, it is a
+#: malformed CMap; refusing it keeps a bad `<0000><FFFFFFFF>` from being expanded.
+_MAX_BFRANGE = 0x10000
+
+
+def _cmap_tokens(body: bytes):
+    """A ToUnicode section's hex strings, an array collapsed to a list of them.
+
+    `None` when the brackets do not balance, which is the caller's signal to leave
+    the font alone rather than act on a half-read CMap.
+    """
+    tokens: List = []
+    array: Optional[List[bytes]] = None
+    for match in _CMAP_TOKEN.finditer(body):
+        hex_string, opening, closing = match.group(1), match.group(2), match.group(3)
+        if opening:
+            if array is not None:
+                return None
+            array = []
+        elif closing:
+            if array is None:
+                return None
+            tokens.append(array)
+            array = None
+        elif array is not None:
+            array.append(hex_string)
+        else:
+            tokens.append(hex_string)
+    return None if array is not None else tokens
+
+
+def _utf16(hex_string: bytes) -> Optional[str]:
+    """A CMap destination. `/Ordering (UCS)` means these are UTF-16BE."""
+    if not hex_string or len(hex_string) % 4:
+        return None
+    try:
+        return bytes.fromhex(hex_string.decode("ascii")).decode("utf-16-be")
+    except (ValueError, UnicodeDecodeError):
+        return None
+
+
+def _cmap_entries(stream: bytes) -> Optional[Dict[int, str]]:
+    """What a ToUnicode CMap maps, as `character code -> text`. `None` if unparsable.
+
+    Read for two reasons, and the second is why the destinations are decoded
+    rather than only the sources counted:
+
+    * the repair adds entries for codes this does *not* cover and no others, so a
+      merged CMap cannot change a character the document already resolved,
+      whichever way an implementation breaks a tie on a duplicate definition;
+    * where a code appears in both this and the font's own map, the two are
+      compared. Agreement is the evidence that a character code really is a glyph
+      id in this font, which is the assumption the whole repair rests on.
+
+    `None` rather than an empty dict when the syntax is not understood: an empty
+    dict would read as "this CMap maps nothing", and the repair would then write
+    over entries it had failed to see.
+    """
+    entries: Dict[int, str] = {}
+    for kind, body in _CMAP_SECTION.findall(stream):
+        tokens = _cmap_tokens(body)
+        if tokens is None:
+            return None
+        if kind == b"bfchar":
+            if len(tokens) % 2:
+                return None
+            for source, destination in zip(tokens[0::2], tokens[1::2]):
+                if isinstance(source, list) or isinstance(destination, list) or not source:
+                    return None
+                text = _utf16(destination)
+                if text is None:
+                    return None
+                entries[int(source, 16)] = text
+            continue
+        if len(tokens) % 3:
+            return None
+        for low_hex, high_hex, destination in zip(tokens[0::3], tokens[1::3], tokens[2::3]):
+            if isinstance(low_hex, list) or isinstance(high_hex, list) \
+                    or not low_hex or not high_hex:
+                return None
+            low, high = int(low_hex, 16), int(high_hex, 16)
+            if high < low or high - low >= _MAX_BFRANGE:
+                return None
+            if isinstance(destination, list):
+                if len(destination) != high - low + 1:
+                    return None
+                for offset, item in enumerate(destination):
+                    text = _utf16(item)
+                    if text is None:
+                        return None
+                    entries[low + offset] = text
+                continue
+            base = _utf16(destination)
+            if not base:
+                return None
+            # A range destination counts up from its last codepoint:
+            # `<0044><004b><0061>` is glyphs 68-75 to `a` through `h`.
+            if ord(base[-1]) + high - low > 0x10FFFF:
+                return None
+            for code in range(low, high + 1):
+                entries[code] = base[:-1] + chr(ord(base[-1]) + code - low)
+    return entries
+
+
+def _embedded_glyph_unicodes(document, xref: int) -> Dict[int, int]:
+    """`glyph id -> codepoint`, read out of the font program the PDF embeds.
+
+    `fitz.Font` over the embedded bytes exposes the font's own `cmap`, so this is
+    the document's own answer rather than an inference from the extracted string.
+    An empty result means there is nothing to read -- the font is not embedded, or
+    carries no character map -- and the caller must leave that font alone.
+
+    Where two codepoints share one glyph the lower wins. Both collisions in
+    adf5357's Times subset are a basic-Latin character against a lookalike --
+    U+002D against U+00AD (soft hyphen), U+003B against U+037E (Greek question
+    mark) -- and the basic-Latin one is what the paper means. It is also what
+    `_clean_block` would have to strip if the other were chosen.
+    """
+    try:
+        _name, _ext, _subtype, buffer = document.extract_font(xref)
+        if not buffer:
+            return {}
+        font = fitz.Font(fontbuffer=buffer)
+        codepoints = font.valid_codepoints()
+    except Exception:
+        return {}
+    glyphs: Dict[int, int] = {}
+    for codepoint in codepoints:
+        codepoint = int(codepoint)
+        # A lone surrogate has no UTF-16 encoding, so it cannot be written as a
+        # CMap destination however the font reports it.
+        if 0xD800 <= codepoint <= 0xDFFF or not 0 < codepoint <= 0x10FFFF:
+            continue
+        try:
+            glyph = font.has_glyph(codepoint)
+        except Exception:
+            continue
+        if glyph > 0 and codepoint < glyphs.get(glyph, 0x110000):
+            glyphs[glyph] = codepoint
+    return glyphs
+
+
+_CMAP_HEAD = """/CIDInit /ProcSet findresource begin
+12 dict begin
+begincmap
+/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def
+/CMapName /Adobe-Identity-UCS def
+/CMapType 2 def
+1 begincodespacerange
+<0000><FFFF>
+endcodespacerange
+"""
+_CMAP_TAIL = "endcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n"
+
+#: `bfchar` sections are capped at 100 entries by the PDF specification.
+_BFCHAR_PER_SECTION = 100
+
+
+def _bfchar_sections(glyphs: Dict[int, int]) -> str:
+    """`glyph id -> codepoint` as ToUnicode `bfchar` sections.
+
+    Destinations are UTF-16BE, which is what a CMap of `/Ordering (UCS)` means by
+    a hex string, so an astral codepoint is written as its surrogate pair rather
+    than truncated.
+    """
+    out = []
+    entries = sorted(glyphs.items())
+    for start in range(0, len(entries), _BFCHAR_PER_SECTION):
+        section = entries[start:start + _BFCHAR_PER_SECTION]
+        out.append("%d beginbfchar\n" % len(section))
+        for glyph, codepoint in section:
+            out.append("<%04X><%s>\n" % (glyph, chr(codepoint).encode("utf-16-be").hex().upper()))
+        out.append("endbfchar\n")
+    return "".join(out)
+
+
+#: `/Subtype` and `/CIDToGIDMap` out of a descendant font, which may be written
+#: as an object of its own or inline inside the `/DescendantFonts` array.
+_DESCENDANT_SUBTYPE = re.compile(r"/Subtype\s*/(\w+)")
+_CID_TO_GID = re.compile(r"/CIDToGIDMap\s*(/\w+|\d+\s+\d+\s+R)")
+_INDIRECT = re.compile(r"(\d+)\s+\d+\s+R")
+
+#: How much of the overlap between a font's own map and the CMap already in the
+#: file may disagree before the font is left alone. See `_repair_font_encoding`.
+_MAX_MAP_DISAGREEMENT = 0.5
+
+
+def _descendant_font(document, xref: int) -> str:
+    """The descendant `CIDFont` dictionary of a Type0 font, as text.
+
+    Not resolved to an xref, because it does not always have one. 105 of the
+    Identity-H fonts in this corpus -- every `CIDFont+F1` written by whatever tool
+    Nature Portfolio's PDFs come out of -- write the descendant inline inside the
+    array. Reaching for the first `N 0 R` in that array text finds
+    `/Ordering 9675 0 R`, whose object is the string `(Identity)`, and the font
+    then looks like it has no subtype at all and is skipped.
+    """
+    kind, value = document.xref_get_key(xref, "DescendantFonts")
+    if kind == "xref":
+        found = _INDIRECT.match((value or "").strip())
+        value = document.xref_object(int(found.group(1))) if found else ""
+    value = value or ""
+    if "<<" in value:
+        return value
+    found = _INDIRECT.search(value)
+    return document.xref_object(int(found.group(1))) or "" if found else ""
+
+
+def _repair_font_encoding(document, xref: int, rewritten=None):
+    """Fill the gaps in one font's ToUnicode CMap from the font's own `cmap`.
+
+    Returns the number of glyphs given a character, `0` when the font needed
+    nothing, and `None` when this is not a font the repair can speak for.
+
+    The whole thing rests on one assumption -- that a character code in the
+    content stream is a glyph id in the embedded font -- so each condition below
+    is there to make that true rather than merely likely:
+
+    * `/Encoding /Identity-H`, which is the encoding under which a code *is* a
+      CID. Under any other encoding the code indexes an encoding table and the
+      font's own map answers a different question.
+    * a descendant `/CIDFontType2` with `/CIDToGIDMap` absent or `/Identity`,
+      where CID and glyph id are equal by specification. A stream-valued map
+      means they are not.
+    * or a descendant `/CIDFontType0`, where the specification makes CID and glyph
+      id equal exactly when the embedded CFF is not CID-keyed -- and a CID-keyed
+      CFF is also one `_embedded_glyph_unicodes` cannot read, because its glyph
+      names are `cid00042` and it has no character map. All 516 of the
+      `CIDFontType0` fonts in this corpus fall out there, 10.1038/s41588-024-01702-0's
+      reporting summary among them; the branch exists because the specification
+      allows the other kind, not because a file here needs it.
+    * where the CMap already in the file and the font's own map both name a glyph,
+      they must mostly agree. This is the assumption being tested against the
+      document's own data rather than argued from the specification, and it is the
+      check that would catch a font the three rules above let through wrongly.
+
+    Measured over the 898 fonts in this corpus where both maps exist: 846 agree
+    outright and 52 disagree on 7% of their overlap at worst, every one of them a
+    glyph named two equivalent ways -- U+FB01 against `fi`, thin space against
+    narrow no-break space, hyphen against non-breaking hyphen. A font where the
+    code is not the glyph id would disagree on nearly all of it, which is why the
+    bar sits at half and not at zero.
+    """
+    def key(name):
+        kind, value = document.xref_get_key(xref, name)
+        return value if kind != "null" else None
+
+    if key("Subtype") != "/Type0" or key("Encoding") != "/Identity-H":
+        return None
+    descendant = _descendant_font(document, xref)
+    found = _DESCENDANT_SUBTYPE.search(descendant)
+    subtype = found.group(1) if found else ""
+    if subtype == "CIDFontType2":
+        mapping = _CID_TO_GID.search(descendant)
+        if mapping and mapping.group(1) != "/Identity":
+            return None
+    elif subtype != "CIDFontType0":
+        return None
+
+    glyphs = _embedded_glyph_unicodes(document, xref)
+    if not glyphs:
+        return None
+
+    stream_xref = None
+    to_unicode = document.xref_get_key(xref, "ToUnicode")
+    existing = b""
+    if to_unicode[0] == "xref":
+        stream_xref = int(to_unicode[1].split()[0])
+        # Two fonts may share one CMap object. Adding the second font's glyphs to
+        # it would put entries for glyphs of one font under the codes of another,
+        # so the first font wins and the second is left as it was.
+        if rewritten is not None and stream_xref in rewritten:
+            return None
+        try:
+            existing = document.xref_stream(stream_xref) or b""
+        except Exception:
+            return None
+        entries = _cmap_entries(existing)
+        if entries is None:
+            return None
+        overlap = [code for code in glyphs if code in entries]
+        disagreed = sum(1 for code in overlap if entries[code] != chr(glyphs[code]))
+        if overlap and disagreed > _MAX_MAP_DISAGREEMENT * len(overlap):
+            return None
+        glyphs = {g: c for g, c in glyphs.items() if g not in entries}
+    if not glyphs:
+        return 0
+
+    if existing and b"endcmap" in existing:
+        # Added to the publisher's own CMap rather than replacing it, so anything
+        # this reader did not model -- a `usecmap`, a wider codespace range --
+        # survives untouched.
+        head, _, tail = existing.rpartition(b"endcmap")
+        data = head + _bfchar_sections(glyphs).encode("latin-1") + b"endcmap" + tail
+    else:
+        data = (_CMAP_HEAD + _bfchar_sections(glyphs) + _CMAP_TAIL).encode("latin-1")
+
+    if stream_xref is None:
+        stream_xref = document.get_new_xref()
+        document.update_object(stream_xref, "<<>>")
+        document.update_stream(stream_xref, data, new=True)
+        document.xref_set_key(xref, "ToUnicode", "%d 0 R" % stream_xref)
+    else:
+        document.update_stream(stream_xref, data, new=True)
+    if rewritten is not None:
+        rewritten.add(stream_xref)
+    return len(glyphs)
+
+
+def _repair_glyph_encoding(document) -> dict:
+    """Give every embedded font a ToUnicode CMap covering the glyphs it draws.
+
+    Walked over the xref table rather than page by page: the 60-page supplement
+    of 10.1126/science.adf5357 reports 108 page-font pairs for 6 distinct fonts,
+    and a font must be rewritten once. The whole walk is 1,452 objects and costs
+    about 10 ms there, so it is unconditional -- deciding whether to bother would
+    take the same page pass the repair is meant to avoid.
+
+    The rewrite is in-memory and takes effect without saving: MuPDF reads a
+    font's ToUnicode when the page that uses it is first laid out, and no page has
+    been touched at this point.
+    """
+    repaired: Dict[str, int] = {}
+    rewritten: set = set()
+    for xref in range(1, document.xref_length()):
+        try:
+            if document.xref_get_key(xref, "Type")[1] != "/Font":
+                continue
+            added = _repair_font_encoding(document, xref, rewritten)
+        except Exception:
+            continue
+        if added:
+            name = (document.xref_get_key(xref, "BaseFont")[1] or "?").lstrip("/")
+            repaired[name] = repaired.get(name, 0) + added
+    return repaired
+
+
+def _unresolved_glyphs(spans):
+    """`(glyphs drawn, glyphs MuPDF could not name)` in one page's spans.
+
+    The check that makes the failure above impossible to report as a success, and
+    it is deliberately not a check on the *words*: a supplementary figure PDF
+    legitimately contains almost no English, so "this text has no function words
+    in it" flags 26 files in this corpus of which one is actually broken. This
+    asks the parser instead, and the parser knows -- every character of the
+    adf5357 methods came back from `get_texttrace` marked U+FFFD while
+    `get_text` was quietly printing the fallback codepoint.
+    """
+    total = failed = 0
+    for span in spans:
+        for char in span.get("chars") or ():
+            total += 1
+            if char[0] == _NO_UNICODE:
+                failed += 1
+    return total, failed
+
+
+def _page_spans(page) -> List[dict]:
+    """One `get_texttrace` pass, read by `_symbol_map` and `_unresolved_glyphs`.
+
+    `get_text("dict")` was here, and it answers only the first of those two
+    questions: it reports the character MuPDF settled on and not whether MuPDF
+    could find one. `get_texttrace` reports both, at slightly less cost than
+    `dict` -- measured over this corpus's two largest PDFs, 4.46s against 4.78s
+    and 1.62s against 1.94s -- so the glyph count is not a third pass over every
+    page but a second reader of the one that was already being made.
+
+    `[]` on failure rather than raising, as the `dict` call it replaces did. A
+    page whose trace fails costs its symbol map and its glyph count and keeps its
+    text; the caller records that it happened.
+    """
+    try:
+        return page.get_texttrace()
+    except Exception:
+        return []
+
+
+def _symbol_map(spans) -> Dict[int, str]:
+    """The private-use codepoints in these spans that came out of a symbol font.
+
+    Built per page and per span so that a PUA codepoint from an unrelated
+    subsetted font is never turned into a Greek letter.
     """
     found: Dict[int, str] = {}
-    try:
-        rendered = page.get_text("dict")
-    except Exception:
-        return found
-    for block in rendered.get("blocks", []):
-        for line in block.get("lines", []):
-            for span in line.get("spans", []):
-                if not _SYMBOL_FONT.search(span.get("font") or ""):
-                    continue
-                for char in span.get("text") or "":
-                    replacement = _SYMBOL_PUA.get(ord(char))
-                    if replacement is not None:
-                        found[ord(char)] = replacement
+    for span in spans:
+        if not _SYMBOL_FONT.search(span.get("font") or ""):
+            continue
+        for char in span.get("chars") or ():
+            replacement = _SYMBOL_PUA.get(char[0])
+            if replacement is not None:
+                found[char[0]] = replacement
     return found
 
 
@@ -215,13 +625,27 @@ def blocks_from_pdf(
     mapped: Counter = Counter()
     unmapped: Counter = Counter()
     hyphens: Counter = Counter()
+    drawn_glyphs = unnamed_glyphs = 0
     try:
         meta["pages"] = document.page_count
+        # Before any page is laid out, or MuPDF has already read the CMap this
+        # replaces.
+        repaired = _repair_glyph_encoding(document)
+        if repaired:
+            meta["glyph_encoding_repaired"] = repaired
         for page in document:
             texts: List[Tuple[str, bool, dict]] = []
             try:
                 raw_blocks = page.get_text("blocks")
-                symbols = _symbol_map(page)
+                spans = _page_spans(page)
+                if not spans and raw_blocks:
+                    meta.setdefault("errors", []).append(
+                        f"page {page.number + 1}: no glyph trace; symbol glyphs and "
+                        f"the unnamed-glyph count are missing for this page")
+                symbols = _symbol_map(spans)
+                page_glyphs, page_unnamed = _unresolved_glyphs(spans)
+                drawn_glyphs += page_glyphs
+                unnamed_glyphs += page_unnamed
                 width = max(page.rect.width, 1.0)
                 height = max(page.rect.height, 1.0)
             except Exception as e:  # a damaged page should not lose the whole file
@@ -263,6 +687,14 @@ def blocks_from_pdf(
         # U+F8FF is PyMuPDF's "no unicode mapping" fallback rather than an Adobe
         # Symbol position, so guessing a character for it would be a guess.
         meta["glyphs_unmapped"] = {f"U+{cp:04X}": n for cp, n in sorted(unmapped.items())}
+    if unnamed_glyphs:
+        # Recorded on every file that has any, not only on the ones the status
+        # rejects. Sub-threshold damage is real and is almost always a figure's
+        # tick labels -- `SUHC*-DVWURF\WH-0` for `preCG-astrocyte-0` on page 11
+        # of 10.1016/j.cell.2024.08.019's mmc8 -- and the module's standing rule
+        # for a glyph it cannot name is to count it rather than drop it quietly.
+        meta["glyphs_unnamed"] = unnamed_glyphs
+        meta["glyphs_drawn"] = drawn_glyphs
 
     furniture = _running_lines(per_page, limits)
     meta["running_lines_dropped"] = 0
@@ -310,6 +742,34 @@ def blocks_from_pdf(
     tracker.record(meta)
     body_chars = sum(len(b.text) for b in blocks)
     meta["chars"] = body_chars
+
+    # The rule that stops this class being reported as a success, stated at the
+    # point that enforces it. 10.1126/science.adf5357's Supplementary Materials
+    # -- 124,178 characters of `TheVe VWXdLeV ZeUe LQWeQded`, and the only copy
+    # of that paper's Materials and Methods -- was `ok` before it.
+    #
+    # Judged on glyphs the *document* declines to name, not on whether the text
+    # looks like English. A supplementary figure PDF is mostly gene symbols and
+    # axis labels, so "no function words in it" flags 26 files in this corpus of
+    # which one is broken, and it says nothing at all about a paper in Chinese.
+    # `get_texttrace` reports U+FFFD for a glyph MuPDF could not turn into a
+    # character, which is the same question asked of the file instead of the
+    # prose.
+    #
+    # The blocks go with the status. Their characters are MuPDF's fallback for a
+    # code it could not map, not characters the document contains, and letting
+    # them through is the whole bug: `blocks.jsonl` had 192 paragraphs of them
+    # and nothing anywhere said so. What was there is still counted, in
+    # `glyphs_unnamed` and in `garbled_sample`.
+    if drawn_glyphs and unnamed_glyphs / drawn_glyphs > limits.max_unnamed_glyph_fraction:
+        meta["reason"] = (
+            f"{unnamed_glyphs} of {drawn_glyphs} glyphs ({unnamed_glyphs / drawn_glyphs:.0%}) "
+            f"have no character behind them: the fonts carry no ToUnicode map and no "
+            f"character map of their own, so what the page draws cannot be read as text")
+        meta["garbled_sample"] = (blocks[0].text[:200] if blocks else "")
+        meta["chars"] = 0
+        return [], GARBLED, meta
+
     if body_chars < limits.min_pdf_text_chars:
         return blocks, SCANNED, meta
     return blocks, OK, meta

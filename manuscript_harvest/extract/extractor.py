@@ -62,6 +62,12 @@ UNSUPPORTED = "unsupported_format"
 TOO_LARGE = "too_large"
 MISSING = "missing"
 UNREADABLE = "unreadable"
+GARBLED = "garbled_text_encoding"
+"""A file that parses, draws correctly, and whose text cannot be read: its fonts
+never say what their glyphs mean, so what comes out is not the characters the
+document contains. `pdf._repair_glyph_encoding` carries the whole account. In
+neither `_PRODUCTIVE` nor `_BENIGN` for the same reason `parser_error` is in
+neither -- the text was there and this stage did not get it."""
 PARSER_ERROR = "parser_error"
 """A parser raised. Distinct from `unreadable`, which is a parser declining a
 file it recognised as broken: this is the stage itself failing, and it is in
@@ -259,6 +265,8 @@ class FileResult:
                     "sections", "sections_abandoned",
                     "low_value_blocks_withheld",
                     "glyphs_mapped", "glyphs_unmapped",
+                    "glyphs_unnamed", "glyphs_drawn",
+                    "glyph_encoding_repaired", "garbled_sample",
                     "hyphens_kept", "hyphens_joined",
                     "running_lines_dropped", "running_lines",
                     "tables_skipped", "tables_capped", "reopens_refused",

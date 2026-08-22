@@ -55,6 +55,100 @@ def make_paywall_pdf() -> bytes:
     return data
 
 
+def make_embedded_font_pdf(paragraphs) -> bytes:
+    """`make_pdf_pages` with the font embedded and a ToUnicode CMap written.
+
+    Separate from `make_pdf_pages` because that one uses a base-14 face, which a
+    PDF names rather than embeds: there is no font program to read and no
+    `/Type0` object at all. Anything testing what the extractor does with an
+    embedded font's own tables needs one of these.
+    """
+    builtin = fitz.Font("helv")
+    doc = fitz.open()
+    for texts in paragraphs:
+        page = doc.new_page()
+        page.insert_font(fontname="F0", fontbuffer=builtin.buffer)
+        top, bottom = 50.0, 790.0
+        height = (bottom - top) / max(1, len(texts))
+        for index, text in enumerate(texts):
+            box = fitz.Rect(45, top + index * height, 550, top + (index + 1) * height)
+            overflow = page.insert_textbox(box, text, fontname="F0", fontsize=9)
+            if overflow < 0:
+                raise ValueError(
+                    f"fixture text does not fit in its box ({len(text)} chars, "
+                    f"{overflow:.0f} short); use fewer blocks or less text")
+    data = doc.tobytes()
+    doc.close()
+    return data
+
+
+def make_unreadable_font_pdf(paragraphs, broken_cmap: bool = False) -> bytes:
+    """A PDF that draws correctly and whose text cannot be read.
+
+    The shape of 10.1126/science.adf5357's Supplementary Materials: an embedded
+    font under `/Encoding /Identity-H`, where a character code is a glyph id, and
+    no usable `/ToUnicode` CMap to turn those back into characters. Built by
+    embedding a font normally and then breaking the CMap PyMuPDF wrote, so the
+    failure is the real one rather than a hand-written stream. Both variants come
+    out with every glyph unresolved, which is what the Science file does.
+
+    `broken_cmap=False` deletes the CMap. The embedded font still carries its own
+    character map, so this is the case the repair can answer from the document
+    itself.
+
+    `broken_cmap=True` leaves a CMap that no reader can use. The repair must
+    decline -- a CMap it cannot parse is one it cannot safely add to -- and the
+    file has to be reported unreadable instead. The corpus case behind that
+    outcome is 10.1038/s41588-024-01702-0's reporting summary, whose reason is
+    different and worse: its fonts are CID-keyed CFF subsets with identity
+    ordering, no ToUnicode, no character map and glyph names of the form
+    `cid00042`, so nothing in the file says what its glyphs mean. That file is
+    pinned in `test_extract_corpus.py`; what this pins is the behaviour when the
+    repair has nothing to work with.
+
+    Note that the nonsense here is not the Science file's nonsense -- it is off by
+    one where that is off by 29 -- because the distance between a glyph id and a
+    codepoint belongs to one font's glyph order. No single shift of the output
+    string undoes both, which is why the repair reads the font.
+    """
+    #: A ToUnicode CMap with a `bfchar` section holding a source and no
+    #: destination. MuPDF makes no more of it than this package's reader does.
+    unusable = (b"/CIDInit /ProcSet findresource begin\nbegincmap\n"
+                b"1 begincodespacerange\n<0000><FFFF>\nendcodespacerange\n"
+                b"1 beginbfchar\n<0008>\nendbfchar\nendcmap\nend\n")
+    doc = fitz.open(stream=make_embedded_font_pdf(paragraphs), filetype="pdf")
+    for xref in range(1, doc.xref_length()):
+        if doc.xref_get_key(xref, "Subtype")[1] != "/Type0":
+            continue
+        if not broken_cmap:
+            doc.xref_set_key(xref, "ToUnicode", "null")
+            continue
+        kind, value = doc.xref_get_key(xref, "ToUnicode")
+        if kind == "xref":
+            doc.update_stream(int(value.split()[0]), unusable, new=True)
+    data = doc.tobytes()
+    doc.close()
+    return data
+
+
+def concat_pdfs(*documents: bytes) -> bytes:
+    """One PDF holding every page of each input, in order.
+
+    For the mixed case: a file where some pages are readable and some are not is
+    the ordinary shape of the damage, not the exception -- 10.1038/s41588-024-01702-0's
+    full text carries its unreadable reporting summary as the last few pages of an
+    otherwise clean article.
+    """
+    out = fitz.open()
+    for data in documents:
+        source = fitz.open(stream=data, filetype="pdf")
+        out.insert_pdf(source)
+        source.close()
+    joined = out.tobytes()
+    out.close()
+    return joined
+
+
 def make_pdf_pages(pages) -> bytes:
     """A PDF with exact control over each page's text.
 

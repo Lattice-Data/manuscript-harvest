@@ -12,6 +12,7 @@ import sys
 import types
 from unittest import mock
 
+import fitz
 import openpyxl
 import openpyxl.worksheet._read_only
 import pytest
@@ -33,12 +34,15 @@ from manuscript_harvest.extract.blocks import (
 from manuscript_harvest.extract.limits import Limits
 from tests.fakes import (
     LANDING_INTERSTITIAL,
+    concat_pdfs,
     SPRINGER_SUPPLEMENT,
     jats_article,
     make_dimensionless_xlsx,
     make_docx,
+    make_embedded_font_pdf,
     make_pdf_pages,
     make_scanned_pdf,
+    make_unreadable_font_pdf,
     make_strict_xlsx,
     make_zero_sheet_xlsx,
     make_xlsx,
@@ -1275,21 +1279,22 @@ def test_hyphenated_line_breaks_are_rejoined():
     assert "perturbation" in " ".join(b.text for b in blocks)
 
 
-class _FakePage:
-    """A PyMuPDF page as far as `_symbol_map` is concerned: spans with fonts.
+def _traced(spans):
+    """`get_texttrace` output as far as `_symbol_map` is concerned: fonts and the
+    characters drawn in them.
 
     A real fixture is not available -- PyMuPDF's own base-14 Symbol font ships a
     ToUnicode map, so a synthesized PDF round-trips `g` as `g` and never
     reproduces the private-use codepoint this guard exists for. The corpus test
     over 10.1126/sciimmunol.aba4163 covers the real shape.
+
+    A trace char is `(unicode, glyph id, origin, bbox)`; only the first is read
+    here, and the glyph id is filled with the codepoint because nothing in this
+    path looks at it.
     """
-
-    def __init__(self, spans):
-        self._spans = spans
-
-    def get_text(self, kind):
-        return {"blocks": [{"lines": [{"spans": [
-            {"font": font, "text": text} for font, text in self._spans]}]}]}
+    return [{"font": font, "chars": [(ord(c), ord(c), (0.0, 0.0), (0, 0, 0, 0))
+                                     for c in text]}
+            for font, text in spans]
 
 
 @pytest.mark.parametrize("raw,expected", [
@@ -1312,7 +1317,7 @@ def test_a_soft_hyphen_does_not_survive_inside_a_word(raw, expected):
 
 def test_a_symbol_font_glyph_becomes_the_greek_letter_it_stands_for():
     """`SymbolGreek` U+F067 is the gamma in `IFN-\u03b3`, 41 times in one article."""
-    symbols = pdf._symbol_map(_FakePage([("SymbolGreek", "\uf067\uf062")]))
+    symbols = pdf._symbol_map(_traced([("SymbolGreek", "\uf067\uf062")]))
     assert symbols == {0xF067: "\u03b3", 0xF062: "\u03b2"}
     assert pdf._clean_block("IFN-\uf067 and TGF-\uf062", symbols) == "IFN-\u03b3 and TGF-\u03b2"
 
@@ -1320,7 +1325,7 @@ def test_a_symbol_font_glyph_becomes_the_greek_letter_it_stands_for():
 def test_a_private_use_codepoint_from_an_ordinary_font_is_left_alone():
     """A subsetted Latin face reuses the private use area for its own glyphs.
     Turning one of those into a Greek letter would invent a character."""
-    assert pdf._symbol_map(_FakePage([("ABCDEF+MinionPro", "\uf067")])) == {}
+    assert pdf._symbol_map(_traced([("ABCDEF+MinionPro", "\uf067")])) == {}
     assert pdf._clean_block("x\uf067y", {}) == "x\uf067y"
 
 
@@ -1354,6 +1359,176 @@ def test_an_unmapped_private_use_glyph_is_counted_not_hidden():
     data = make_pdf_pages([["ordinary text with no symbol font at all here"]])
     _, _, meta = pdf.blocks_from_pdf(data, "f.pdf", L)
     assert "glyphs_unmapped" not in meta and "glyphs_mapped" not in meta
+
+
+# -- fonts that do not say what their glyphs mean ----------------------------
+
+#: What a garbled file was hiding. Long enough to clear `min_pdf_text_chars`, so
+#: the status under test is the encoding rule rather than the scanned-PDF one.
+_METHODS = ("These studies were intended to be the first explorations of cellular "
+            "diversity in the human brain, and nuclei were isolated from frozen "
+            "tissue before being sequenced on a NovaSeq 6000 instrument at the "
+            "core facility on the same day by the same operator.")
+
+
+def test_a_font_that_never_says_what_its_glyphs_mean_is_read_from_the_font_itself():
+    """10.1126/science.adf5357's Supplementary Materials -- that paper's only copy
+    of its Materials and Methods -- extracted 124,178 characters of
+    `TheVe VWXdLeV ZeUe LQWeQded` and was reported `ok`.
+
+    The recovery has to come from the embedded font's own character map. The
+    apparent +29 between a glyph id and a codepoint is a property of one font's
+    glyph order: through this fixture's font the same text comes out off by one
+    instead, so a shift fitted to the Science file would turn this into different
+    nonsense rather than into English.
+    """
+    data = make_unreadable_font_pdf([[_METHODS]])
+    blocks, status, meta = pdf.blocks_from_pdf(data, "sm.pdf", L)
+    assert status == pdf.OK
+    assert " ".join(b.text for b in blocks).startswith(
+        "These studies were intended to be the first explorations")
+    assert sum(meta["glyph_encoding_repaired"].values()) > 0
+    assert "glyphs_unnamed" not in meta
+
+
+def test_the_repair_leaves_a_healthy_pdf_alone():
+    """It runs on every PDF, so "changes nothing when nothing is wrong" is the
+    load-bearing half. Measured over the 972 PDFs in this corpus: 183 have a font
+    with a gap in its CMap, and exactly one of them -- the Science supplement --
+    comes out with different text. The other 182 gaps are for glyphs the document
+    never draws."""
+    data = make_pdf_pages([[_METHODS]])
+    blocks, status, meta = pdf.blocks_from_pdf(data, "f.pdf", L)
+    assert status == pdf.OK
+    assert "glyph_encoding_repaired" not in meta
+    assert "glyphs_unnamed" not in meta
+    assert " ".join(b.text for b in blocks).startswith("These studies were intended")
+
+
+def test_a_file_whose_glyphs_cannot_be_named_is_not_ok():
+    """The case where recovery would be a guess. Here the ToUnicode CMap is one
+    no reader can use, so the repair has to decline -- a CMap it cannot parse is
+    one it cannot safely add to -- and what is left is unreadable.
+
+    Real shape: 10.1038/s41588-024-01702-0's reporting summary, 6,869 of 6,869
+    glyphs with nothing behind them, whose fonts are CID-keyed CFF subsets with
+    identity ordering and glyph names of the form `cid00042`. Detection plus an
+    honest status is the whole answer there.
+
+    The blocks go with the status. Their characters are the parser's fallback for
+    a code it could not map, and letting them through as prose is the bug.
+    """
+    data = make_unreadable_font_pdf([[_METHODS]], broken_cmap=True)
+    blocks, status, meta = pdf.blocks_from_pdf(data, "sm.pdf", L)
+    assert status == pdf.GARBLED
+    assert blocks == [] and meta["chars"] == 0
+    assert meta["glyphs_unnamed"] == meta["glyphs_drawn"] > 0
+    assert "no character behind them" in meta["reason"]
+    assert meta["garbled_sample"]
+
+
+def test_the_rule_asks_the_document_not_the_prose():
+    """A supplementary figure PDF is legitimately almost free of function words,
+    so judging on "does this look like English" flags 26 files in this corpus of
+    which one is broken -- and says nothing at all about a paper written in
+    another language. Not one word here is a function word."""
+    symbols = ("CD4 CD8A FOXP3 TP53 MYC PTPRC ITGAM CXCR4 CCR7 IL2RA GZMB PRF1 "
+               "NKG7 KLRD1 LYZ CD14 FCGR3A MS4A1 CD79A NCAM1 SELL CCR6 RORC "
+               "TBX21 GATA3 STAT3 IRF4 BATF3 XCR1 CLEC9A SIRPA THBD CD1C ")
+    data = make_pdf_pages([[symbols * 2]])
+    _, status, meta = pdf.blocks_from_pdf(data, "figures.pdf", L)
+    assert status == pdf.OK
+    assert "glyphs_unnamed" not in meta
+
+
+def test_glyphs_with_no_character_are_counted_below_the_threshold_too():
+    r"""Sub-threshold damage is real and must not vanish. Page 11 of
+    10.1016/j.cell.2024.08.019's mmc8 draws an axis label as `SUHC*-DVWURF\WH-0`
+    where the figure reads `preCG-astrocyte-0`, and that is 18% of the file's
+    glyphs while its captions are fine and worth reading. The module's standing
+    rule for a glyph it cannot name is to count it, not to drop it quietly."""
+    mixed = concat_pdfs(
+        make_pdf_pages([[_METHODS] * 3 for _ in range(6)]),
+        make_unreadable_font_pdf([[_METHODS]], broken_cmap=True),
+    )
+    _, status, meta = pdf.blocks_from_pdf(mixed, "mixed.pdf", L)
+    fraction = meta["glyphs_unnamed"] / meta["glyphs_drawn"]
+    assert 0 < fraction <= L.max_unnamed_glyph_fraction
+    assert status == pdf.OK
+
+
+def test_a_cmap_this_reader_cannot_parse_stops_the_repair():
+    """`None` and "maps nothing" have to be different answers. Only codes the
+    existing CMap leaves out are added, so a CMap read as empty when it is not
+    would let the repair write over characters the document already resolved."""
+    assert pdf._cmap_entries(
+        b"3 beginbfchar\n<0008><0041>\n<0009><0042>\n<000A><0043>\nendbfchar\n"
+        b"2 beginbfrange\n<0020><0022><0061>\n<0030><0031>[<0075><0076>]\n"
+        b"endbfrange\n") == {8: "A", 9: "B", 10: "C", 0x20: "a", 0x21: "b",
+                             0x22: "c", 0x30: "u", 0x31: "v"}
+    # a bfchar source with no destination, a descending range, and an array whose
+    # length does not match the range it fills
+    assert pdf._cmap_entries(b"1 beginbfchar\n<0008>\nendbfchar\n") is None
+    assert pdf._cmap_entries(b"1 beginbfrange\n<0041><0040><0061>\nendbfrange\n") is None
+    assert pdf._cmap_entries(b"1 beginbfrange\n<0041><0043>[<0061>]\nendbfrange\n") is None
+
+
+def test_the_repair_never_overwrites_a_mapping_the_publisher_supplied():
+    """The publisher's own CMap is the better authority where it speaks: it
+    decomposes the `fi` ligature that the font's map calls U+FB01, and uses a
+    non-breaking hyphen where the font says U+002D. 52 of the 898 fonts in this
+    corpus that carry both maps disagree that way. Every one of those characters
+    must survive the merge untouched."""
+    data = make_embedded_font_pdf([[_METHODS]])
+    document = fitz.open(stream=data, filetype="pdf")
+    try:
+        fonts = [x for x in range(1, document.xref_length())
+                 if document.xref_get_key(x, "Subtype")[1] == "/Type0"]
+        assert fonts, "fixture no longer embeds a Type0 font"
+        for xref in fonts:
+            before = pdf._cmap_entries(document.xref_stream(
+                int(document.xref_get_key(xref, "ToUnicode")[1].split()[0])))
+            pdf._repair_font_encoding(document, xref)
+            after = pdf._cmap_entries(document.xref_stream(
+                int(document.xref_get_key(xref, "ToUnicode")[1].split()[0])))
+            assert before and after
+            assert all(after[code] == text for code, text in before.items())
+    finally:
+        document.close()
+
+
+def test_a_font_whose_own_map_contradicts_the_file_is_left_alone():
+    """The check that would catch a font where a character code is not a glyph id
+    after all: where the CMap in the file and the font's own map both name a
+    glyph, they have to mostly agree. Measured across this corpus, real
+    disagreement never exceeds 7% of an overlap and is always one glyph named two
+    equivalent ways; a font where the assumption fails would disagree on nearly
+    all of it."""
+    data = make_embedded_font_pdf([[_METHODS]])
+    document = fitz.open(stream=data, filetype="pdf")
+    try:
+        xref = next(x for x in range(1, document.xref_length())
+                    if document.xref_get_key(x, "Subtype")[1] == "/Type0")
+        stream = int(document.xref_get_key(xref, "ToUnicode")[1].split()[0])
+        glyphs = pdf._embedded_glyph_unicodes(document, xref)
+        assert glyphs, "fixture no longer embeds a readable font"
+        # every glyph the font knows, mapped one codepoint off: the shape of a
+        # font whose CIDs are not its glyph ids
+        shifted = "".join("<%04X><%04X>\n" % (g, c + 1) for g, c in sorted(glyphs.items()))
+        document.update_stream(stream, (
+            "begincmap\n1 begincodespacerange\n<0000><FFFF>\nendcodespacerange\n"
+            "%d beginbfchar\n%sendbfchar\nendcmap\nend\n"
+            % (len(glyphs), shifted)).encode("latin-1"), new=True)
+        assert pdf._repair_font_encoding(document, xref) is None
+    finally:
+        document.close()
+
+
+def test_a_scanned_pdf_is_still_scanned_and_not_garbled():
+    """A page with no glyphs on it has a zero denominator, not a bad ratio."""
+    _, status, meta = pdf.blocks_from_pdf(make_scanned_pdf(2), "scan.pdf", L)
+    assert status == pdf.SCANNED
+    assert "glyphs_unnamed" not in meta
 
 
 def test_running_headers_are_dropped_and_named():

@@ -449,6 +449,7 @@ of the stage as the blocks are: a thin extraction has to be legible.
 | `too_large` | over `max_file_mb`; recorded, not read |
 | `missing` | in the manifest but not on disk |
 | `unreadable` | corrupt, or a parser named its own failure |
+| `garbled_text_encoding` | draws correctly and cannot be read: its fonts never say what their glyphs mean |
 | `parser_error` | a parser raised; the file is named and the run continues |
 
 The article is `complete` when the main text is usable and every file that should
@@ -474,15 +475,62 @@ for any page-scraping route, so it is a caveat, not a defect. Before these exist
 the extractor never read the fetch stage's own verdict, so an article whose manifest
 said `expected_but_missing` extracted as `complete` with an empty supplement list.
 
+### When a PDF's fonts do not say what their glyphs mean
+
+`garbled_text_encoding` is the one status here that is not about missing text. The
+file that earned it, 10.1126/science.adf5357's Supplementary Materials, holds that
+paper's only copy of its Materials and Methods, renders perfectly in any viewer, and
+extracted as this:
+
+    TheVe VWXdLeV ZeUe LQWeQded WR be Whe fLUVW e[SORUaWLRQV Rf ceOOXOaU...
+
+124,178 characters of it, reported `ok`. Its text is drawn with subsetted fonts
+under `/Encoding /Identity-H`, where a character code in the content stream is a
+*glyph id* rather than a character, and the `/ToUnicode` CMap that would turn those
+back into characters covers glyph 8 to glyph 75 and stops. MuPDF's fallback for a
+code it cannot map is to emit the code, and in this font's glyph order a codepoint
+sits 29 above its glyph id, so `i` (glyph 76) surfaces as `L`.
+
+Two things follow, and the order matters.
+
+**It is repaired from the font, not from the string.** The embedded font program
+carries its own character map — the table a viewer uses to draw the page — and it
+names every glyph the CMap left out. `pdf._repair_glyph_encoding` reads it and fills
+the gaps before any page is laid out. Shifting the output string by 29 instead would
+be fitted to one font's glyph order and would also be unable to tell a real `T` from
+a `q`: both reach the text as `T`, and only the glyph id separates them. The repair
+adds entries for codes the publisher's CMap leaves out and none that it covers, and
+declines outright on any font where the two maps disagree — the evidence that a code
+really is a glyph id there. Measured over the 972 PDFs in this corpus: 183 have a
+font with a gap in its CMap, and exactly one of them comes out with different text —
+the Science supplement. The other 182 gaps are for glyphs their documents never draw.
+
+**Where it cannot be repaired, it is reported.** 10.1038/s41588-024-01702-0's
+reporting summary has 6,869 glyphs and no character behind any of them: CID-keyed
+CFF subsets, identity ordering, no ToUnicode, no character map, glyph names of the
+form `cid00042`. Nothing in that file says what its glyphs mean, so reading it would
+be a guess. It gets the status, its blocks are dropped rather than written out as
+prose, and the article goes `partial`.
+
+The rule asks the *document*, through the count of glyphs MuPDF could not name, and
+not the prose. "This text has no English function words in it" flags 26 files in
+this corpus of which one is broken — a supplementary figure PDF is mostly gene
+symbols — and would say nothing at all about a paper written in another language.
+Damage below `max_unnamed_glyph_fraction` is counted in `glyphs_unnamed` rather than
+dropped, which is the same rule `glyphs_unmapped` already follows: the worst of it
+is a figure's axis labels in a file whose captions are fine.
+
 ### Failures this stage is built to avoid
 
 Each of these looked exactly like "there was nothing there" until something
 checked: a strict-conformance workbook openpyxl reads as having zero sheets, an
 unsized worksheet, a caption nested inside `<media>`, a heading glued to its
 paragraph, a 23 MB "paragraph" that was really a TSV, files saved with no extension,
-and a bot-check page holding 129 characters of user-agent string. Each is pinned by
-a test and commented at the code that enforces it; the corpus files that taught them
-are named in `tests/test_extract_corpus.py`.
+and a bot-check page holding 129 characters of user-agent string. One did not look
+like that at all: a supplementary PDF that produced 124,178 characters of fluent
+nonsense and called it a clean run. Each is pinned by a test and commented at the
+code that enforces it; the corpus files that taught them are named in
+`tests/test_extract_corpus.py`.
 
 ### The human review layer
 
