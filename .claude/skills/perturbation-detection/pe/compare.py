@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""v0.0.4 -> v0.0.5 comparison for prompt.md's validation loop step 1.
+"""Version-to-version comparison for prompt.md's validation loop step 1.
 
-    python -m pe.compare [--baseline baseline_v0.0.4] [--out output/v004_vs_v005.txt]
+    python -m pe.compare --baseline <dir> [--out output/<a>_vs_<b>.txt]
 
 The prompt is explicit that this diff is NOT expected to be empty, and that it
 should be *classified* rather than merely counted:
@@ -125,7 +125,8 @@ def _quote_line(entry) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--work", default=str(ROOT / "work"))
-    parser.add_argument("--baseline", default=str(ROOT / "baseline_v0.0.4"))
+    parser.add_argument("--baseline", required=True,
+                        help="directory with validated/<doi>.json from the earlier run")
     parser.add_argument("--out", default=str(ROOT / "output" / "v004_vs_v005.txt"))
     args = parser.parse_args()
 
@@ -150,15 +151,20 @@ def main() -> int:
 
     lines: list[str] = []
     versions = {str((new.get("validation") or {}).get("prompt_version")) for _, _, new, _ in rows}
-    lines.append(f"v0.0.4 baseline -> v{'/'.join(sorted(versions))} comparison "
-                 f"over {len(rows)} paper(s)")
+    base_versions = {str((old.get("validation") or {}).get("prompt_version"))
+                     for _, old, _, _ in rows} or {"?"}
+    lines.append(f"baseline v{'/'.join(sorted(base_versions))} -> "
+                 f"v{'/'.join(sorted(versions))} comparison over {len(rows)} paper(s)")
     lines.append("")
     lines.append("Both columns are the assay-paired `perturbation_present`, so this is a")
-    lines.append("like-for-like diff of the primary curation field. Input scope differs:")
-    lines.append("the baseline saw main text only, this run also sees deduplicated")
-    lines.append("supplementary sources (prompt.md v0.0.5's default).")
+    lines.append("like-for-like diff of the primary curation field. Check whether the two")
+    lines.append("runs saw the same input scope: a baseline built before supplementary")
+    lines.append("sources were included is not comparable on evidence alone, and the")
+    lines.append("SUPP-EVIDENCE class below flags papers where that mattered.")
     lines.append("")
-    header = "  v0.0.4 \\ v0.0.5   " + "".join(f"{c:>10}" for c in ORDER) + "     total"
+    b_lbl = "/".join(sorted(base_versions))
+    n_lbl = "/".join(sorted(versions))
+    header = f"  {b_lbl} \\ {n_lbl}   " + "".join(f"{c:>10}" for c in ORDER) + "     total"
     lines.append(header)
     lines.append("  " + "-" * (len(header) - 2))
     for old_call in ORDER:

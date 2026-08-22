@@ -24,7 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pe.paper_text import (  # noqa: E402
     EXCLUDE_SECTIONS, INCLUDE_KINDS, assemble_paper_text, build_sources,
-    read_blocks_jsonl,
+    prompt_version, read_blocks_jsonl,
 )
 
 try:
@@ -148,6 +148,10 @@ def main() -> int:
     budget = args.budget or config.get("budget_chars") or DEFAULT_BUDGET_CHARS
 
     template = build_template(Path(args.prompt))
+    # Stamped into the manifest so pe.validate can report the version the
+    # EXTRACTION ran under. Reading prompt.md at validate time instead means any
+    # re-validation after a version bump silently relabels old results as new.
+    built_version = prompt_version(Path(args.prompt))
     corpus = Path(args.corpus or config.get("corpus_dir")
                   or "./corpus")
     # Resolved to absolute: the manifest records raw_file/prompt_file as strings,
@@ -194,6 +198,7 @@ def main() -> int:
             "doi": doi,
             "paper_id": doi,
             "fetch_status": "ok",
+            "prompt_version": built_version,
             "prompt_file": str(prompt_file),
             # Recorded so subagents know whether one Read call covers the file
             # or whether they must page through it.
