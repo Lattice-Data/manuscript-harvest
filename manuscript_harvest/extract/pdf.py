@@ -20,6 +20,13 @@ Several clean-ups happen here and they change the characters:
   carried U+F067 where the paper says gamma. Those are translated, but only for
   spans whose font is a symbol face, and whatever is left over is counted in
   `glyphs_unmapped` rather than passed on quietly.
+- **Fonts that do not say what their glyphs mean.** Under `/Encoding /Identity-H`
+  a character code is a glyph id, and a PDF whose `/ToUnicode` CMap does not cover
+  every glyph it draws extracts as a cipher: 124,178 characters of
+  `TheVe VWXdLeV ZeUe LQWeQded` out of 10.1126/science.adf5357's Methods. The gaps
+  are filled from the embedded font's own character map before any page is read.
+  Where that cannot be done the file is not `ok` -- see `_repair_glyph_encoding`,
+  which is the long version of both halves.
 - **Running heads.** A journal footer repeated on every page would otherwise
   appear as thirty near-identical paragraphs. A short line seen *in a page
   margin* on at least `limits.running_header_min_pages` pages is dropped, and
@@ -474,26 +481,6 @@ def _repair_glyph_encoding(document) -> dict:
     return repaired
 
 
-def _unresolved_glyphs(spans):
-    """`(glyphs drawn, glyphs MuPDF could not name)` in one page's spans.
-
-    The check that makes the failure above impossible to report as a success, and
-    it is deliberately not a check on the *words*: a supplementary figure PDF
-    legitimately contains almost no English, so "this text has no function words
-    in it" flags 26 files in this corpus of which one is actually broken. This
-    asks the parser instead, and the parser knows -- every character of the
-    adf5357 methods came back from `get_texttrace` marked U+FFFD while
-    `get_text` was quietly printing the fallback codepoint.
-    """
-    total = failed = 0
-    for span in spans:
-        for char in span.get("chars") or ():
-            total += 1
-            if char[0] == _NO_UNICODE:
-                failed += 1
-    return total, failed
-
-
 def _page_spans(page) -> List[dict]:
     """One `get_texttrace` pass, read by `_symbol_map` and `_unresolved_glyphs`.
 
@@ -529,6 +516,27 @@ def _symbol_map(spans) -> Dict[int, str]:
             if replacement is not None:
                 found[char[0]] = replacement
     return found
+
+
+def _unresolved_glyphs(spans):
+    """`(glyphs drawn, glyphs MuPDF could not name)` in one page's spans.
+
+    The measurement `blocks_from_pdf` refuses a file on, and deliberately not a
+    check on the *words*: a supplementary figure PDF legitimately contains almost
+    no English, so "this text has no function words in it" flags 26 files in this
+    corpus of which one is actually broken, and it says nothing at all about a
+    paper written in another language. This asks the parser instead, and the
+    parser knows -- every character of 10.1126/science.adf5357's methods came back
+    from `get_texttrace` marked U+FFFD while `get_text` was printing the fallback
+    codepoint with nothing to mark it.
+    """
+    total = failed = 0
+    for span in spans:
+        for char in span.get("chars") or ():
+            total += 1
+            if char[0] == _NO_UNICODE:
+                failed += 1
+    return total, failed
 
 
 def _rejoin_hyphen(match: "re.Match", tally: Optional[Counter] = None) -> str:
