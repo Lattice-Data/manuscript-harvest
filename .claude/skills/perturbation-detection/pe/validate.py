@@ -506,8 +506,11 @@ def main() -> int:
         result.setdefault("paper_id", doi)
         paper_text = paper_text_from_prompt(prompt_file)
         sources_text = split_assembled(paper_text)
+        # The manifest records the version the prompts were built from; prefer it
+        # over whatever prompt.md says right now.
+        entry_version = entry.get("prompt_version") or version
         result = validate_result(
-            result, sources_text, threshold, version,
+            result, sources_text, threshold, entry_version,
             truncated_by_harness=bool(entry.get("truncation", {}).get("truncated")))
 
         payload = json.dumps(result, indent=2)
