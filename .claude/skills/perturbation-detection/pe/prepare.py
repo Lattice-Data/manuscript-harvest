@@ -150,7 +150,11 @@ def main() -> int:
     template = build_template(Path(args.prompt))
     corpus = Path(args.corpus or config.get("corpus_dir")
                   or "./corpus")
-    work = Path(args.work)
+    # Resolved to absolute: the manifest records raw_file/prompt_file as strings,
+    # and a relative --work made those readable only from the cwd that created
+    # them. Running pe.validate/pe.pending from anywhere else then reported every
+    # paper as missing.
+    work = Path(args.work).resolve()
     (work / "prompts").mkdir(parents=True, exist_ok=True)
     (work / "raw").mkdir(parents=True, exist_ok=True)
 

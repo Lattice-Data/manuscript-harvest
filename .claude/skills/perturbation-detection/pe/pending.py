@@ -26,6 +26,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from pe.paper_text import entry_paths  # noqa: E402
 from pe.validate import parse_raw  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -42,9 +43,16 @@ REQUIRED = ("schema_version", "sources_seen", "processing_status",
             "consistency_flags", "perturbations")
 
 
-def status_of(entry: dict) -> tuple[str, str]:
-    """Return (state, detail) for one manifest entry."""
-    raw = Path(entry["raw_file"])
+def status_of(entry: dict, work: Path | None = None) -> tuple[str, str]:
+    """Return (state, detail) for one manifest entry.
+
+    `work` is optional only for backward compatibility with callers that predate
+    the portable-path fix; pass it whenever available.
+    """
+    if work is not None:
+        _, raw = entry_paths(entry, work)
+    else:
+        raw = Path(entry["raw_file"])
     if not raw.exists():
         return "missing", "no raw file"
     try:
@@ -80,7 +88,7 @@ def main() -> int:
         if "error" in entry:
             report.append(("no-input", doi, entry["error"]))
             continue
-        state, detail = ("missing", "forced") if args.force else status_of(entry)
+        state, detail = ("missing", "forced") if args.force else status_of(entry, work)
         if state == "done":
             done.append(doi)
         else:
