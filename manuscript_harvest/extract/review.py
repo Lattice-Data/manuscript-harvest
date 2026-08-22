@@ -74,9 +74,17 @@ STATES = frozenset({"unreviewed", "queued", "partially_reviewed", "reviewed", "s
 #: `data_file_skipped`: 76 of the 101 supplements in this corpus are figure
 #: images, so queuing them would be three quarters of the work, and nobody can
 #: judge a `.jpg` from its name.
+#: Written as strings rather than as `extractor.*`: `extractor` imports this
+#: module, so the constants cannot come the other way.
+#:
+#: `garbled_text_encoding` belongs here more squarely than anything else in the
+#: set. The file it names renders perfectly -- 10.1038/s41588-024-01702-0's
+#: reporting summary is legible to anyone who opens it and unreadable only to a
+#: parser -- so a person can answer "does this carry article evidence?" in the
+#: time it takes to look.
 QUEUEABLE_FAILURES = frozenset({
     "no_text", "no_text_scanned_pdf", "unsupported_format", "too_large",
-    "unreadable", "missing", "parser_error",
+    "unreadable", "missing", "parser_error", "garbled_text_encoding",
 })
 
 

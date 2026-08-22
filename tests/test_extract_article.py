@@ -11,7 +11,7 @@ import json
 
 import pytest
 
-from manuscript_harvest.extract import extractor
+from manuscript_harvest.extract import extractor, review
 from manuscript_harvest.extract.blocks import BLOCKS_NAME, TABLE, read_blocks
 from manuscript_harvest.extract.cli import DEFAULT_EXTRACT_CONFIG, load_config, main
 from manuscript_harvest.extract.extractor import EXTRACT_DIR, extract_article, sniff_extension
@@ -268,6 +268,9 @@ def test_a_garbled_supplement_costs_the_article_its_complete(tmp_path):
     # and not one character of it reaches the blocks a model would read
     blocks = read_blocks(directory / EXTRACT_DIR / BLOCKS_NAME)
     assert not any(b["source_file"] == entry["path"] for b in blocks)
+    # A person can answer this one by opening the file: it renders perfectly and
+    # is unreadable only to a parser.
+    assert entry["status"] in review.QUEUEABLE_FAILURES
 
 
 def test_a_garbled_main_pdf_is_not_a_usable_main_text(tmp_path):
