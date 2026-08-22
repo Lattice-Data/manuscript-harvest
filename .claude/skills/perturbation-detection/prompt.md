@@ -1,8 +1,9 @@
 # Perturbation Detection for Paper Curation — Extraction Prompt + Schema
 
-Version: 0.0.7
+Version: 0.0.8
 
 ## Changelog
+- **v0.0.8: Assay taxonomy re-grounded in the CELLxGENE assay vocabulary, and spatial assays now qualify. Curator scope ruling.** The qualifying list was previously hand-written and named ~20 platforms; it is now organised by platform family and covers the assay values actually present in the CELLxGENE corpus as supplied by the curator, adding ~25 that were missing entirely (BD Rhapsody, Parse Evercode, ScaleBio, SPLiT-seq, PIP-seq, GEXSCOPE, HIVE CLX, microwell-seq, TruDrop, Asteria, Quartz-seq, SCRB-seq, SORT-seq, STRT-seq, Fluidigm C1/SMARTer, DroNc-seq, 10x Flex variants) and, importantly, the single-cell epigenome assays the old list omitted altogether: snmC-seq/snmC-seq2/3, mCT-seq and snm3C-seq. The list is explicitly labelled indicative rather than a closed allowlist, since new platforms appear faster than the prompt is revised.**Spatial assays now qualify unconditionally.** Visium, Slide-seq/Slide-seqV2/Slide-tags/Slide-TCR-seq, Xenium, MERFISH, CosMx, seqFISH and STARmap all qualify, unconditionally — the previous "only if single-cell segmented / deconvolved" proviso is removed, and the explicit exclusion of spot-based spatial is deleted. Single-cell TCR/BCR (V(D)J) immune profiling and the protein-multimodal assays (CITE-seq, REAP-seq, ASAP-seq, TEA-seq) are named explicitly so they are not inferred. Rationale is deliberately recall-biased: if a perturbed sample was examined by any of these, curation wants the paper. This reverses a v0.0.3-era exclusion, so it is a widening, not a fix — expect papers to move `no`/`unclear` -> `yes` and none to move the other way. Measured on the 342 papers scored under v0.0.5-v0.0.7: **4 papers have a perturbation whose own readout assay is newly-qualifying and should flip** (`immuni.2022.09.002` Slide-TCR-seq; `isci.2022.104097` Slide-seqV2; `s41588-023-01435-6` Slide-seq V2 with a CRISPR Tbx6 knockout; `s41698-023-00488-4` Visium with neoadjuvant chemotherapy). That 4 is a FLOOR, not an estimate: those existing extractions were produced while these assays were disqualified, so the model had no reason to trace a pairing to them, and a re-run may find more. All three places that stated the old rule — the qualifying list, the NOT list, and the toggle table — are changed together; leaving one behind is what caused the v0.0.7 precedence bug. **What still does NOT qualify:** bulk RNA/ATAC/ChIP, microarray, qPCR, Western, ELISA, IHC/IF, flow cytometry, CyTOF, and bulk immune-repertoire (TCR/BCR) sequencing — only the SINGLE-CELL form of V(D)J profiling counts. No schema change; `schema_version` stays `0.0.5`.
 - **v0.0.7: Resolve the precedence conflict v0.0.6 created between the temperature rule and the protocol rule.** v0.0.6 declared "varying cold-storage duration or preservation temperature" a technical variable, but left standing an older, earlier-listed rule reading "Heat shock, cold shock, hypoxia chamber applied as a condition = perturbation". Tissue held at 4 °C for 12/24/72 h satisfies both, and nothing said which wins. Observed in practice on `10.1186_s13059-019-1906-x`: two runs of the same paper under the same prompt version disagreed — one returned `no` (protocol rule) and one returned `yes` at confidence 0.5 (temperature rule), the second explicitly citing "the temperature-applied-as-a-condition rule" and the recall bias. The model was not ignoring v0.0.6; it was being asked to arbitrate a contradiction, and did so inconsistently. v0.0.7 states the precedence in both places and gives the disambiguating question: **what is the temperature FOR** — eliciting a biological response, or keeping the sample viable until it can be processed. Cold shock applied to induce a stress response is still a perturbation; a 4 °C hold before dissociation is not. **No schema change and no determination-logic change**; `schema_version` stays `0.0.5`.
 - **v0.0.6: A sample-handling or culture PROTOCOL used as the studied variable is a technical variable, not a biological perturbation.** Curator ruling after reviewing the mechanism groups in the first 342 classified papers. v0.0.5's "NOT perturbations by themselves" list already named cryopreservation reagents and dissociation enzymes, but it qualified the whole list with "unless the paper makes the item the manipulated variable" — and in a pipeline-benchmarking paper the protocol *is* the manipulated variable, so the escape clause promoted exactly the cases the list meant to exclude. v0.0.6 closes that loop: when a paper benchmarks its own assay pipeline (comparing commercial media formulations against each other, varying preservation temperature or cold-storage duration, comparing dissociation enzyme cocktails, testing freeze-thaw, comparing passage number), the biological system is the instrument rather than the subject, and the manipulation is not reported in `perturbations`. **The line is the formulation *as such* versus a named bioactive component *within* it** — adding, withholding or dose-varying a specific factor stays a perturbation even when delivered via the medium. **No schema change and no change to the determination logic**: Stage A, Stage B, all seven consistency checks and every field are untouched, so v0.0.5 outputs remain valid and `pe.validate`'s logic is unaffected. The effect is purely on what enters the `perturbations` array. Measured on the 342 papers classified under v0.0.5: **10 perturbation instances are excluded and exactly 2 papers move `yes` -> `no`** (`10.1165_rcmb.2023-0356ma`, a culture-media comparison; `10.1186_s13059-019-1906-x`, cold-storage duration and dissociation enzymes). Re-run only those papers, or the corpus, to pick it up; `pe.compare` will show the delta.
 - **v0.0.5: Generalized from a single paper to a corpus, and closed the remaining logic gaps in v0.0.4.** Three groups of changes. (1) *Corpus operation.* The instruction prompt still runs on exactly one paper per model call, but the document now specifies the batch layer around it: an input manifest, a multi-source `{{PAPER_TEXT}}` assembly with explicit source markers, a truncation policy, deterministic call settings, source-scoped quote verification with harness-side recomputation of the determination after unverified quotes are pruned, idempotency and retry rules, the output JSONL record, and a corpus-level triage table. (2) *Degraded input.* Fetch and extraction failures are no longer able to masquerade as negative determinations. `processing_status` and `text_completeness` are new required fields, and a paper whose text is incomplete cannot resolve to `perturbation_present = "no"`; it is capped at `"unclear"` and routed to review. Positive evidence is not capped, because missing text can conceal evidence but cannot manufacture it. (3) *Gap closure.* `has_single_cell_assay = "unclear"` combined with `single_cell_paired = "yes"` is now a consistency check rather than a silent cap; the empty `perturbations` array has an explicit terminal rule instead of resolving by vacuous truth; `paper_confidence` is redefined so it is meaningful for `"no"` and `"unclear"` determinations, not only `"yes"`; and the determination procedure is restated as two stages whose totality can be checked by inspection.
@@ -79,25 +80,58 @@ Set `text_completeness`: **"full"**, **"truncated"** (text ends abruptly or is e
 If `processing_status` = "failed", return immediately with `perturbation_present` = "unclear", `paper_confidence` = 0.0, empty `perturbations` and `samples`, and a description of what you received in `ambiguities`. Do NOT report "no": absence of retrievable text is not evidence of absence of perturbation.
 
 ## Step 1: Identify the single-cell/nucleus sequencing assay(s) used
-Qualifying assays (non-exhaustive; use judgment for close variants):
-- scRNA-seq / single-cell RNA sequencing (10x Genomics Chromium, Smart-seq2/3, Drop-seq, inDrop, CEL-seq/CEL-seq2, MARS-seq, sci-RNA-seq, Seq-Well)
-- snRNA-seq / single-nucleus RNA sequencing
-- scATAC-seq / single-cell ATAC-seq; snATAC-seq / single-nucleus ATAC-seq; sci-ATAC-seq
-- Single-cell or single-nucleus multiome (joint RNA+ATAC, e.g. 10x Multiome, ISSAAC-seq, SNARE-seq, SHARE-seq)
-- CITE-seq, REAP-seq, ASAP-seq, TEA-seq (single-cell RNA/ATAC + surface protein)
-- Perturb-seq, CROP-seq, CRISP-seq, Mosaic-seq, sci-Plex (pooled genetic or chemical perturbation screens with a single-cell RNA-seq readout — the perturbation and the single-cell assay are the same experiment by design)
-- Patch-seq (single-cell electrophysiology + RNA-seq)
-- Single-cell/subcellular-resolution spatial transcriptomics (MERFISH, seqFISH, Xenium, CosMx, STARmap) when the paper reports single-cell segmented data
-- Single-cell DNA-seq / single-cell whole genome or exome sequencing
+Qualifying assays. The platform list below is the assay vocabulary actually present
+in the CELLxGENE corpus (supplied by the curator), plus the multimodal and immune-
+repertoire assays curation also wants. Treat it as indicative, not a closed
+allowlist: **a close variant, a newer kit version, or a differently-branded
+equivalent of anything here also qualifies.** New platforms appear constantly and
+the list will always lag.
+
+- **Droplet / microwell scRNA-seq:** 10x Chromium 3' (v1/v2/v3) and 5' (v1/v2);
+  10x Flex Apex / GEM-X Flex v1 / Next GEM Flex v1 / Gene Expression Flex; Drop-seq; DroNc-seq;
+  inDrop; Seq-Well and Seq-Well S3; BD Rhapsody (Whole Transcriptome Analysis and
+  Targeted mRNA); GEXSCOPE; HIVE CLX; microwell-seq; TruDrop; Asteria scRNA-seq;
+  particle-templated instant partition sequencing (PIP-seq). CELLxGENE also
+  records generic values — "10x 3'/5' transcription profiling", "10x transcription
+  profiling" — which qualify without a stated version
+- **Plate-based / low-throughput scRNA-seq:** Smart-seq, Smart-seq2, Smart-seq3,
+  Smart-seq v4; Fluidigm C1 with SMARTer library prep; CEL-seq, CEL-seq2; MARS-seq;
+  Quartz-seq; SCRB-seq; SORT-seq; STRT-seq and modified STRT-seq
+- **Combinatorial-indexing / split-pool:** sci-RNA-seq (incl. sci-RNA-seq3);
+  SPLiT-seq; Parse Evercode Whole Transcriptome v2; ScaleBio single-cell RNA sequencing
+- **Single-nucleus forms** of any of the above (snRNA-seq), including 10x snRNA-seq
+- **Chromatin / epigenome:** scATAC-seq, snATAC-seq, 10x scATAC-seq, sci-ATAC-seq;
+  single-cell/nucleus DNA methylation (snmC-seq, snmC-seq2/3, mCT-seq); single-nucleus
+  chromatin conformation (snm3C-seq)
+- **Multiome (joint modalities):** 10x Multiome (RNA+ATAC), SNARE-seq, SHARE-seq,
+  ISSAAC-seq
+- **Protein-multimodal:** CITE-seq, REAP-seq, ASAP-seq, TEA-seq
+- **Immune repertoire:** single-cell TCR/BCR (V(D)J) profiling, e.g. 10x Chromium
+  Single Cell Immune Profiling, whether run alone or alongside gene expression.
+  **Bulk** repertoire sequencing does NOT qualify.
+- **Spatial transcriptomics, in ALL its forms, whether or not the paper segments or
+  deconvolves to single cells:**
+  - imaging / subcellular resolution: MERFISH, seqFISH, Xenium, CosMx, STARmap
+  - bead-based: Slide-seq, Slide-seqV2, Slide-tags, Slide-TCR-seq
+  - spot-based: 10x Visium Spatial Gene Expression (including standard 55-micron),
+    GeoMx
+  A spot that pools several cells still qualifies. This is deliberate and
+  recall-biased: if the perturbed material was examined by a spatial assay,
+  curation wants the paper.
+- **Perturbation screens with a single-cell readout:** Perturb-seq, CROP-seq,
+  CRISP-seq, Mosaic-seq, sci-Plex. The perturbation and the single-cell assay are
+  the same experiment by design, so the pairing is "yes" by construction.
+- **Other:** Patch-seq (single-cell electrophysiology + RNA-seq); single-cell DNA-seq
+  / single-cell whole-genome or exome sequencing
 
 Explicitly NOT single-cell/nucleus sequencing (do not count these as qualifying, even if described near perturbation language):
 - Bulk RNA-seq, bulk ATAC-seq, bulk ChIP-seq, CUT&RUN/CUT&Tag (bulk), bulk WGS/WES
+- Bulk immune-repertoire sequencing (bulk TCR-seq / BCR-seq on pooled cells) — only the single-cell V(D)J form qualifies
 - Microarray
 - qPCR / RT-qPCR, digital PCR
 - Western blot, ELISA, immunostaining/IHC/IF used as a protein readout
 - Flow cytometry / FACS used as a readout (single-cell resolution but not a sequencing assay)
 - Mass cytometry (CyTOF) (single-cell resolution but not a sequencing assay)
-- Spot-based spatial transcriptomics that pools multiple cells per spot (e.g. standard 55-micron Visium) unless the paper explicitly performs single-cell deconvolution and reports it as single-cell data
 - Any assay performed on pooled/bulk lysate, even if the input cells were sorted into a defined population first (sorting a population, then pooling for extraction, is still bulk)
 
 **Wording trap:** the phrase "single-cell suspension" almost always refers to a tissue/sample DISSOCIATION step (preparing cells for FACS sorting, loading onto a bulk assay, etc.), not to a single-cell sequencing assay. Do not treat "dissociated into a single-cell suspension" or "single-cell suspension for FACS" as evidence of scRNA-seq/snRNA-seq. Only count it if the text goes on to describe a qualifying single-cell/nucleus sequencing method being applied to that suspension.
@@ -325,7 +359,7 @@ Notes on fields:
 | Selection antibiotics maintaining a stable line | Not the perturbation (the construct is) | - |
 | Sample-handling / culture protocol as the studied variable (media brand comparison, storage duration, dissociation enzyme, freeze-thaw, passage number) | Technical variable; not reported in `perturbations`, described in `ambiguities` | Report as a perturbation if protocol-benchmarking studies are in scope |
 | Perturbation validated only by bulk RNA-seq/qPCR/Western while a separate cohort is used for single-cell/nucleus sequencing | `single_cell_paired = no`; `perturbation_present = no` for that perturbation | Loosen to allow paper-level co-occurrence (not recommended, this is the behavior fixed in v0.0.3) |
-| Spot-based (non-single-cell) spatial transcriptomics, e.g. standard Visium | Not counted as a qualifying single-cell/nucleus assay | Count spot-based spatial as qualifying |
+| Spatial transcriptomics of any resolution (Visium, Slide-seq, Xenium, MERFISH, CosMx) | **Qualifies** as a single-cell assay, segmentation not required (v0.0.8) | Require single-cell segmentation/deconvolution, as in v0.0.3-v0.0.7 |
 | Degraded or truncated text that would otherwise resolve to "no" | Stage B caps it at "unclear" with `unresolved_reason = degraded_text` | Disable Stage B and keep the "no", filtering on `processing_status` downstream |
 | Supplementary sources | Included as separate sources; quotes carry `source_id` | Main text only (faster, but loses dose/duration/condition detail that often appears only in supplementary methods) |
 | Papers where quote verification prunes every perturbation | Determination recomputed on the pruned set, `EV-UNVERIFIED` flagged | Fail the paper to `processing_status = partial` and re-run once |
