@@ -45,6 +45,37 @@ summary, a description-of-files stub. Its text is kept and readable, but
 ROLES = frozenset({MAIN_TEXT, SUPPLEMENT, NON_EVIDENCE})
 
 
+# -- text hygiene ------------------------------------------------------------
+
+#: Zero-width and invisible characters, removed outright. U+00AD is category Cf
+#: -- neither `\w` nor `\s` -- so a hyphen-rejoin can never fire across one and a
+#: whitespace collapse leaves it sitting inside the word.
+_INVISIBLE = {0x00ad: None, 0x200b: None, 0x200c: None, 0x200d: None, 0xfeff: None}
+
+
+def strip_invisible(text: str) -> str:
+    """Drop the characters that are in the string but not on the page.
+
+    Every parser needs this and for a long time only `pdf.py` had it, because
+    that is where the damage was first measured. Over the 392-article corpus the
+    other three were putting 16 blocks into `blocks.jsonl` carrying one:
+    72x U+FEFF, 25x U+200B and 2x U+00AD, from jats (13), xlsx (2) and docx (1).
+
+    Each one is invisible to the human checking a claim and fatal to the code
+    that is not. 10.1158/2643-3230.bcd-21-0075 says `Bei<U+00AD>Gene` and
+    `Vectra<U+00AD>Polaris`; 10.1038/s42003-021-02562-8 has a marker-gene sheet
+    whose column reads `<U+FEFF>EPCAM+ cells`; 10.1126/sciadv.adh1914 writes
+    `resolution = 1 x 10<U+200B><U+200B>-5` seven times. A verbatim-quote check,
+    a gene-symbol match and a column lookup each miss on text a reader would
+    call identical, and say nothing about why.
+
+    A caller that also rejoins hyphens must run its soft-hyphen handling
+    *before* this -- see `_SOFT_BREAK` in `pdf.py`, which needs the line break
+    the U+00AD caused while the U+00AD is still there to find it by.
+    """
+    return text.translate(_INVISIBLE)
+
+
 @dataclass
 class Block:
     """One addressable piece of an article.

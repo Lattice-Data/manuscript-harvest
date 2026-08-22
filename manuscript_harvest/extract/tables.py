@@ -30,6 +30,7 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from .blocks import strip_invisible
 from .limits import Limits
 
 NUMBER = "number"
@@ -90,12 +91,16 @@ def clean_cell(value: Any) -> Optional[str]:
 
     Excel's empty-looking cells are not all None: formulas evaluated to `""` and
     whitespace-only strings are common, and counting them as present is what
-    makes a caption row look like a header row.
+    makes a caption row look like a header row. A cell can also look empty at the
+    front and not be: the marker-gene sheet of 10.1038/s42003-021-02562-8 holds
+    `<U+FEFF>EPCAM+ cells and cholangiocytes`, which is why `strip_invisible`
+    runs here rather than on the rendered card -- the structured `table` a
+    caller queries by column name has to be clean too.
     """
     if value is None:
         return None
     if isinstance(value, str):
-        text = re.sub(r"\s+", " ", value.replace("\xa0", " ")).strip()
+        text = re.sub(r"\s+", " ", strip_invisible(value).replace("\xa0", " ")).strip()
         return text or None
     if isinstance(value, bool):
         return "TRUE" if value else "FALSE"

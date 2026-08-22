@@ -46,7 +46,7 @@ from typing import Dict, List, Optional, Tuple
 import fitz  # PyMuPDF
 
 from . import sections as sections_mod
-from .blocks import HEADING, PARAGRAPH, Block
+from .blocks import HEADING, PARAGRAPH, Block, strip_invisible
 from .limits import Limits
 
 OK = "ok"
@@ -58,16 +58,15 @@ GARBLED = "garbled_text_encoding"
 _HYPHEN_BREAK = re.compile(r"(\w)[-‐‑]\s*\n\s*(\w)")
 _PAGE_NUMBER = re.compile(r"^\s*(?:page\s*)?\d{1,4}\s*(?:of\s*\d{1,4})?\s*$", re.IGNORECASE)
 
-#: A soft hyphen and whatever line break it caused. This runs *before*
-#: `_HYPHEN_BREAK`, and it keeps any real hyphen beside it: the raw text of
-#: 10.1126/sciimmunol.aba4163 block 6 is `interleukin-­\n17A`, which must
-#: become `interleukin-17A` and not `interleukin17A`.
+#: A soft hyphen and whatever line break it caused. This runs first in
+#: `_clean_block`: before `blocks.strip_invisible`, which would delete the
+#: U+00AD and leave the line break sitting there, and so before `_HYPHEN_BREAK`,
+#: which would then rejoin across it. It keeps any real hyphen beside it -- the
+#: raw text of 10.1126/sciimmunol.aba4163 block 6 is `interleukin-­\n17A`, which
+#: must become `interleukin-17A` and not `interleukin17A`. Nothing downstream
+#: can stand in: U+00AD is category Cf, neither `\w` nor `\s`, so
+#: `_HYPHEN_BREAK` could never fire across one on its own.
 _SOFT_BREAK = re.compile("­[ \t]*\n?[ \t]*")
-
-#: Zero-width and invisible characters, removed outright. U+00AD is category Cf
-#: -- neither `\w` nor `\s` -- so `_HYPHEN_BREAK` could never fire across one and
-#: the whitespace collapse left it sitting inside the word.
-_INVISIBLE = {0x00ad: None, 0x200b: None, 0x200c: None, 0x200d: None, 0xfeff: None}
 
 #: Fonts whose private-use codepoints are Adobe Symbol positions rather than a
 #: subsetted Latin face. Checked per span, because a PUA codepoint out of an
@@ -564,7 +563,7 @@ def _rejoin_hyphen(match: "re.Match", tally: Optional[Counter] = None) -> str:
 def _clean_block(text: str, symbols: Optional[Dict[int, str]] = None,
                  hyphens: Optional[Counter] = None) -> str:
     text = _SOFT_BREAK.sub("", text)
-    text = text.translate(_INVISIBLE)
+    text = strip_invisible(text)
     if symbols:
         text = text.translate(symbols)
     text = _HYPHEN_BREAK.sub(lambda m: _rejoin_hyphen(m, hyphens), text)
