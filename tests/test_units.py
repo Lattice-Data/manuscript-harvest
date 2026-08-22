@@ -14,6 +14,7 @@ import requests
 
 from manuscript_harvest.fetch import store
 from manuscript_harvest.fetch.adapters import adapter_for
+from manuscript_harvest.fetch.adapters.generic import GenericAdapter
 from manuscript_harvest.fetch.adapters.base import (
     dedupe_by_target,
     is_file_url,
@@ -881,14 +882,56 @@ def test_pdf_fallback_never_returns_a_supplement():
 
     An identity check does not catch this: the SM PDF carries the DOI as well, so
     it passed as "the right paper". Only 29 pages against 19 gave it away. Link
-    order is the publisher's to change, so the exclusion has to be explicit."""
+    order is the publisher's to change, so the exclusion has to be explicit.
+
+    Asserted against `GenericAdapter` directly, because science.org has its own
+    adapter now -- see `test_a_science_pdf_url_is_built_not_discovered`, added
+    after the fallback picked a vendor manual on a page where the good anchors
+    were missing rather than merely late. The rule under test here is the
+    fallback's, and it still applies to every publisher that has no adapter.
+    """
     page = _science_page()
-    adapter = adapter_for(page.url)
-    assert adapter.name == "generic"
+    adapter = GenericAdapter()
     url = adapter.find_pdf_url(page, "10.1126/science.adt8307")
     assert "/suppl_file/" not in url and "_sm.pdf" not in url
     assert url == ("https://www-science-org.stanford.idm.oclc.org"
                    "/doi/pdf/10.1126/science.adt8307?download=true")
+
+
+def test_a_science_pdf_url_is_built_not_discovered():
+    """10.1126/science.adf1226, where the fallback had no good anchor to be late to.
+
+    The generic rule -- first non-supplement `.pdf` anchor -- resolved to
+    `assets.ctfassets.net/.../CG000239_Visium_Spatial_Gene_Expression_User_Guide_Rev_F.pdf`,
+    a 10x Genomics reagent manual on a third-party CDN, and it was stored as the
+    article. Constructing the URL removes link order from the decision entirely,
+    and it is the same URL 14 of the 16 Science papers in this corpus resolved to
+    on their own.
+    """
+    vendor_manual = [
+        {"url": "https://assets.ctfassets.net/an68im79xiti/2q34x/"
+                "CG000239_Visium_Spatial_Gene_Expression_User_Guide_Rev_F.pdf",
+         "text": "Visium Spatial Gene Expression User Guide"},
+    ]
+    page = FakePage(
+        url="https://www-science-org.stanford.idm.oclc.org/doi/10.1126/science.adf1226",
+        metas={}, links=vendor_manual)
+
+    adapter = adapter_for(page.url)
+    assert adapter.name == "science"
+    assert adapter.find_pdf_url(page, "10.1126/science.adf1226") == (
+        "https://www-science-org.stanford.idm.oclc.org"
+        "/doi/pdf/10.1126/science.adf1226?download=true")
+    # The generic rule, on the same page, is what stored the manual.
+    assert "ctfassets" in GenericAdapter().find_pdf_url(page, "10.1126/science.adf1226")
+
+
+def test_a_science_page_still_prefers_its_own_declaration():
+    """A constructed URL is a pattern, and a publisher's own tag outranks it."""
+    page = FakePage(url="https://www.science.org/doi/10.1126/science.adf1226",
+                    metas={"citation_pdf_url": "https://www.science.org/real.pdf"})
+    assert adapter_for(page.url).find_pdf_url(page, "10.1126/science.adf1226") == \
+        "https://www.science.org/real.pdf"
 
 
 def test_generic_adapter_finds_the_aaas_supplements():

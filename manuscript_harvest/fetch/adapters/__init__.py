@@ -4,13 +4,20 @@ from urllib.parse import urlparse
 
 from .base import Adapter
 from .generic import GenericAdapter
-from .publishers import ElsevierAdapter, NatureAdapter, PmcAdapter, WileyAdapter
+from .publishers import (
+    ElsevierAdapter,
+    NatureAdapter,
+    PmcAdapter,
+    ScienceAdapter,
+    WileyAdapter,
+)
 
 # Specific adapters first; the generic one always matches and comes last.
 ADAPTERS = [
     NatureAdapter(),
     WileyAdapter(),
     ElsevierAdapter(),
+    ScienceAdapter(),
     PmcAdapter(),
 ]
 FALLBACK = GenericAdapter()
