@@ -58,7 +58,7 @@ def test_every_status_is_in_the_taxonomy():
     files = {extractor.OK, extractor.NO_TEXT, extractor.SCANNED, extractor.IMAGE_NO_TEXT,
              extractor.MEDIA_NO_TEXT, extractor.DATA_SKIPPED, extractor.UNSUPPORTED,
              extractor.TOO_LARGE, extractor.MISSING, extractor.UNREADABLE,
-             extractor.PARSER_ERROR}
+             extractor.PARSER_ERROR, extractor.GARBLED}
     for record in _extractions():
         assert record["status"] in articles, record["slug"]
         assert (record["main_text"] or {}).get("status") in files | {None}
@@ -232,6 +232,66 @@ def test_the_second_reviewers_remarks_are_still_in_the_peer_review_file():
     reviewers = [b["text"] for b in read_blocks(path)
                  if b["text"].startswith("Reviewer #")]
     assert sum(1 for t in reviewers if t.startswith("Reviewer #2")) == 3, reviewers
+
+
+def test_the_science_supplement_reads_as_english_and_not_as_a_cipher():
+    """10.1126/science.adf5357's Supplementary Materials holds that paper's only
+    copy of its Materials and Methods, and extracted as
+    `TheVe VWXdLeV ZeUe LQWeQded WR be Whe fLUVW e[SORUaWLRQV` -- 124,178
+    characters of it, reported `ok`, with nothing anywhere saying otherwise.
+
+    Its fonts are Identity-H subsets whose ToUnicode CMap stops at glyph 75, so
+    every glyph from `i` up came out as its own glyph id. `pdf._repair_glyph_encoding`
+    fills the gap from the embedded fonts' own character maps.
+
+    The count is the measurement that found the bug: of the 192 blocks in this
+    file longer than 200 characters, 78 held a common English word before the
+    repair and 178 do after. The other 14 are runs of numbers and gene symbols.
+    """
+    _needs("10.1126_science.adf5357/supplementary/01_science.adf5357_sm.pdf")
+    path = _needs("10.1126_science.adf5357/extracted/blocks.jsonl")
+    common = re.compile(r"\b(the|and|of|to|in|for|with|was|were|that|from)\b")
+    blocks = [b for b in read_blocks(path)
+              if b["source_file"].endswith("01_science.adf5357_sm.pdf")]
+    long_blocks = [b for b in blocks if len(b["text"]) > 200]
+    readable = [b for b in long_blocks if common.search(b["text"])]
+    assert len(long_blocks) >= 190, len(long_blocks)
+    assert len(readable) >= 175, (len(readable), len(long_blocks))
+    assert any(b["text"].strip() == "Materials and Methods" for b in blocks)
+
+
+def test_a_pdf_whose_glyphs_have_no_characters_behind_them_is_not_ok():
+    """10.1038/s41588-024-01702-0's reporting summary is the case the repair
+    cannot answer: every one of its 6,869 glyphs is unnamed, and its fonts are
+    CID-keyed CFF subsets with identity ordering, no ToUnicode, no character map
+    and glyph names of the form `cid00042`. Nothing in the file says what its
+    glyphs mean, so reading it would be a guess and the honest outcome is a
+    status that stops it counting as text."""
+    _needs("10.1038_s41588-024-01702-0/supplementary/"
+           "14_41588_2024_1702_MOESM2_ESM.pdf")
+    record = json.loads(_needs("10.1038_s41588-024-01702-0/extracted/"
+                               "extraction.json").read_text())
+    entry = next(e for e in record["supplementary"]
+                 if e["path"].endswith("14_41588_2024_1702_MOESM2_ESM.pdf"))
+    assert entry["status"] == extractor.GARBLED
+    assert entry["blocks"] == 0 and entry["chars"] == 0
+    assert entry["glyphs_unnamed"] == entry["glyphs_drawn"]
+
+
+def test_no_file_is_ok_while_most_of_its_glyphs_have_no_character():
+    """The invariant the two tests above are instances of. `ok` on a file whose
+    text is the parser's fallback for codes it could not map is the exact shape
+    of the failure this stage exists to prevent, and it is worth asserting over
+    whatever has been extracted rather than only over the two files that taught
+    it."""
+    for record in _extractions():
+        for entry in [record["main_text"]] + record["supplementary"]:
+            drawn = (entry or {}).get("glyphs_drawn")
+            if not drawn or entry["status"] != extractor.OK:
+                continue
+            fraction = entry["glyphs_unnamed"] / drawn
+            assert fraction <= L.max_unnamed_glyph_fraction, \
+                (record["slug"], entry["path"], round(fraction, 4))
 
 
 def test_no_supplement_label_is_shared_by_two_files():

@@ -82,6 +82,18 @@ class Limits:
 
     min_pdf_text_chars: int = 200
     """Matches manuscript_harvest.fetch.validate: less than this means scanned images."""
+    max_unnamed_glyph_fraction: float = 0.25
+    """How much of a PDF's text may be glyphs the document never says the meaning
+    of before the file stops being `ok`. See `pdf._repair_glyph_encoding` for what
+    produces them.
+
+    Set between the two populations rather than at a round number. Measured over
+    the 972 PDFs in this corpus after the repair: 767 sit at exactly zero, the
+    highest readable file is 0.1805 -- 10.1016/j.cell.2024.08.019's mmc8, whose
+    figure axis labels are damaged while its captions are not -- and the one file
+    that genuinely cannot be read sits at 1.0. Nothing lands between 0.19 and
+    0.99, so the bar is inside a gap five times its own width rather than on a
+    slope."""
     running_header_min_pages: int = 3
     """A short line repeated in a page margin on this many pages is a running
     head, not content."""

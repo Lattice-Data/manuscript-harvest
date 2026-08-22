@@ -59,7 +59,8 @@ _TEXT_SUBSTITUTED = {extractor.LANDING_PAGE_ONLY, extractor.MAIN_TEXT_THIN}
 #: donor table inside one of these is not absent, it is unreachable -- and unlike a
 #: figure image, something a human or an OCR pass could still recover.
 _FILE_TEXT_LOST = {extractor.SCANNED, extractor.UNSUPPORTED, extractor.TOO_LARGE,
-                   extractor.MISSING, extractor.UNREADABLE, extractor.PARSER_ERROR}
+                   extractor.MISSING, extractor.UNREADABLE, extractor.PARSER_ERROR,
+                   extractor.GARBLED}
 
 
 def assess(article_dir, extraction: Optional[dict] = None,

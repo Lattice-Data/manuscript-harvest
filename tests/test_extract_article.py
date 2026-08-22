@@ -11,7 +11,7 @@ import json
 
 import pytest
 
-from manuscript_harvest.extract import extractor
+from manuscript_harvest.extract import extractor, review
 from manuscript_harvest.extract.blocks import BLOCKS_NAME, TABLE, read_blocks
 from manuscript_harvest.extract.cli import DEFAULT_EXTRACT_CONFIG, load_config, main
 from manuscript_harvest.extract.extractor import EXTRACT_DIR, extract_article, sniff_extension
@@ -27,6 +27,7 @@ from tests.fakes import (
     make_pdf,
     make_pdf_pages,
     make_scanned_pdf,
+    make_unreadable_font_pdf,
     make_xlsx,
     make_zip,
 )
@@ -242,6 +243,49 @@ def test_scanned_main_pdf_keeps_the_richer_xml(tmp_path):
                          fulltext=make_scanned_pdf())
     record = extract_article(directory, limits=L)
     assert record["main_text"]["source"] == "jats"
+
+
+def test_a_garbled_supplement_costs_the_article_its_complete(tmp_path):
+    """A supplement whose fonts never say what their glyphs mean is not a figure
+    and carries no benefit of the doubt: its text was there and this stage did not
+    get it, so the article is `partial` and the file is named.
+
+    Real case -- 10.1038/s41588-024-01702-0's reporting summary, which went from
+    an unremarked `ok` to this."""
+    directory = _article(
+        tmp_path, xml=jats_article(METHODS_BODY),
+        supplements=[("methods.pdf", make_unreadable_font_pdf(
+            [["Nuclei were isolated from frozen tissue and loaded on a 10x "
+              "Chromium controller with the Single Cell 3' v3 kit, then "
+              "sequenced on a NovaSeq 6000 at the core facility."]],
+            broken_cmap=True))])
+    record = extract_article(directory, limits=L)
+    entry = record["supplementary"][0]
+    assert entry["status"] == extractor.GARBLED
+    assert entry["blocks"] == 0 and entry["chars"] == 0
+    assert record["unextracted_text_files"] == [entry["path"]]
+    assert record["status"] == "partial"
+    # and not one character of it reaches the blocks a model would read
+    blocks = read_blocks(directory / EXTRACT_DIR / BLOCKS_NAME)
+    assert not any(b["source_file"] == entry["path"] for b in blocks)
+    # A person can answer this one by opening the file: it renders perfectly and
+    # is unreadable only to a parser.
+    assert entry["status"] in review.QUEUEABLE_FAILURES
+
+
+def test_a_garbled_main_pdf_is_not_a_usable_main_text(tmp_path):
+    """The same rule where it costs most. With no XML beside it there is nothing
+    to fall back to, and an article whose only text is unreadable must not come
+    out `complete`."""
+    directory = _article(tmp_path, fulltext=make_unreadable_font_pdf(
+        [["Nuclei were isolated from frozen tissue and loaded on a 10x Chromium "
+          "controller with the Single Cell 3' v3 kit, then sequenced on a "
+          "NovaSeq 6000 at the core facility on the same day."]],
+        broken_cmap=True))
+    record = extract_article(directory, limits=L)
+    assert record["main_text"]["status"] == extractor.GARBLED
+    assert record["main_text"]["usable"] is False
+    assert record["status"] != "complete"
 
 
 def test_missing_manifest_is_reported_not_raised(tmp_path):
