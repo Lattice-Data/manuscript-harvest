@@ -169,6 +169,52 @@ class ElsevierAdapter(Adapter):
             or looks_like_supplement(link)))
 
 
+class ScienceAdapter(Adapter):
+    """science.org (AAAS: Science, Science Advances, Science Immunology, ...).
+
+    Exists because the generic adapter got this wrong in the worst way available.
+    Science pages carry no `citation_pdf_url`, so the fallback there is "the first
+    anchor on the page whose URL ends in `.pdf` and is not a supplement" -- and on
+    10.1126/science.adf1226 that anchor pointed at
+    `assets.ctfassets.net/.../CG000239_Visium_Spatial_Gene_Expression_User_Guide_Rev_F.pdf`,
+    a 71-page 10x Genomics reagent manual on a third-party CDN. It was stored as
+    `fulltext.pdf`, recorded `ok`, and extracted to 1,493 blocks whose first one is
+    `10xGenomics.com`; the article, "Comprehensive cell atlas of the first-trimester
+    developing human brain", was never fetched. Link order decided that, and link
+    order is not something a page owes us.
+
+    So the URL is constructed rather than discovered. `/doi/pdf/<doi>?download=true`
+    is what 14 of the 16 Science papers this corpus fetched through the browser tier
+    resolved to on their own -- the generic fallback was finding the right anchor by
+    luck, and this makes it the rule. Built on the *page's* host so it keeps working
+    through the proxy, whose rewritten hostname is the only one the browser can
+    reach.
+
+    Supplements need no help: they are all under `/doi/suppl/<doi>/suppl_file/`,
+    which `looks_like_supplement` already matches, so this defers to the generic
+    behaviour rather than restating it.
+    """
+
+    name = "science"
+    hosts = ("science.org", "sciencemag.org")
+
+    def find_pdf_url(self, page, doi: str) -> Optional[str]:
+        # Honoured if it ever appears -- a publisher's own declaration beats a
+        # pattern -- but measured absent on every Science page seen so far.
+        value = meta_content(page, "citation_pdf_url")
+        if value and ".pdf" in value.lower():
+            return value
+        if not doi:
+            return None
+        parsed = urlparse(page.url or "")
+        if not parsed.scheme or not parsed.netloc:
+            return None
+        return f"{parsed.scheme}://{parsed.netloc}/doi/pdf/{doi}?download=true"
+
+    def find_supplements(self, page, doi: str) -> Tuple[List[dict], bool]:
+        return supplements_from_links(page, lambda link, url: looks_like_supplement(link))
+
+
 class PmcAdapter(Adapter):
     """pmc.ncbi.nlm.nih.gov.
 

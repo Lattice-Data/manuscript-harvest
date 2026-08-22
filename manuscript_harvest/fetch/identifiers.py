@@ -123,6 +123,16 @@ class Identifiers:
     in_pmc: Optional[bool] = None
     has_pdf: Optional[bool] = None
     has_suppl: Optional[bool] = None
+    #: Europe PMC's own `pubTypeList`, lowercased. It is how the index says what
+    #: kind of document a DOI is, and for 10.1038/s41586-024-08560-0 it answers
+    #: `['published erratum', 'correction']` -- before a byte is downloaded. See
+    #: `validate.not_research_article`, which reads it.
+    pub_types: List[str] = field(default_factory=list)
+    #: The DOI this record is a notice *about*, when Europe PMC says it is one.
+    #: Structured, from `commentCorrectionList`, and the reason it is worth having
+    #: over reading the notice's body: a notice cites its own references too, so
+    #: "the first other DOI in the text" is a guess where this is the answer.
+    corrects_doi: Optional[str] = None
     full_text_urls: List[Dict] = field(default_factory=list)
     landing_url: Optional[str] = None          # publisher page, from Crossref or doi.org
     lookup_doi: Optional[str] = None           # set when a variant DOI resolved instead
@@ -173,6 +183,8 @@ class Identifiers:
             "in_epmc": self.in_epmc,
             "in_pmc": self.in_pmc,
             "has_pdf": self.has_pdf,
+            "pub_types": self.pub_types,
+            "corrects_doi": self.corrects_doi,
             "has_suppl": self.has_suppl,
             "is_preprint": self.is_preprint,
             "landing_url": self.landing_url,
@@ -229,8 +241,39 @@ def _query_europepmc(ids: Identifiers, http: Http, doi: Optional[str] = None) ->
     ids.in_pmc = _yes_no(record.get("inPMC"))
     ids.has_pdf = _yes_no(record.get("hasPDF"))
     ids.has_suppl = _yes_no(record.get("hasSuppl"))
+    ids.pub_types = [str(t).strip().lower() for t in
+                     (record.get("pubTypeList", {}) or {}).get("pubType", []) or []]
+    ids.corrects_doi = _corrected_article_doi(record)
     ids.full_text_urls = (record.get("fullTextUrlList", {}) or {}).get("fullTextUrl", []) or []
     ids.resolved_by.append("europepmc")
+
+
+#: `commentCorrectionList` relation types that mean *this* record is the notice.
+#: Europe PMC states the relation from both ends and only the direction matters:
+#: the Author Correction 10.1038/s41586-024-08560-0 carries `Erratum for`, while
+#: the article it corrects carries `Erratum in`. Reading the wrong direction would
+#: reject every article that has ever been corrected, which is backwards and would
+#: be a far worse bug than the one this is here to fix.
+_NOTICE_RELATIONS = ("erratum for", "retraction of", "correction of",
+                     "expression of concern for")
+
+
+def _corrected_article_doi(record: dict) -> Optional[str]:
+    """The DOI of the article this record is a correction or retraction *of*.
+
+    Europe PMC gives the relation as a type plus a citation string, so the DOI has
+    to come out of the citation: `Nature. 2025 Jan;637(8047):947-954.
+    doi: 10.1038/s41586-024-08150-0.` None when this record is not a notice.
+    """
+    entries = (record.get("commentCorrectionList", {}) or {}).get("commentCorrection", [])
+    for entry in entries or []:
+        relation = str(entry.get("type") or "").strip().lower()
+        if not any(relation.startswith(prefix) for prefix in _NOTICE_RELATIONS):
+            continue
+        match = _DOI_RX.search(str(entry.get("reference") or ""))
+        if match:
+            return match.group(0).rstrip(".,;)").lower()
+    return None
 
 
 def _query_ncbi_idconv(ids: Identifiers, http: Http) -> None:

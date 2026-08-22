@@ -68,6 +68,7 @@ def test_ezproxy_hostname_rewriting_selects_the_right_adapter():
         "https://www-sciencedirect-com.stanford.idm.oclc.org/science/article/pii/X": "elsevier",
         "https://onlinelibrary-wiley-com.stanford.idm.oclc.org/doi/10.1/x": "wiley",
         "https://pmc-ncbi-nlm-nih-gov.stanford.idm.oclc.org/articles/PMC1/": "pmc",
+        "https://www-science-org.stanford.idm.oclc.org/doi/10.1126/science.x": "science",
         "https://www.nature.com/articles/x": "nature",
         "https://journals.plos.org/x": "generic",
     }
@@ -1234,6 +1235,33 @@ def test_a_journal_cell_com_does_not_carry_is_not_blamed_on_headless():
     assert "cell.com carries Cell Press only" in problem
     assert "journal-of-hepatology.eu" in problem
     assert "no proxied route to this journal" in problem
+
+
+def test_a_journal_cell_com_holds_no_record_of_is_named_before_the_404(tmp_path):
+    """10.1016/j.coi.2022.102188 and 10.1016/j.ydbio.2025.08.025, both `failed` with
+    nothing to show but `HTTP 404`.
+
+    cell.com does not redirect `/retrieve/pii/<PII>` for a journal it does not carry;
+    it serves a Cell Press shell at that same URL, with HTTP 200. Every check the
+    retry makes then passes -- no denial, not blocked, and `ElsevierAdapter` builds a
+    PDF URL from the PII because that is what it does on a cell.com page -- so the
+    tier reported a page it had read, and the only symptom was the 404 that URL
+    returned. Measured across this corpus: 46 of 46 Cell Press articles redirected
+    off `/retrieve/pii/` and only these two did not.
+    """
+    stayed = CellPressRetryPage(
+        retry_url="https://www-cell-com.stanford.idm.oclc.org/retrieve/pii/"
+                  "S0952791522000358",
+        retry_title="Cell Press: Cell Press",
+        retry_content=b"<html>Login to your account ... Main menu Journals</html>")
+    result, _ = _run_stub(page=stayed)
+
+    problem = next(p for p in result.problems if "stub page" in p)
+    assert "--headed" not in problem, "a login cannot make cell.com carry the journal"
+    assert "does not hold this title" in problem
+    assert "needs a download by hand" in problem
+    note = next(a for a in result.attempts if a["action"] == "landing_retry")
+    assert note["status"] == "not_carried_by_cell_press"
 
 
 def test_a_cell_press_paper_that_still_stubs_keeps_the_headed_hint():

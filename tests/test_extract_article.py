@@ -151,6 +151,71 @@ def test_an_unverified_supplement_set_is_a_caveat_not_a_defect(tmp_path):
     assert result["status"] == "complete"
 
 
+def test_a_full_text_the_fetch_stage_rejected_is_not_used_as_main_text(tmp_path):
+    """10.1126/science.adf1226. The fetch stage wrote the verdict and this stage
+    never read it, so a 10x Genomics Visium user guide became 1,393 blocks of main
+    text -- which reads downstream exactly like a paper with nothing to report.
+
+    The file stays on disk and stays in the manifest. What changes is that it is no
+    longer offered as the article.
+    """
+    directory = _article(tmp_path, fulltext=make_pdf(text="10xGenomics.com USER "
+                                                          "GUIDE Visium " * 40))
+    record = store.read_manifest(directory)
+    record["fulltext"]["status"] = "identity_unverified"
+    store.write_manifest(directory, record)
+
+    result = extract_article(directory, limits=L, force=True)
+
+    assert extractor.MAIN_TEXT_NOT_THE_ARTICLE in result["caveats"]
+    assert result["status"] != "complete"
+    assert result["main_text"]["not_the_requested_article"]["files"] == ["fulltext.pdf"]
+    assert (directory / "fulltext.pdf").exists(), "the bytes are the evidence"
+
+
+def test_a_correction_notice_is_not_used_as_main_text_either(tmp_path):
+    """10.1038/s41586-024-08560-0, where both files were the notice. Rejecting only
+    the PDF would silently fall through to the JATS and extract the same document.
+    """
+    directory = _article(tmp_path, fulltext=make_pdf(),
+                         xml=jats_article(METHODS_BODY, article_type="correction"))
+    record = store.read_manifest(directory)
+    record["fulltext"]["status"] = "not_research_article"
+    record["fulltext_xml"]["status"] = "not_research_article"
+    store.write_manifest(directory, record)
+
+    result = extract_article(directory, limits=L, force=True)
+
+    assert extractor.MAIN_TEXT_NOT_THE_ARTICLE in result["caveats"]
+    assert sorted(result["main_text"]["not_the_requested_article"]["files"]) == \
+        ["fulltext.nxml", "fulltext.pdf"]
+    assert result["status"] == "failed"
+
+
+def test_a_human_who_looked_at_the_file_still_overrides_the_verdict(tmp_path):
+    """`main_text_source` in the review sheet is a person saying they read it. The
+    identity check is a heuristic over the first three pages, and a heuristic does
+    not get to overrule the person who opened the document."""
+    directory = _article(tmp_path, fulltext=make_pdf(), xml=jats_article(METHODS_BODY))
+    record = store.read_manifest(directory)
+    record["fulltext"]["status"] = "identity_unverified"
+    store.write_manifest(directory, record)
+
+    class _Forced:
+        def main_text_source(self):
+            return "pdf"
+
+        def __getattr__(self, name):
+            return lambda *a, **k: None
+
+    info = {}
+    extractor._choose_main_text(directory, store.read_manifest(directory),
+                                L, info, {}, overrides=_Forced())
+
+    assert info["source"] == "pdf"
+    assert "not_the_requested_article" not in info
+
+
 def test_every_caveat_is_in_the_closed_vocabulary(tmp_path):
     directory = _article(tmp_path, landing=LANDING_INTERSTITIAL)
     for name in extract_article(directory, limits=L)["caveats"]:

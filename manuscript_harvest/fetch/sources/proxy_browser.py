@@ -116,6 +116,16 @@ def _stub_problem(adapter_name: str, url: str, why: Optional[str], headless: boo
         # recovery does not contradict the redirect having left the proxy.
         if not got_pdf:
             cause += ". There is no proxied route to this journal's own site"
+    elif why == "not_on_cell_press":
+        # Deliberately states the conclusion, not just the observation. Both papers
+        # this was measured on are Elsevier titles with no PMC deposit, so once
+        # ScienceDirect stubs and cell.com does not carry the journal, no tier in
+        # this package has a route left -- and a reader who is told only "HTTP 404"
+        # will spend a headed run and a login finding that out.
+        cause = ("cell.com carries Cell Press only and did not redirect the PII to a "
+                 "journal path, so it does not hold this title. With ScienceDirect "
+                 "serving automation a stub, no tier here has a route to this "
+                 "article: it needs a download by hand")
     elif why == "no_pii":
         cause = "and carried no Elsevier PII to retry with"
     elif why == "navigation_failed":
@@ -920,6 +930,27 @@ class ProxyBrowserSource(Source):
             result.note("landing_retry", url=target, status="navigation_failed",
                         error=f"{type(e).__name__}: {e}")
             return None, "navigation_failed"
+
+        # cell.com answers `/retrieve/pii/<PII>` for a Cell Press article by
+        # redirecting to the journal's own path: `/cell-reports/fulltext/<PII>`,
+        # `/immunity/fulltext/<PII>`, and so on. Measured across this corpus -- all 46
+        # Cell Press articles redirected, and the only two that did not are
+        # 10.1016/j.coi.2022.102188 (Current Opinion in Immunology) and
+        # 10.1016/j.ydbio.2025.08.025 (Developmental Biology), neither of which is a
+        # Cell Press title.
+        #
+        # Staying on `/retrieve/pii/` is cell.com saying it does not carry this
+        # journal, and it says so with HTTP 200 and a full Cell Press shell -- masthead,
+        # journal list, a password-reset form. So the checks below all pass: no denial,
+        # not blocked, and `ElsevierAdapter` builds a PDF URL out of the PII because
+        # that is what it does on a cell.com page. The URL then 404s, and `HTTP 404`
+        # was the only thing either manifest said. It does not tell a reader that this
+        # route cannot work for this journal, which is the fact that decides what to
+        # do next.
+        if "/retrieve/pii/" in urlparse(landed).path:
+            result.note("landing_retry", url=target, final_url=landed,
+                        status="not_carried_by_cell_press")
+            return None, "not_on_cell_press"
 
         denial = classify_denial(landed, body)
         landed_adapter = adapter_for(landed)

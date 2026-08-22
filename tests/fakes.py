@@ -224,7 +224,7 @@ def make_docx(parts) -> bytes:
 # -- JATS --------------------------------------------------------------------
 
 def jats_article(body: str = "", front_extra: str = "", back: str = "",
-                 doctype: bool = True) -> bytes:
+                 doctype: bool = True, article_type: str = "research-article") -> bytes:
     """A JATS article shaped like Europe PMC's `fulltext.nxml`.
 
     The DOCTYPE is included by default because it is present in every real file
@@ -236,7 +236,7 @@ def jats_article(body: str = "", front_extra: str = "", back: str = "",
         'DTD v1.2 20190208//EN" "JATS-journalpublishing1.dtd">\n' if doctype else
         '<?xml version="1.0" encoding="UTF-8"?>\n')
     return (prologue + f"""<article xmlns:xlink="http://www.w3.org/1999/xlink"
- article-type="research-article">
+ article-type="{article_type}">
 <front><journal-meta><journal-title>Nature Communications</journal-title></journal-meta>
 <article-meta>
 <article-id pub-id-type="doi">{DOI}</article-id>
@@ -477,7 +477,12 @@ def europepmc_search_json(**overrides) -> bytes:
     """Europe PMC `resultType=core`, shaped from the live response for `DOI`."""
     record = {
         "id": "34497389", "source": "MED", "pmid": "34497389", "pmcid": PMCID,
-        "doi": DOI, "title": "A test article", "pubYear": 2021,
+        # The title has to describe `make_pdf`'s body, because `fetcher` now checks
+        # that the stored full text is the requested paper and a fixture whose
+        # metadata and bytes are about different documents is one no real fetch
+        # could produce. `test_a_pdf_that_is_not_this_paper_is_not_accepted` is
+        # where a genuine mismatch is asserted instead.
+        "doi": DOI, "title": "TP53 knockout via CRISPR-Cas9", "pubYear": 2021,
         "journalInfo": {"journal": {"title": "Nature"}},
         "isOpenAccess": "Y", "inEPMC": "Y", "inPMC": "Y",
         "hasPDF": "Y", "hasSuppl": "Y", "license": "cc by",
@@ -505,7 +510,7 @@ OA_XML_ERROR = b'<OA><error code="idIsNotOpenAccess">identifier is not Open Acce
 
 def crossref_json(**overrides) -> bytes:
     message = {
-        "publisher": "Test Publisher", "title": ["A test article"],
+        "publisher": "Test Publisher", "title": ["TP53 knockout via CRISPR-Cas9"],
         "container-title": ["Nature"], "issued": {"date-parts": [[2021, 9, 8]]},
         "resource": {"primary": {"URL": "https://publisher.example/article"}},
     }
