@@ -39,7 +39,17 @@ from manuscript_harvest.fetch.identifiers import (
     unversioned_doi,
 )
 from manuscript_harvest.fetch.sources.pmc_oa import _classify, _unpack_tgz, ftp_to_https
-from manuscript_harvest.fetch.validate import classify_denial, looks_like_pdf, validate_pdf
+from manuscript_harvest.fetch.validate import (
+    classify_denial,
+    identify_fulltext,
+    identity_problem,
+    jats_article_type,
+    looks_like_pdf,
+    mentions_doi,
+    not_research_article,
+    title_overlap,
+    validate_pdf,
+)
 from tests.fakes import (
     CLINICALKEY_ARTICLE_PDF,
     CLINICALKEY_SUPPLEMENT_LINKS,
@@ -57,6 +67,7 @@ from tests.fakes import (
     FakePage,
     FakeRequestsResponse,
     FakeSession,
+    jats_article,
     make_paywall_pdf,
     make_pdf,
     make_scanned_pdf,
@@ -244,6 +255,139 @@ def test_looks_like_pdf_ignores_leading_whitespace():
 
 def test_classify_denial_returns_none_for_a_real_page():
     assert classify_denial("https://x", b"<html><body>An article about TP53</body></html>") is None
+
+
+# -- is the accepted document the article we asked for? ----------------------
+#
+# Two papers in `corpus/` were recorded `status: complete` over a document that is
+# not the requested article, and neither was an error: a Nature Author Correction
+# and a 10x Genomics Visium user guide are both real, well-formed documents. These
+# are the checks that make each of them impossible to accept again.
+
+
+def test_a_correction_notice_declares_itself_in_the_jats():
+    """10.1038/s41586-024-08560-0. The bytes are a valid one-page PDF and valid
+    JATS, and the notice carries its *own* DOI and its own title -- so every
+    identity check passes on it. `article-type` is the only thing that says what
+    the document is."""
+    xml = jats_article(article_type="correction")
+
+    assert jats_article_type(xml) == "correction"
+    reason = not_research_article(article_type=jats_article_type(xml))
+    assert reason is not None and "correction" in reason
+
+
+def test_the_doctype_line_is_not_mistaken_for_the_root_element():
+    """Every real Europe PMC file opens with `<!DOCTYPE article PUBLIC ...>`, which
+    contains the word `article` and no `article-type`."""
+    assert jats_article_type(jats_article(doctype=True)) == "research-article"
+
+
+def test_a_corrected_article_is_not_a_correction():
+    """The exact way this check could be wired backwards, so it is pinned.
+
+    `corrected-article` appears in these files -- on
+    `<related-article related-article-type=...>`, pointing *at* the paper. Matching
+    the attribute anywhere rather than on the root element would reject the article
+    and keep the notice, and would reject every paper that has ever been corrected.
+    """
+    xml = jats_article(front_extra='<related-article '
+                                   'related-article-type="corrected-article"/>')
+
+    assert jats_article_type(xml) == "research-article"
+    assert not_research_article(article_type=jats_article_type(xml)) is None
+
+
+@pytest.mark.parametrize("pub_types,rejected", [
+    (["published erratum", "correction"], True),      # measured, 10.1038/s41586-024-08560-0
+    (["research-article", "Journal Article"], False),  # measured, five corpus papers
+    (["Preprint"], False),
+    (["Retraction of Publication"], True),            # the notice
+    (["Retracted Publication"], False),               # the article that was retracted
+])
+def test_europepmc_types_a_notice_apart_from_an_article(pub_types, rejected):
+    """`pubTypeList` is the strongest signal because it needs no download at all.
+
+    The retraction pair is the care in this set: Europe PMC puts `Retracted
+    Publication` on the paper and `Retraction of Publication` on the notice. Only
+    the second is "not a research article"; whether a retracted paper belongs in a
+    corpus is a scientific judgement this function does not get to make.
+    """
+    assert (not_research_article(pub_types=pub_types) is not None) is rejected
+
+
+@pytest.mark.parametrize("title,rejected", [
+    ("Author Correction: Progressive plasticity during colorectal cancer metastasis",
+     True),
+    ("Retraction: Progressive plasticity", True),
+    ("Corrigendum: A single-cell atlas", True),
+    # The colon is the whole guard. Without it this rejects research articles.
+    ("Retraction of the primary cilium during mitosis", False),
+    ("Correction of hyperglycaemia by islet transplantation", False),
+    ("An atlas of cortical arealization", False),
+])
+def test_a_title_prefix_needs_its_colon(title, rejected):
+    assert (not_research_article(title=title) is not None) is rejected
+
+
+def test_a_vendor_manual_is_not_the_paper():
+    """10.1126/science.adf1226. The browser tier found no `citation_pdf_url` on the
+    science.org page, fell through to the first non-supplement `.pdf` anchor, and
+    stored a 71-page 10x Genomics Visium user guide from a third-party CDN as
+    `fulltext.pdf` -- 1,493 blocks whose first one is `10xGenomics.com`."""
+    manual = ("10xGenomics.com CG000239 Rev F USER GUIDE Visium Spatial Gene "
+              "Expression Reagent Kits FOR USE WITH Visium Spatial Gene Expression "
+              "Slide & Reagent Kit, 16 rxns PN-1000184 " * 4)
+
+    verified, meta = identify_fulltext(
+        manual, "10.1126/science.adf1226",
+        "Comprehensive cell atlas of the first-trimester developing human brain.")
+
+    assert not verified
+    assert meta["title_overlap"] == 0.0
+    # The opening is in the meta so the manifest line can say what the file *is*.
+    assert meta["opening"].startswith("10xGenomics.com")
+    assert "10xGenomics.com" in identity_problem(
+        "PDF", "10.1126/science.adf1226", "Comprehensive cell atlas", meta)
+
+
+def test_the_doi_is_found_across_a_line_break():
+    """PDF text extraction breaks a DOI at a line end and changes nothing else."""
+    assert mentions_doi("available at\nhttps://doi.org/10.1126/\nscience.adf5357 .",
+                        "10.1126/science.adf5357")
+    assert not mentions_doi("10.1126/science.adf5358", "10.1126/science.adf5357")
+
+
+def test_the_title_is_the_fallback_and_only_the_fallback():
+    """Some publisher PDFs genuinely omit the DOI, so a title match keeps them.
+
+    Measured, and the reason the order is not the other way round: the requested
+    DOI appears in 632 of the 633 full-text files in `corpus/` -- the exception is
+    the vendor manual -- while the title scored against 1,121 deliberately
+    mismatched paper/title pairs clears 0.6 for 59 of them.
+    """
+    body = "An atlas of cortical arealization in the developing human neocortex. " * 5
+    verified, meta = identify_fulltext(body, "10.1038/nothing-in-this-document",
+                                       "An atlas of cortical arealization")
+
+    assert verified and meta["matched_on"] == "title"
+    assert not meta["doi_in_text"]
+
+
+def test_a_title_of_nothing_but_stopwords_is_a_cannot_tell():
+    assert title_overlap("some text", "The Cells") is None
+
+
+def test_a_scanned_article_is_never_called_the_wrong_document():
+    """`validate_pdf` keeps a scanned article and flags it `scanned_pdf_suspected`.
+
+    Identifying it is impossible -- there is no text -- and "cannot tell" is not
+    "wrong". Answering `identity_unverified` here would replace a true statement
+    with one that claims we compared and found a mismatch.
+    """
+    verified, meta = identify_fulltext("", "10.1038/x", "A real paper")
+
+    assert verified and meta["undecidable"]
 
 
 # -- store: layout and manifests --------------------------------------------

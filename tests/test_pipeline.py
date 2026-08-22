@@ -25,6 +25,7 @@ from tests.fakes import (
     europepmc_search_json,
     fetch_config,
     make_pdf,
+    make_scanned_pdf,
     make_zip,
 )
 
@@ -48,7 +49,9 @@ def _http(routes=None, **search_overrides):
 
 def test_complete_fetch_writes_everything_and_records_provenance(tmp_path):
     http = _http({
-        XML: (200, b"<article><body/></article>", "application/xml"),
+        XML: (200, b'<article><front><article-meta><article-id pub-id-type="doi">'
+                   + DOI.encode() + b"</article-id></article-meta></front><body/></article>",
+              "application/xml"),
         SUPPL: (200, make_zip([("a_MOESM1_ESM.pdf", b"%PDF one"),
                                ("a_MOESM2_ESM.xlsx", b"xlsx two")]), "application/zip"),
     })
@@ -366,6 +369,112 @@ def test_paywall_response_is_never_written_as_fulltext(tmp_path):
     assert record["fulltext"]["status"] == "paywalled"
     assert record["fulltext"]["path"] is None
     assert not (tmp_path / store.doi_slug(DOI) / "fulltext.pdf").exists()
+
+
+# -- the document we accepted is not the paper we asked for -------------------
+#
+# Two papers in `corpus/` reached `status: complete` over a document that is not
+# the requested article. Neither was an error; both are why these tests exist.
+
+
+def test_a_wrong_document_is_kept_but_never_reported_complete(tmp_path):
+    """10.1126/science.adf1226: a 10x Genomics Visium user guide, stored as
+    `fulltext.pdf` and recorded `ok`, because nothing asked which paper it was.
+
+    Kept on disk deliberately. It was the only file any tier produced, and it is
+    the evidence for the problem line -- deleting it would leave a reader with a
+    verdict and nothing to check it against.
+    """
+    manual = make_pdf(text="10xGenomics.com CG000239 Rev F USER GUIDE Visium "
+                           "Spatial Gene Expression Reagent Kits " * 8)
+    http = _http({PDF_URL: (200, manual, "application/pdf")}, hasSuppl="N")
+
+    record = fetcher.fetch_publication(DOI, fetch_config(tmp_path, ["europepmc"]),
+                                       http=http)
+
+    assert record["fulltext"]["status"] == "identity_unverified"
+    assert record["status"] != "complete"
+    assert (tmp_path / store.doi_slug(DOI) / "fulltext.pdf").exists()
+    assert record["fulltext"]["path"] == "fulltext.pdf"
+    problem = " ".join(record["problems"])
+    assert "10xGenomics.com" in problem and "not the requested article" in problem
+    # And the attempt says which question was asked of which tier.
+    assert any(a.get("action") == "identify_pdf" and a["status"] == "unverified"
+               for a in record["attempts"])
+
+
+def test_a_later_tier_still_gets_a_chance_after_a_wrong_document(tmp_path):
+    """The reason an unidentifiable PDF is held rather than adopted.
+
+    Adopting the first PDF that parses ends the search -- `need_pdf` goes false and
+    no later tier is asked. So the wrong document is kept as a fallback and only
+    written if every tier fails to produce the paper.
+    """
+    manual = make_pdf(text="10xGenomics.com USER GUIDE Visium Reagent Kits " * 12)
+    real = make_pdf(text=f"TP53 knockout via CRISPR-Cas9. doi:{DOI} " * 12)
+    oa_xml = (f'<OA><records returned-count="1"><record id="{PMCID}" license="CC BY">'
+              f'<link format="pdf" href="ftp://ftp.ncbi.nlm.nih.gov/pub/pmc/'
+              f'oa_pdf/34/e8/x.{PMCID}.pdf"/></record></records></OA>').encode()
+    http = _http({
+        PDF_URL: (200, manual, "application/pdf"),
+        "oa.fcgi": (200, oa_xml, "application/xml"),
+        "oa_pdf": (200, real, "application/pdf"),
+    }, hasSuppl="N")
+
+    record = fetcher.fetch_publication(
+        DOI, fetch_config(tmp_path, ["europepmc", "pmc_oa"]), http=http)
+
+    assert record["fulltext"]["status"] == "ok"
+    assert record["fulltext"]["tier"] == "pmc_oa"
+    assert record["status"] == "complete"
+
+
+def test_a_correction_notice_is_never_the_article(tmp_path):
+    """10.1038/s41586-024-08560-0: an Author Correction for
+    10.1038/s41586-024-08150-0, fetched as a valid one-page PDF and valid JATS and
+    recorded `complete`. Both files carry the *correction's* own DOI and title, so
+    the identity check above passes on them -- correctly, and uselessly.
+
+    The manifest has to end up naming the DOI to fetch instead. A rejection sends a
+    reader back to the DOI list; an instruction ends the job.
+    """
+    http = _http({
+        SEARCH: (200, europepmc_search_json(
+            title="Author Correction: Progressive plasticity during colorectal "
+                  "cancer metastasis",
+            pubTypeList={"pubType": ["Published Erratum", "correction"]},
+            commentCorrectionList={"commentCorrection": [
+                {"type": "Erratum for",
+                 "reference": "Nature. 2025 Jan;637(8047):947-954. "
+                              "doi: 10.1038/s41586-024-08150-0."}]},
+            hasSuppl="N"), "application/json"),
+    })
+
+    record = fetcher.fetch_publication(DOI, fetch_config(tmp_path, ["europepmc"]),
+                                       http=http)
+
+    assert record["fulltext"]["status"] == "not_research_article"
+    assert record["status"] != "complete"
+    problem = " ".join(record["problems"])
+    assert "published erratum" in problem
+    assert "10.1038/s41586-024-08150-0" in problem and "fetch instead" in problem
+
+
+def test_a_scanned_article_is_not_downgraded_by_the_identity_check(tmp_path):
+    """A scanned PDF has no text to identify, and "cannot tell" is not "wrong".
+
+    `scanned_pdf_suspected` already says extraction will get nothing out of this
+    file. Replacing it with `identity_unverified` would claim we compared the
+    document against the DOI and found a mismatch, which is not what happened.
+    """
+    http = _http({PDF_URL: (200, make_scanned_pdf(), "application/pdf")},
+                 hasSuppl="N")
+
+    record = fetcher.fetch_publication(DOI, fetch_config(tmp_path, ["europepmc"]),
+                                       http=http)
+
+    assert record["fulltext"]["status"] == "scanned_pdf_suspected"
+    assert record["status"] == "complete"
 
 
 @pytest.mark.parametrize("reported,expected", [

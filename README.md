@@ -188,14 +188,44 @@ and `--json`/`--report` for the manifest. `usage` takes `--by-size` and `--limit
 The point of this vocabulary is that "no supplements" and "we failed to get the
 supplements" must never look alike.
 
-`fulltext.status`, twelve values: `ok` · `scanned_pdf_suspected` (saved, but has no
-extractable text — needs OCR) · `paywalled` · `not_in_oa_subset` ·
+`fulltext.status`, fourteen values: `ok` · `scanned_pdf_suspected` (saved, but has no
+extractable text — needs OCR) · `not_research_article` (the DOI resolves to a
+correction, retraction or editorial notice — a real publication, but not the paper) ·
+`identity_unverified` (a document arrived and does not appear to be this paper; the
+bytes are kept, because they are the evidence) · `paywalled` · `not_in_oa_subset` ·
 `proxy_not_configured` · `session_expired` · `javascript_challenge` (not a refusal:
 the file is public behind a proof-of-work page, so route through the browser tier) ·
 `publisher_stub_page` (a plausible 200-OK shell served to automation instead of the
 article) · `link_resolver_error` (a resolver answered "no such article here", so
 this is not a page we failed to parse) · `not_a_pdf` · `download_failed` ·
 `not_found`
+
+Only the first two mean the article is on disk. The two new ones exist because a
+document can be perfectly valid and still not be the paper that was asked for, and
+in this corpus that happened twice with no complaint from anything:
+
+| DOI | recorded | what was actually stored |
+|---|---|---|
+| `10.1038/s41586-024-08560-0` | `complete` | a one-page Nature *Author Correction* for `10.1038/s41586-024-08150-0` — its `article-type` is `correction`, and both PDF and JATS carry the *notice's* own DOI and title, so an identity check passes on them |
+| `10.1126/science.adf1226` | `complete` | a 71-page **10x Genomics Visium user guide** (CG000239) from a third-party CDN, picked up as the first non-supplement `.pdf` anchor on a page with no `citation_pdf_url`. First extracted block: `10xGenomics.com` |
+
+Three signals answer "is this a notice rather than an article", ordered strongest
+first, because none of them is always available: Europe PMC's `pubTypeList`, which
+needs no download at all; the JATS `article-type` on the root element; and the
+indexed title's prefix (`Author Correction: …`), which insists on the colon so that
+*Retraction of the primary cilium during mitosis* stays a research article. When a
+notice is identified, the manifest names the DOI to fetch instead — from Europe PMC's
+`commentCorrectionList` where it exists, rather than by guessing at the first other
+DOI in the text.
+
+"Is this the right paper" is answered by the DOI, with the title as a fallback. That
+order is measured, not assumed: the requested DOI appears in the first three pages of
+632 of the 633 full-text files in this corpus, the one exception being the vendor
+manual above — while the title alone, scored against 1,121 deliberately mismatched
+paper/title pairs, clears its threshold for 59 of them. So a missing DOI degrades the
+status and a title match rescues it, which keeps the real articles whose publishers
+omit the DOI. A document with no extractable text is `scanned_pdf_suspected` and is
+never called wrong: "cannot tell" is not "mismatch".
 
 `supplementary_status`, nine values:
 
@@ -222,8 +252,27 @@ know what it failed to match. Both count as settled, so an article still finishe
 measured case that forced the split is in `fetch/fetcher.py`.
 
 A refusal is never written to disk as `fulltext.pdf`: acceptance requires PDF magic
-bytes (not the `Content-Type` header, which lies), a successful parse, and a body
-that does not read like a purchase page.
+bytes (not the `Content-Type` header, which lies), a successful parse, a body that
+does not read like a purchase page, and — since the two cases above — evidence that
+the document is the article that was requested. A PDF that fails only the last test
+is still written, under `identity_unverified`: it may be the only copy any tier
+produced, and it is what a reader needs to check the verdict against. It is simply
+never counted as having the article, so it can never finish `complete`, and the
+extraction stage will not offer it as main text.
+
+### Re-checking a corpus fetched earlier
+
+The checks above run inside the tier loop, which fixes the next fetch and nothing
+already on disk. `revalidate` re-asks the question of what is already there, using
+the same functions and no network at all:
+
+    manuscript-fetch revalidate            # report only
+    manuscript-fetch revalidate --apply    # write the verdicts into the manifests
+
+It never downloads and never deletes; the worst it can do is move an article from
+`complete` to `failed`, which is the direction that makes a corpus more honest. Run
+over the 392 articles here it corrected exactly the two in the table above and left
+the other 390 untouched.
 
 ### Disk usage
 

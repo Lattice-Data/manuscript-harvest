@@ -47,7 +47,16 @@ from . import store
 from .http import Http
 from .identifiers import Identifiers, normalize_doi, resolve_identifiers
 from .sources import DEFAULT_TIERS, build_sources
-from .validate import better_pdf_failure
+from .validate import (
+    better_pdf_failure,
+    cited_dois,
+    identify_fulltext,
+    identity_problem,
+    jats_article_type,
+    jats_sample_text,
+    not_research_article,
+    pdf_sample_text,
+)
 from .sources.base import (
     ROLE_LANDING,
     ROLE_MEDIA,
@@ -272,8 +281,25 @@ def fetch_publication(
     suppl_advice: List[str] = []
     pdf_file = None
     pdf_tier = None
+    # A PDF that arrived, parsed, and is not this paper. Held rather than adopted
+    # so the loop keeps asking later tiers -- and kept rather than dropped, since
+    # for 10.1126/science.adf1226 it was the only file the browser tier produced
+    # and deleting it would delete the evidence for saying so.
+    unverified_pdf = None
+    unverified_tier = None
+    unverified_meta: dict = {}
     xml_file = None
     xml_tier = None
+    xml_status = "ok"
+    xml_identity: dict = {}
+    # Why this DOI is not a research article, from whichever signal saw it first.
+    # Europe PMC's own typing is checked before any tier runs, because it is the
+    # one signal that needs no download.
+    not_article: Optional[str] = not_research_article(
+        title=ids.title, pub_types=ids.pub_types)
+    if not_article and ids.corrects_doi:
+        not_article += (f"; it is a notice about {ids.corrects_doi}, which is the "
+                        f"DOI to fetch instead")
     landing_file = None
     supplements: List = []
     media: List = []
@@ -309,9 +335,42 @@ def fetch_publication(
 
         for item in result.files:
             if item.role == ROLE_PDF and pdf_file is None:
-                pdf_file, pdf_tier = item, source.name
+                # `validate_pdf` in the tier asked whether these bytes are a PDF.
+                # This asks whether they are *this* PDF, which no tier can: a tier
+                # is handed a URL, not a DOI to compare against.
+                verified, meta = identify_fulltext(
+                    pdf_sample_text(item.content), ids.doi, ids.title or "")
+                record["attempts"].append(
+                    {"tier": source.name, "action": "identify_pdf",
+                     "status": "verified" if verified else "unverified", **meta})
+                if verified:
+                    pdf_file, pdf_tier = item, source.name
+                elif unverified_pdf is None:
+                    unverified_pdf, unverified_tier = item, source.name
+                    unverified_meta = meta
             elif item.role == ROLE_XML and xml_file is None:
                 xml_file, xml_tier = item, source.name
+                xml_text = jats_sample_text(item.content)
+                article_type = jats_article_type(item.content)
+                record["attempts"].append(
+                    {"tier": source.name, "action": "jats_article_type",
+                     "status": article_type or "absent"})
+                verified, xml_identity = identify_fulltext(
+                    xml_text, ids.doi, ids.title or "")
+                xml_status = "ok" if verified else "identity_unverified"
+                not_article = not_article or not_research_article(
+                    article_type=article_type)
+                if not_article and not ids.corrects_doi:
+                    # Turning "this is not a paper" into "fetch
+                    # 10.1038/s41586-024-08150-0 instead" is the difference between
+                    # a rejection and an instruction. Only reached when Europe PMC
+                    # did not already name it: reading the first other DOI out of the
+                    # document is a guess, since a notice cites references too, and
+                    # `Identifiers.corrects_doi` is the same fact stated properly.
+                    named = cited_dois(xml_text, exclude=ids.doi, limit=1)
+                    if named:
+                        not_article += (f"; the notice names {named[0]}, which is "
+                                        f"probably the DOI to fetch instead")
             elif item.role == ROLE_LANDING and landing_file is None:
                 landing_file = item
             elif item.role in (ROLE_SUPPLEMENT, ROLE_MEDIA):
@@ -341,6 +400,25 @@ def fetch_publication(
     directory.mkdir(parents=True, exist_ok=True)
 
     pdf_status = _best_pdf_status(pdf_statuses)
+
+    # A PDF that is not this paper is adopted only once every tier has failed to
+    # produce one that is, and it is adopted under a status that says so. Keeping
+    # it is deliberate: for 10.1126/science.adf1226 the vendor manual was the only
+    # file any tier returned, and it is the evidence for the problem line.
+    if pdf_file is None and unverified_pdf is not None:
+        pdf_file, pdf_tier = unverified_pdf, unverified_tier
+        pdf_status = "identity_unverified"
+        record["problems"].append(identity_problem("PDF", ids.doi, ids.title or "", unverified_meta))
+    # A notice about an article is not the article, whatever its bytes parse as, so
+    # this outranks every other verdict and is applied last. 10.1038/s41586-024-08560-0
+    # is why: the Author Correction produced a valid one-page PDF and valid JATS,
+    # and both carry the *correction's* own DOI and title, so the identity check
+    # above said `verified` about them -- correctly, and uselessly.
+    if not_article is not None:
+        pdf_status = "not_research_article"
+        xml_status = "not_research_article"
+        record["problems"].append(not_article)
+
     if pdf_file is not None:
         entry = store.save_file(directory, store.FULLTEXT_PDF, pdf_file.content)
         entry.update({"status": pdf_status, "url": pdf_file.url,
@@ -351,8 +429,11 @@ def fetch_publication(
 
     if xml_file is not None:
         entry = store.save_file(directory, store.FULLTEXT_XML, xml_file.content)
-        entry.update({"url": xml_file.url, "label": xml_file.label, "tier": xml_tier})
+        entry.update({"status": xml_status, "url": xml_file.url,
+                      "label": xml_file.label, "tier": xml_tier})
         record["fulltext_xml"] = entry
+        if xml_status == "identity_unverified":
+            record["problems"].append(identity_problem("JATS XML", ids.doi, ids.title or "", xml_identity))
 
     if landing_file is not None:
         entry = store.save_file(directory, store.LANDING_HTML, landing_file.content)

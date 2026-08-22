@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from ..fetch import store
+from ..fetch.validate import IDENTITY_FAILURES
 from . import __version__, archive, docxfile, htmlfile, jats, pdf, spreadsheet
 from . import review, source_fingerprint
 from .blocks import (
@@ -83,6 +84,7 @@ SUPPLEMENTS_UNVERIFIED = "supplement_set_unverified"
 MAIN_TEXT_THIN = "main_text_thin"
 LANDING_PAGE_ONLY = "landing_page_only"
 MANIFEST_ENTRY_WITHOUT_PATH = "manifest_entry_without_a_path"
+MAIN_TEXT_NOT_THE_ARTICLE = "main_text_is_not_the_requested_article"
 
 CAVEATS = {
     SUPPLEMENTS_MISSING:
@@ -95,6 +97,8 @@ CAVEATS = {
         "the main text is a saved publisher landing page, not the article",
     MANIFEST_ENTRY_WITHOUT_PATH:
         "a supplementary entry in the manifest has no file on disk to read",
+    MAIN_TEXT_NOT_THE_ARTICLE:
+        "the fetch stage says the stored full text is not the requested article",
 }
 
 #: Fetch verdicts that mean files were lost, not merely uncounted. `none_retrieved`
@@ -105,7 +109,8 @@ _FETCH_SUPPLEMENTS_LOST = {"expected_but_missing", "partial_failure", "none_retr
 #: Caveats that stop an article being `complete`. `SUPPLEMENTS_UNVERIFIED` is
 #: deliberately absent: it is common (2 of the 6 articles here) and is a caveat,
 #: not a defect.
-_BLOCKING_CAVEATS = {SUPPLEMENTS_MISSING, MAIN_TEXT_THIN, LANDING_PAGE_ONLY}
+_BLOCKING_CAVEATS = {SUPPLEMENTS_MISSING, MAIN_TEXT_THIN, LANDING_PAGE_ONLY,
+                     MAIN_TEXT_NOT_THE_ARTICLE}
 
 SPREADSHEET_EXTENSIONS = {".xlsx", ".xlsm"}
 LEGACY_SPREADSHEET_EXTENSIONS = {".xls"}
@@ -749,6 +754,21 @@ def _apply_reviewed_section(result: FileResult, overrides) -> None:
     }
 
 
+def _rejected_by_fetch(entry: dict) -> bool:
+    """Did the fetch stage say these bytes are not the article we asked for?
+
+    The verdict was already made and written down; the trap is this stage not
+    reading it. 10.1126/science.adf1226 stored a 10x Genomics Visium user guide as
+    `fulltext.pdf`, and extraction turned it into 1,393 blocks of main text that
+    read exactly like a paper with nothing to report. A human's `main_text_source`
+    override still wins over this, because a human looked at the file.
+
+    Reads `validate.IDENTITY_FAILURES` rather than restating the pair, so the two
+    stages cannot disagree about which statuses mean "not the article".
+    """
+    return (entry or {}).get("status") in IDENTITY_FAILURES
+
+
 def _choose_main_text(article_dir: Path, record: dict, limits: Limits,
                       info: dict, labels: Dict[str, dict],
                       overrides=None) -> FileResult:
@@ -756,6 +776,20 @@ def _choose_main_text(article_dir: Path, record: dict, limits: Limits,
     forced = overrides.main_text_source() if overrides is not None else None
     xml_entry = record.get("fulltext_xml") or {}
     xml_path = xml_entry.get("path")
+    pdf_entry_early = record.get("fulltext") or {}
+    rejected = [name for name, entry in (("fulltext.nxml", xml_entry),
+                                         ("fulltext.pdf", pdf_entry_early))
+                if _rejected_by_fetch(entry)]
+    if rejected and forced is None:
+        info["not_the_requested_article"] = {
+            "files": rejected,
+            "fetch_status": {name: (entry or {}).get("status") for name, entry
+                             in (("fulltext.nxml", xml_entry),
+                                 ("fulltext.pdf", pdf_entry_early))
+                             if _rejected_by_fetch(entry)},
+        }
+        if _rejected_by_fetch(xml_entry):
+            xml_path = None
     xml_result: Optional[FileResult] = None
     if xml_path and (article_dir / xml_path).exists():
         xml_result = extract_path(article_dir / xml_path, xml_path, limits,
@@ -767,6 +801,8 @@ def _choose_main_text(article_dir: Path, record: dict, limits: Limits,
     pdf_path = pdf_entry.get("path")
     pdf_available = bool(pdf_path and (article_dir / pdf_path).exists())
     info["pdf_available"] = pdf_available
+    if forced is None and _rejected_by_fetch(pdf_entry):
+        pdf_available = False
 
     if forced == "jats" and xml_result is not None:
         info["source"] = "jats"
@@ -964,6 +1000,8 @@ def extract_article(article_dir, limits: Optional[Limits] = None, force: bool = 
         caveats.append(MAIN_TEXT_THIN)
     if main_info.get("landing_page_only"):
         caveats.append(LANDING_PAGE_ONLY)
+    if main_info.get("not_the_requested_article"):
+        caveats.append(MAIN_TEXT_NOT_THE_ARTICLE)
     if entries_without_path:
         caveats.append(MANIFEST_ENTRY_WITHOUT_PATH)
 

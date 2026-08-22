@@ -3,6 +3,7 @@
     manuscript-fetch get 10.1038/s41586-021-03852-1
     manuscript-fetch batch dois.txt
     manuscript-fetch usage --by-size     # what is taking the space
+    manuscript-fetch revalidate          # is each stored full text the right paper?
     manuscript-fetch prune --dry-run     # what a budget sweep would evict
     manuscript-fetch login          # one-time Stanford SSO, headed
     manuscript-fetch check          # is the browser session alive?
@@ -308,6 +309,37 @@ def cmd_prune(args) -> int:
     return 0
 
 
+def cmd_revalidate(args) -> int:
+    """Re-ask "is this the article?" of a corpus fetched before anything did.
+
+    Read-only unless `--apply`, because it can move an article from `complete` to
+    `failed` and that should be a decision rather than a side effect of looking.
+    Runs no network requests: everything it needs is the bytes and the manifest.
+    """
+    from .revalidate import revalidate_corpus
+
+    config = _apply_cli_overrides(load_config(args.config), args)
+    corpus_dir = config["fetch"]["corpus_dir"]
+    reports = revalidate_corpus(corpus_dir, apply=args.apply, slugs=args.slug or None)
+    if not reports:
+        print(f"{corpus_dir}: no articles", file=sys.stderr)
+        return 0
+
+    changed = [r for r in reports if r["changed"]]
+    for report in changed:
+        verb = "corrected" if args.apply else "would correct"
+        print(f"  {verb} {report['slug']}: fulltext {report['before']} -> "
+              f"{report['verdict']}")
+        for line in report["problems"]:
+            print(f"    ! {line}", file=sys.stderr)
+    print(f"\n{len(reports)} article(s) checked, {len(changed)} "
+          f"{'corrected' if args.apply else 'to correct'}", file=sys.stderr)
+    if changed and not args.apply:
+        print("re-run with --apply to write these verdicts into the manifests",
+              file=sys.stderr)
+    return 0
+
+
 def cmd_login(args) -> int:
     from .sources.proxy_browser import interactive_login
 
@@ -377,6 +409,18 @@ def build_parser() -> argparse.ArgumentParser:
                               help="override fetch.max_corpus_gb")
     prune_parser.add_argument("--dry-run", action="store_true")
     prune_parser.set_defaults(func=cmd_prune)
+
+    revalidate_parser = subparsers.add_parser(
+        "revalidate",
+        help="re-check that each stored full text is the article its DOI asked for",
+    )
+    revalidate_parser.add_argument("slug", nargs="*",
+                                   help="corpus directory names; default: all")
+    revalidate_parser.add_argument("--corpus-dir", default=None)
+    revalidate_parser.add_argument("--apply", action="store_true",
+                                   help="write the verdicts into the manifests "
+                                        "(default: report only)")
+    revalidate_parser.set_defaults(func=cmd_revalidate)
 
     login_parser = subparsers.add_parser(
         "login", help="open a headed browser to complete Stanford SSO once"
