@@ -17,7 +17,8 @@ import openpyxl
 import openpyxl.worksheet._read_only
 import pytest
 
-from manuscript_harvest.extract import archive, docxfile, htmlfile, jats, ooxml, pdf, sections
+from manuscript_harvest.extract import archive, docxfile, extractor, htmlfile, jats, ooxml, pdf
+from manuscript_harvest.extract import sections
 from manuscript_harvest.extract import spreadsheet, tables
 from manuscript_harvest.extract.blocks import (
     CAPTION,
@@ -1827,6 +1828,35 @@ def test_an_xlsx_cell_does_not_carry_an_invisible_character():
     assert card.header == ["EPCAM+ cells", "Stellate cell"]
     both = json.dumps(card.to_dict(), ensure_ascii=False) + tables.render(card, L)
     assert not [c for c in both if c in INVISIBLE]
+
+
+def test_a_landing_page_does_not_carry_an_invisible_character():
+    """A landing page is the whole article when there is no PDF and no XML, and
+    its `citation_abstract` meta tag is most of what there is to read. Both the
+    meta tags and the kept text runs become block text, so both are stripped --
+    the tags after the `citation_*` prefix check, which decides what is wanted
+    and is a separate question from what the value carries."""
+    page = ('<html><head>'
+            f'<meta name="citation_title" content="{DAMAGED}">'
+            '</head><body><p>'
+            + f"{DAMAGED}. " * 3 +
+            '</p></body></html>').encode("utf-8")
+    blocks, status, meta = htmlfile.blocks_from_html(page, "landing.html", L)
+    assert status == "ok"
+    assert meta["meta_tags"]["citation_title"] == [REPAIRED]
+    assert not [c for b in blocks for c in b.text if c in INVISIBLE]
+    assert any(REPAIRED in b.text for b in blocks if b.kind == PARAGRAPH)
+
+
+def test_a_prose_text_supplement_does_not_carry_an_invisible_character():
+    """The tabular branch of a `.txt` reaches `clean_cell` and was already clean;
+    the prose branch builds its paragraph by hand. Stripping before the split
+    rather than after is what matters here -- U+200B is not whitespace, so
+    collapsing first leaves the two spaces that surrounded it behind."""
+    body = f"Supplementary note\n\n{DAMAGED} were housed at 22 degrees.\n".encode("utf-8")
+    blocks, status, _ = extractor._plain_text_blocks(body, "note.txt", L, "supplement")
+    assert status == "ok"
+    assert [b.text for b in blocks][-1] == f"{REPAIRED} were housed at 22 degrees."
 
 
 def test_the_pdf_parser_still_strips_them_after_rejoining_hyphens():

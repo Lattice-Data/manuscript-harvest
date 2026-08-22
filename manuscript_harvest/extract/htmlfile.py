@@ -20,7 +20,7 @@ from html.parser import HTMLParser
 from typing import Dict, List, Tuple
 
 from ..fetch.validate import classify_denial
-from .blocks import METADATA, PARAGRAPH, Block
+from .blocks import METADATA, PARAGRAPH, Block, strip_invisible
 from .limits import Limits
 
 OK = "ok"
@@ -43,7 +43,8 @@ class _Reader(HTMLParser):
         self._skip_depth = 0
 
     def _flush(self) -> None:
-        text = re.sub(r"\s+", " ", "".join(self._buffer).replace("\xa0", " ")).strip()
+        joined = strip_invisible("".join(self._buffer)).replace("\xa0", " ")
+        text = re.sub(r"\s+", " ", joined).strip()
         self._buffer = []
         if text:
             self.chunks.append(text)
@@ -54,7 +55,12 @@ class _Reader(HTMLParser):
             name = (attributes.get("name") or attributes.get("property") or "").strip()
             content = (attributes.get("content") or "").strip()
             if name and content and name.lower().startswith(_WANTED_META_PREFIXES):
-                self.metas.setdefault(name, []).append(content)
+                # After the prefix check, not before: what counts as a wanted tag
+                # is a separate question from what its text may carry. These land
+                # in a METADATA block verbatim, and on a landing-page-only article
+                # `citation_abstract` is most of what there is to read.
+                self.metas.setdefault(strip_invisible(name), []).append(
+                    strip_invisible(content))
             return
         if tag in _SKIP_ELEMENTS:
             self._skip_depth += 1
