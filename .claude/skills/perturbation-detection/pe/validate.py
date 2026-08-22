@@ -25,7 +25,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pe.paper_text import (  # noqa: E402
-    fuzzy_match_quote, prompt_version, split_assembled, verify_quote_sourced,
+    entry_paths, fuzzy_match_quote, prompt_version, split_assembled,
+    verify_quote_sourced,
 )
 
 try:
@@ -489,7 +490,7 @@ def main() -> int:
         doi = entry["doi"]
         if "error" in entry:
             continue
-        raw_file = Path(entry["raw_file"])
+        prompt_file, raw_file = entry_paths(entry, work)
         if not raw_file.exists():
             print(f"  PENDING {doi}: no raw output yet")
             missing += 1
@@ -503,7 +504,7 @@ def main() -> int:
             continue
 
         result.setdefault("paper_id", doi)
-        paper_text = paper_text_from_prompt(Path(entry["prompt_file"]))
+        paper_text = paper_text_from_prompt(prompt_file)
         sources_text = split_assembled(paper_text)
         result = validate_result(
             result, sources_text, threshold, version,

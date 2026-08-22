@@ -379,3 +379,27 @@ def verify_quote_sourced(quote: str, claimed_source: str, sources_text: dict[str
 
     return {"status": "unverified", "source_id": claimed_source,
             "ratio": round(best_ratio, 4), "closest": best_id}
+
+def entry_paths(entry: dict, work: Path) -> tuple[Path, Path]:
+    """(prompt_file, raw_file) for a manifest entry, derived from the work dir.
+
+    The manifest stores these as strings, and older manifests were written with a
+    relative --work, so they only resolved from the cwd that created them. Deriving
+    from (work_dir, doi) instead makes a manifest portable, and matches what
+    pe/run_headless.sh has always done -- the two disagreeing is what let
+    pe.pending report 37 completed papers as missing while run_headless correctly
+    skipped them.
+    """
+    doi = entry["doi"]
+    prompt_file = work / "prompts" / f"{doi}.txt"
+    raw_file = work / "raw" / f"{doi}.json"
+    # Fall back to the recorded strings only if the derived layout is absent.
+    if not prompt_file.exists() and entry.get("prompt_file"):
+        candidate = Path(entry["prompt_file"])
+        if candidate.exists():
+            prompt_file = candidate
+    if not raw_file.exists() and entry.get("raw_file"):
+        candidate = Path(entry["raw_file"])
+        if candidate.exists():
+            raw_file = candidate
+    return prompt_file, raw_file
