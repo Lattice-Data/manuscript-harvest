@@ -23,7 +23,7 @@ from typing import List, Tuple
 
 from . import sections as sections_mod
 from . import tables
-from .blocks import HEADING, PARAGRAPH, TABLE, Block
+from .blocks import HEADING, PARAGRAPH, TABLE, Block, strip_invisible
 from .limits import Limits
 
 OK = "ok"
@@ -48,7 +48,8 @@ def _paragraph_text(element) -> str:
             parts.append(" ")
         elif tag in (W + "br", W + "cr"):
             parts.append(" ")
-    return re.sub(r"\s+", " ", "".join(parts).replace("\xa0", " ")).strip()
+    joined = strip_invisible("".join(parts)).replace("\xa0", " ")
+    return re.sub(r"\s+", " ", joined).strip()
 
 
 def _style(element) -> str:

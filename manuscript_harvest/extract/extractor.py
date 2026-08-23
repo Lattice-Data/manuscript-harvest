@@ -41,6 +41,7 @@ from .blocks import (
     blocks_sha256,
     number_blocks,
     render_markdown,
+    strip_invisible,
     write_blocks,
 )
 from .blocks import BLOCKS_NAME
@@ -307,7 +308,9 @@ def _plain_text_blocks(data: bytes, source_file: str, limits: Limits, role: str,
     meta: dict = {}
     blocks: List[Block] = []
     for index, chunk in enumerate(text.split("\n\n"), start=1):
-        paragraph = " ".join(chunk.split())
+        # Stripped before the split, not after: U+200B is not whitespace, so
+        # collapsing first would leave the two spaces around it behind.
+        paragraph = " ".join(strip_invisible(chunk).split())
         if len(paragraph) < limits.min_paragraph_chars:
             continue
         if len(paragraph) > limits.max_paragraph_chars:

@@ -33,7 +33,8 @@ from typing import Dict, List, Optional, Tuple
 
 from . import sections as sections_mod
 from . import tables
-from .blocks import CAPTION, HEADING, METADATA, PARAGRAPH, TABLE, Block
+from .blocks import (CAPTION, HEADING, METADATA, PARAGRAPH, TABLE, Block,
+                     strip_invisible)
 from .limits import Limits
 
 OK = "ok"
@@ -157,7 +158,8 @@ def _inline_text(element, block_sep: str = " ", keep_citations: bool = False) ->
             parts.append(node.tail)
 
     walk(element, True)
-    text = _SEP_RUN.sub(_SEP, "".join(parts).replace("\xa0", " ")).strip(_SEP)
+    joined = strip_invisible("".join(parts)).replace("\xa0", " ")
+    text = _SEP_RUN.sub(_SEP, joined).strip(_SEP)
     text = re.sub(r"\s+", " ", text.replace(_SEP, block_sep)).strip()
     return text if keep_citations else _tidy_citation_punctuation(text)
 

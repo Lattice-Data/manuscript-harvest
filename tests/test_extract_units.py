@@ -17,7 +17,8 @@ import openpyxl
 import openpyxl.worksheet._read_only
 import pytest
 
-from manuscript_harvest.extract import archive, docxfile, htmlfile, jats, ooxml, pdf, sections
+from manuscript_harvest.extract import archive, docxfile, extractor, htmlfile, jats, ooxml, pdf
+from manuscript_harvest.extract import sections
 from manuscript_harvest.extract import spreadsheet, tables
 from manuscript_harvest.extract.blocks import (
     CAPTION,
@@ -29,6 +30,7 @@ from manuscript_harvest.extract.blocks import (
     number_blocks,
     read_blocks,
     render_markdown,
+    strip_invisible,
     write_blocks,
 )
 from manuscript_harvest.extract.limits import Limits
@@ -1764,3 +1766,104 @@ def test_markdown_rendering_groups_by_file():
     text = render_markdown(blocks)
     assert "## FILE: f.nxml" in text and "## FILE: s.xlsx" in text
     assert "### Methods" in text and "```" in text
+
+
+# -- invisible characters, in every parser ------------------------------------
+
+#: One string carrying each of the three codepoints that were reaching
+#: `blocks.jsonl`, in the three shapes the corpus actually holds them in: inside
+#: a word, doubled before a word, and at the front of a cell.
+DAMAGED = "Bei\u00adGene sequenced 10\u200b\u200b\u22125 of the \ufeffEPCAM+ cells"
+REPAIRED = "BeiGene sequenced 10\u22125 of the EPCAM+ cells"
+
+INVISIBLE = "\u00ad\u200b\u200c\u200d\ufeff"
+
+
+def test_strip_invisible_removes_the_five_and_leaves_the_visible_marks():
+    """The set is exactly what is not on the page. A real hyphen, a minus sign
+    and a non-breaking space all are, and a parser that ate them would be
+    changing what the paper says rather than recovering it."""
+    assert strip_invisible("a\u00adb\u200bc\u200cd\u200de\ufefff") == "abcdef"
+    assert strip_invisible("scRNA-seq\u00a0\u22125") == "scRNA-seq\u00a0\u22125"
+
+
+def test_a_jats_paragraph_does_not_carry_an_invisible_character():
+    """13 of the 16 damaged blocks in the corpus were JATS.
+    10.1126/sciadv.adh1914 writes `resolution = 1 x 10<U+200B><U+200B>-5` seven
+    times over; 10.1158/2643-3230.bcd-21-0075 writes `Bei<U+00AD>Gene` and
+    `Vectra<U+00AD>Polaris`, where the soft hyphen is the whole difference
+    between the company's name and a string nothing matches."""
+    body = f"<sec><title>Methods</title><p>{DAMAGED}</p></sec>"
+    blocks, status, _ = jats.blocks_from_jats(jats_article(body), "f.nxml", L)
+    assert status == "ok"
+    body_paragraphs = [b for b in blocks
+                       if b.kind == PARAGRAPH and b.section == "methods"]
+    assert [b.text for b in body_paragraphs] == [REPAIRED]
+
+
+def test_a_docx_paragraph_does_not_carry_an_invisible_character():
+    """`<U+FEFF>Supplementary References` is a real heading in
+    10.1186/s13073-021-00933-8, and a search for the heading it prints as misses
+    it. Table cells come through the same function, so they are covered too."""
+    data = make_docx([("paragraph", DAMAGED),
+                      ("table", [["Primer", DAMAGED], ["Actb-F", "GGCTGTATTCC"]])])
+    blocks, status, _ = docxfile.blocks_from_docx(data, "s.docx", L)
+    assert status == "ok"
+    assert blocks[0].text == REPAIRED
+    card = next(b for b in blocks if b.kind == TABLE)
+    assert card.table["header"] == ["Primer", REPAIRED]
+
+
+def test_an_xlsx_cell_does_not_carry_an_invisible_character():
+    """10.1038/s42003-021-02562-8 names a marker-gene column
+    `<U+FEFF>EPCAM+ cells and cholangiocytes`, and 68 marks survived one sheet of
+    10.1038/s43587-024-00613-3. A block writes the card twice -- rendered as
+    `text` and structured as `table` -- so cleaning it at the cell is what makes
+    both true at once."""
+    data = make_xlsx({"marker genes": [["\ufeffEPCAM+ cells", "Stellate cell"],
+                                       ["\u200bALB", "PDGFR\u00adB"]]})
+    cards, status, _ = spreadsheet.cards_from_xlsx(data, "s.xlsx", L)
+    assert status == "ok"
+    card = cards[0]
+    assert card.header == ["EPCAM+ cells", "Stellate cell"]
+    both = json.dumps(card.to_dict(), ensure_ascii=False) + tables.render(card, L)
+    assert not [c for c in both if c in INVISIBLE]
+
+
+def test_a_landing_page_does_not_carry_an_invisible_character():
+    """A landing page is the whole article when there is no PDF and no XML, and
+    its `citation_abstract` meta tag is most of what there is to read. Both the
+    meta tags and the kept text runs become block text, so both are stripped --
+    the tags after the `citation_*` prefix check, which decides what is wanted
+    and is a separate question from what the value carries."""
+    page = ('<html><head>'
+            f'<meta name="citation_title" content="{DAMAGED}">'
+            '</head><body><p>'
+            + f"{DAMAGED}. " * 3 +
+            '</p></body></html>').encode("utf-8")
+    blocks, status, meta = htmlfile.blocks_from_html(page, "landing.html", L)
+    assert status == "ok"
+    assert meta["meta_tags"]["citation_title"] == [REPAIRED]
+    assert not [c for b in blocks for c in b.text if c in INVISIBLE]
+    assert any(REPAIRED in b.text for b in blocks if b.kind == PARAGRAPH)
+
+
+def test_a_prose_text_supplement_does_not_carry_an_invisible_character():
+    """The tabular branch of a `.txt` reaches `clean_cell` and was already clean;
+    the prose branch builds its paragraph by hand. Stripping before the split
+    rather than after is what matters here -- U+200B is not whitespace, so
+    collapsing first leaves the two spaces that surrounded it behind."""
+    body = f"Supplementary note\n\n{DAMAGED} were housed at 22 degrees.\n".encode("utf-8")
+    blocks, status, _ = extractor._plain_text_blocks(body, "note.txt", L, "supplement")
+    assert status == "ok"
+    assert [b.text for b in blocks][-1] == f"{REPAIRED} were housed at 22 degrees."
+
+
+def test_the_pdf_parser_still_strips_them_after_rejoining_hyphens():
+    """`pdf.py` owned this rule before it was shared, and its ordering is the
+    part a move can quietly break: the soft hyphen has to be removed *with* the
+    line break it caused, so a line-wrapped `interleukin-<soft hyphen>17A` keeps
+    its real hyphen instead of rejoining to `interleukin17A`."""
+    assert pdf._clean_block("interleukin-\u00ad\n17A \ufeffand \u200bIFN") == \
+        "interleukin-17A and IFN"
+
