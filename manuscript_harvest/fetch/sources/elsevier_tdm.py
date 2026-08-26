@@ -18,8 +18,24 @@ made the whole approach look unworkable -- see Trap 1:
   list at all, so a tier written against it finds nothing and reports an empty
   deposit for every article.
 - A DOI addresses the endpoint directly; there is no need to resolve a PII first.
-- On 10.1016/j.cell.2021.11.031 all 7 supplements enumerated, and all 7 were
-  **sha256-identical** to the hand-downloaded ScienceDirect copies.
+- The envelope and the field names are settled, re-measured through this tier:
+
+      {"attachment-metadata-response": {"coredata": {...}, "attachment": [...]}}
+
+  and each attachment carries `ref`, `filename`, `type`, `mimetype`, `size` and
+  `prism:url`, none of them `@`-prefixed. See `_field`.
+- **The bytes are the publisher's.** Run end to end against
+  10.1016/j.ccell.2021.03.007, whose 6 supplements were hand-downloaded from
+  ScienceDirect into the ground-truth set: all 6 arrived, all 6 were
+  **sha256-identical**, and the tier reported `fetched` with no problems. That is
+  the claim the whole tier rests on, and it is checked rather than assumed.
+- **Most of what `view=META` lists is not supplementary material.** On
+  10.1016/j.cell.2021.11.031 the response holds 59 attachments, of which 7 are the
+  `mmc` supplements: the other 52 are article figures in three renditions
+  (`IMAGE-DOWNSAMPLED`, `IMAGE-THUMBNAIL`, `IMAGE-HIGH-RES` -- ~38 MB of JPEG),
+  6 `ALTIMG` inline equations, and the AAM. The `ref` filter is what keeps that
+  cost off the wire; a tier that fetched every attachment would spend ~60 requests
+  and tens of megabytes per article to store figures no text comes out of.
 - 13 of 14 sampled corpus Elsevier DOIs enumerated supplements. The 14th,
   10.1016/j.coi.2022.102188, is a Current Opinion review that genuinely has none --
   and the hand-fetched corpus entry has none either.
@@ -117,13 +133,23 @@ AAM_TYPE = "AAM-PDF"
 AAM_REF = "am"
 
 #: Derived renditions of a *video* supplement -- a poster frame and a downsampled
-#: preview -- which carry `mmc` refs and would otherwise pass the Trap 1 filter.
-#: They are excluded rather than fetched, and the exclusion is recorded (see
-#: `_partition`): a thumbnail of `mmc4.mp4` is not a supplement the article has, and
-#: counting it would inflate the article's supplement count. With
-#: `text_bearing_only` on they would be refused anyway, so this matters most in the
-#: `text_bearing_only: false` case -- the one where the run is asking for everything
-#: and would otherwise get poster JPEGs presented as supplementary material.
+#: preview -- which carry `mmc` refs and so would otherwise pass the `ref` filter.
+#: Excluded rather than fetched, and the exclusion is recorded (see `_partition`): a
+#: thumbnail of `mmc4.mp4` is not a supplement the article has, and counting it would
+#: inflate the article's supplement count. With `text_bearing_only` on they would be
+#: refused as images anyway, so this matters most in a `text_bearing_only: false`
+#: run -- the one asking for everything, which would otherwise store poster JPEGs as
+#: supplementary material.
+#:
+#: **Not observed live, and that is the honest status of this constant.** The two
+#: names come from the probe that measured this API, on an article with video
+#: supplements. 10.1016/j.cell.2021.11.031, re-measured here in full, has none: its
+#: derived renditions are `IMAGE-DOWNSAMPLED`, `IMAGE-THUMBNAIL`, `IMAGE-HIGH-RES`
+#: and `ALTIMG`, and every one of them carries an *article figure* ref (`gr1`,
+#: `figs1`, `fx1`, `si1`) rather than an `mmc` one -- so the `ref` filter already
+#: excludes all 52 of them and this set never fires. It stays because the video case
+#: it names is real and costs nothing to guard; if a live video article ever shows a
+#: third spelling, `_partition`'s note is what will say so.
 DERIVED_RENDITION_TYPES = frozenset({"IMAGE-MMC-THUMBNAIL", "IMAGE-MMC-DOWNSAMPLED"})
 
 
@@ -155,23 +181,27 @@ class _Attachment:
         return self.type.upper() == AAM_TYPE or self.ref.lower() == AAM_REF
 
 
-def _field(entry: dict, *names: str) -> str:
-    """First present, non-empty value among `names`, as a string.
+def _field(entry: dict, name: str) -> str:
+    """`entry[name]` as a string, or `""` when absent or empty.
 
-    Elsevier's JSON prefixes some attributes with `@` and not others, and the probe
-    that measured this API recorded the field *names* (`ref`, `filename`, `mimetype`,
-    `size`, `prism:url`) without pinning which spelling reached it. Both are accepted
-    rather than one guessed: a wrong guess here does not fail loudly, it reports
-    every Elsevier article as having no supplements. `_list_attachments` records a
-    `payload_shape` note when it can find no attachment list at all, so a live run
-    surfaces the real spelling instead of silently reading zero -- the same move
-    `pmc_s3` makes with its `key_shape` note.
+    The spellings are settled, not guessed. Measured live on
+    10.1016/j.cell.2021.11.031, whose 59 attachments carry exactly these keys:
+
+        @_fa  eid  filename  height  mimetype  prism:url  ref  size  type  width
+
+    So none of the fields this tier reads is `@`-prefixed -- `@_fa` is Elsevier's
+    "full attribute" marker and nothing here wants it. An earlier version of this
+    function accepted `ref` *and* `@ref` for each field because the shape had not
+    been checked; that tolerance is gone, because it could only hide the one failure
+    that matters. A field this cannot find yields `""`, and a tier that silently
+    reads `""` for every `ref` reports every Elsevier article as having no
+    supplements -- so the shape is asserted in `_attachment_entries` instead, once,
+    where it can be recorded.
+
+    `str()` rather than the raw value because `size` arrives as a JSON string.
     """
-    for name in names:
-        value = entry.get(name)
-        if value not in (None, ""):
-            return str(value)
-    return ""
+    value = entry.get(name)
+    return "" if value in (None, "") else str(value)
 
 
 def _as_int(raw: str) -> Optional[int]:
@@ -191,33 +221,31 @@ def _attachment_entries(payload: dict) -> Optional[list]:
     "publisher says none" over an unparsed response is how a shape change turns into
     a corpus that quietly loses its supplements.
 
-    The envelope is `{"attachment-metadata-response": {"attachment": [...]}}`. The
-    single-key descent below is a fallback for the same reason `_field` accepts two
-    spellings: the probe pinned the attachment fields, not the wrapper's name.
+    The envelope is settled, measured live on 10.1016/j.cell.2021.11.031:
+
+        {"attachment-metadata-response": {"coredata": {...}, "attachment": [...]}}
+
+    `coredata` sits beside `attachment` and is ignored. An earlier version also tried
+    a blind descent into any single-key wrapper, on the grounds that the probe had
+    pinned the attachment fields but not the wrapper's name; that guess is no longer
+    needed and is gone, because a fallback that quietly finds an attachment list
+    somewhere else is indistinguishable from one that finds none.
     """
     if not isinstance(payload, dict):
         return None
-    scopes = [payload]
     envelope = payload.get("attachment-metadata-response")
-    if isinstance(envelope, dict):
-        scopes.append(envelope)
-    elif len(payload) == 1:
-        only = next(iter(payload.values()))
-        if isinstance(only, dict):
-            scopes.append(only)
-    for scope in scopes:
-        if "attachment" not in scope:
-            continue
-        found = scope["attachment"]
-        # An article with a single attachment returns a **dict**, not a list. Hit
-        # live during the probe, and the shape a reasonable implementation gets
-        # wrong: iterating a dict yields its keys, so the tier would build
-        # attachments out of the strings "ref" and "filename" and fetch nothing.
-        if isinstance(found, dict):
-            return [found]
-        if isinstance(found, list):
-            return found
+    if not isinstance(envelope, dict) or "attachment" not in envelope:
         return None
+    found = envelope["attachment"]
+    # An article with a single attachment returns a **dict**, not a list. Measured on
+    # a different article than the one above, and the shape a reasonable
+    # implementation gets wrong: iterating a dict yields its *keys*, so the tier
+    # would build attachments out of the strings "ref" and "filename" and fetch
+    # nothing -- for exactly the articles that have one supplement.
+    if isinstance(found, dict):
+        return [found]
+    if isinstance(found, list):
+        return found
     return None
 
 
@@ -275,12 +303,12 @@ class ElsevierTdmSource(Source):
 
         attachments = [
             _Attachment(
-                ref=_field(entry, "ref", "@ref"),
-                filename=_field(entry, "filename", "@filename"),
-                url=_field(entry, "prism:url", "@prism:url", "url"),
-                type=_field(entry, "type", "@type"),
-                mimetype=_field(entry, "mimetype", "@mimetype"),
-                size=_as_int(_field(entry, "size", "@size")),
+                ref=_field(entry, "ref"),
+                filename=_field(entry, "filename"),
+                url=_field(entry, "prism:url"),
+                type=_field(entry, "type"),
+                mimetype=_field(entry, "mimetype"),
+                size=_as_int(_field(entry, "size")),
             )
             for entry in entries
             if isinstance(entry, dict)
@@ -413,15 +441,36 @@ class ElsevierTdmSource(Source):
                            result: SourceResult) -> None:
         supplements = self._partition(attachments, result)
         if not supplements:
-            # Elsevier is the publisher, and this is its own attachment list, so an
-            # empty one is the publisher saying there are none -- the definition of
-            # `none_listed`. Safe to claim even though it is settled: the tier loop
-            # clears `need_supplements` only when files arrived or every named file
-            # was policy-refused, so this does not stop `pmc_supplements` or the
-            # browser tier from having their turn, and any file a later tier fetches
-            # outranks this in `_supplement_status`.
+            # Elsevier is the publisher and this is its own attachment list, so an
+            # attachment list with no multimedia component in it is the publisher
+            # saying there are none -- the definition of `none_listed`.
+            #
+            # **This diverges from `pmc_s3`, which leaves the equivalent case unset,
+            # and the divergence is the point.** That tier declines to because
+            # `supplement_or_media` is a filename heuristic, and calling its silence
+            # `none_listed` would promote a guess into a statement about what the
+            # publisher deposited. The filter here reads `ref` -- Elsevier's own
+            # field, the one Trap 1 says to trust over `type` -- so the objection
+            # does not transfer.
+            #
+            # It is settled, and it sits directly above the `hasSuppl` alarm in
+            # `fetcher._supplement_status`, so it *suppresses*
+            # `expected_but_missing`. That is intended: `hasSuppl` comes from Europe
+            # PMC's index, and for an Elsevier article that is frequently a
+            # metadata-only record, so letting the index override the publisher's own
+            # list would be backwards. This is the case that precedence was written
+            # for -- "a source that owns the content can state authoritatively that
+            # there are none, even when the index disagrees."
+            #
+            # Two things keep it honest. The claim needs a *readable* attachment list
+            # -- `_list_attachments` returns None for a body it could not parse, and
+            # this line is never reached for one. And it does not end the run: the
+            # tier loop clears `need_supplements` only when files arrived or every
+            # named file was policy-refused, so `pmc_supplements` and the browser
+            # tier still get their turn, and anything they fetch outranks this.
             result.suppl_status = "none_listed"
-            result.note("supplements", status="none_listed", listed=0)
+            result.note("supplements", status="none_listed", listed=0,
+                        attachments_seen=len(attachments))
             return
 
         listed: Dict[str, List[_Attachment]] = {ROLE_SUPPLEMENT: [], ROLE_MEDIA: []}

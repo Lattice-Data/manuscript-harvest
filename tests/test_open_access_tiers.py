@@ -2874,3 +2874,95 @@ def test_elsevier_tdm_is_tried_before_the_proof_of_work_wall():
         "the key has to be declared, or applies() cannot find it absent"
     assert shipped["fetch"]["min_interval_overrides"].get("api.elsevier.com"), \
         "one request per attachment against an API documented at 10 req/s"
+
+
+def test_the_live_envelope_and_field_names_are_the_ones_the_tier_reads():
+    """The shape as measured through this tier against 10.1016/j.cell.2021.11.031 --
+    `coredata` beside `attachment`, and not one of the fields `@`-prefixed.
+
+    This is what let the two-spelling tolerance come out of `_field`. It is pinned
+    here because the failure it guards is silent: a renamed field yields `""` for
+    every `ref`, and the tier then reports every Elsevier article as having no
+    supplements rather than raising.
+    """
+    body = json.dumps({"attachment-metadata-response": {
+        "coredata": {"prism:doi": ELS_DOI},
+        "attachment": [{
+            "@_fa": "true",
+            "eid": "1-s2.0-S0092867421013246-mmc1.xlsx",
+            "ref": "mmc1", "filename": "mmc1.xlsx", "type": "APPLICATION",
+            "mimetype": "application/excel", "size": "8",
+            "prism:url": ELS_OBJECT + "mmc1.xlsx",
+        }],
+    }}).encode()
+    http = FakeHttp({
+        ELS_LISTING: (200, body, "application/json"),
+        ELS_OBJECT + "mmc1.xlsx": (200, b"x" * 8, "application/excel"),
+    })
+    result = ElsevierTdmSource(http, _els_config()).fetch(
+        _els_ids(), need_pdf=False, need_supplements=True)
+
+    assert result.suppl_status == "fetched"
+    stored = result.by_role("supplement")
+    assert [f.name for f in stored] == ["mmc1.xlsx"]
+    assert stored[0].content_type == "application/excel", "mimetype is read, not guessed"
+
+
+def test_the_article_figure_renditions_are_left_on_the_wire():
+    """Measured: 52 of the 59 attachments on 10.1016/j.cell.2021.11.031 are article
+    figures in three renditions plus inline equations -- ~38 MB of JPEG. None of them
+    carries an `mmc` ref, so the `ref` filter excludes them before a request is spent.
+
+    Pinned because the cost of getting this wrong is not a wrong answer but a silent
+    one: ~60 requests and tens of megabytes per article, for files no text comes out
+    of. Asserted with the policy *off*, so it is the `ref` filter being tested here
+    and not `text_bearing_only` doing the work.
+    """
+    _http, result = _els_fetch(
+        _att(ref="gr1", filename="gr1_lrg.jpg", type="IMAGE-HIGH-RES"),
+        _att(ref="figs1", filename="figs1.sml", type="IMAGE-THUMBNAIL"),
+        _att(ref="fx1", filename="fx1.jpg", type="IMAGE-DOWNSAMPLED"),
+        _att(ref="si1", filename="si1.gif", type="ALTIMG"),
+        _att(ref="mmc1", filename="mmc1.xlsx"),
+        config=EVERYTHING,
+    )
+    assert [f.name for f in result.files] == ["mmc1.xlsx"], \
+        "only the mmc ref is supplementary material"
+    assert result.suppl_status == "fetched"
+
+
+def test_an_article_holding_only_figures_is_none_listed_and_this_is_the_risk():
+    """A response listing 52 figure renditions and no `mmc` attachment is the normal
+    shape of an Elsevier *review*, and it reads as `none_listed`.
+
+    **This diverges from `pmc_s3`, which leaves the same case unset, and the
+    divergence is deliberate.** That tier's objection is that
+    `supplement_or_media` is a *filename heuristic*, so calling its silence
+    `none_listed` would promote a guess into a statement about what the publisher
+    deposited. Here the filter reads `ref`, which is Elsevier's own field -- the same
+    one Trap 1 says to trust over `type` -- and Elsevier is the publisher, so the
+    objection does not transfer.
+
+    **The consequence a reader has to know: `none_listed` sits directly above the
+    `hasSuppl` alarm in `_supplement_status`, so this suppresses
+    `expected_but_missing`.** That is the intended direction. `hasSuppl` comes from
+    Europe PMC's index, which for an Elsevier article is frequently a metadata-only
+    record (`inEPMC=N`) -- the least reliable source in play -- and letting the index
+    override the publisher's own attachment list would be backwards. It is the case
+    the `none_listed` precedence was written for: "a source that owns the content can
+    state authoritatively that there are none, even when the index disagrees."
+
+    The exposure, stated plainly: if Elsevier ever spells a supplement with a ref
+    that does not begin `mmc`, this suppresses the alarm for that article. Two
+    articles measured live (7 and 6 supplements) used `mmc` throughout. The guard
+    that keeps this honest is that the claim needs a *readable* attachment list --
+    an unparsed body claims nothing, which
+    `test_a_body_with_no_attachment_list_never_claims_none_listed` pins.
+    """
+    _http, result = _els_fetch(
+        _att(ref="gr1", filename="gr1_lrg.jpg", type="IMAGE-HIGH-RES"),
+        config=EVERYTHING,
+    )
+    assert result.files == []
+    assert result.suppl_status == "none_listed", \
+        "the publisher's own list held no multimedia component"
