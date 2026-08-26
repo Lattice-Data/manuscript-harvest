@@ -133,15 +133,31 @@ class Http:
         params: Optional[dict] = None,
         accept: Optional[str] = None,
         allow_redirects: bool = True,
+        headers: Optional[Dict[str, str]] = None,
     ) -> Response:
         """GET with per-host throttling and retry on transient status codes.
 
         Returns a Response for any completed request, including 4xx -- callers
         distinguish "no supplements" (404) from "we failed" and need the status
         rather than an exception. Only transport failures raise.
+
+        `headers` exists for one reason: `elsevier_tdm` authenticates with an
+        `X-ELS-APIKey` header. Elsevier also accepts the key as an `apiKey` query
+        parameter, which would have matched `_ncbi_params` above exactly and needed
+        no new argument -- and that is the version not taken. Every tier records the
+        URL it asked for (`SourceResult.note(..., url=...)`), and those attempts are
+        written into `corpus/*/manifest.json`, so a key in the query string would be
+        copied onto disk once per Elsevier article and could only be removed by
+        rewriting every manifest. A header is not recorded anywhere, and the
+        download URLs Elsevier hands back carry no credential of their own.
         """
         params = self._ncbi_params(url, params)
-        headers = {"Accept": accept} if accept else {}
+        request_headers = dict(headers or {})
+        if accept:
+            # `accept=` predates this argument and every existing caller uses it, so
+            # it keeps winning: a caller passing both means the explicit `accept`.
+            request_headers["Accept"] = accept
+        headers = request_headers
         last_error = None
 
         for attempt in range(self.max_retries + 1):

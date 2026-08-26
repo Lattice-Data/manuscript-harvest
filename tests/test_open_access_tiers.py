@@ -27,16 +27,20 @@ the second group is what makes `text_bearing_only: false` a promise.
 `_unpack_tgz`, `ftp_to_https`); this file covers what the tier decides.
 """
 
+import json
+import os
 from pathlib import Path
+from unittest import mock
 
 import pytest
 import yaml
 
 from manuscript_harvest.fetch import store
-from manuscript_harvest.fetch.fetcher import _best_pdf_status
+from manuscript_harvest.fetch.fetcher import _best_pdf_status, _with_env_credentials
 from manuscript_harvest.fetch.http import HttpError, Response
 from manuscript_harvest.fetch.identifiers import Identifiers
 from manuscript_harvest.fetch.sources import DEFAULT_TIERS, OA_TIERS
+from manuscript_harvest.fetch.sources.elsevier_tdm import ElsevierTdmSource
 from manuscript_harvest.fetch.sources.biorxiv import (
     BiorxivSource,
     _media_links,
@@ -206,7 +210,8 @@ def test_every_details_failure_is_named_in_the_attempts(response, expected):
 
 def test_a_transport_failure_on_details_is_recorded_not_raised():
     class Exploding(FakeHttp):
-        def get(self, url, params=None, accept=None, allow_redirects=True):
+        def get(self, url, params=None, accept=None, allow_redirects=True,
+                headers=None):
             if "api.biorxiv.org" in url:
                 raise HttpError("connection reset")
             return super().get(url, params, accept, allow_redirects)
@@ -254,7 +259,8 @@ def test_a_pdf_that_is_not_a_pdf_is_rejected_by_name():
 
 def test_pdf_transport_failure_is_download_failed():
     class Exploding(FakeHttp):
-        def get(self, url, params=None, accept=None, allow_redirects=True):
+        def get(self, url, params=None, accept=None, allow_redirects=True,
+                headers=None):
             if FULL_PDF in url:
                 raise HttpError("read timeout")
             return super().get(url, params, accept, allow_redirects)
@@ -290,7 +296,8 @@ def test_jats_is_skipped_when_the_details_record_carries_no_link():
 
 def test_jats_transport_failure_is_recorded():
     class Exploding(FakeHttp):
-        def get(self, url, params=None, accept=None, allow_redirects=True):
+        def get(self, url, params=None, accept=None, allow_redirects=True,
+                headers=None):
             if JATS in url:
                 raise HttpError("dns failure")
             return super().get(url, params, accept, allow_redirects)
@@ -349,7 +356,8 @@ def test_a_broken_supplement_page_is_page_not_parsed():
 
 def test_supplement_page_transport_failure_says_so_in_the_problems():
     class Exploding(FakeHttp):
-        def get(self, url, params=None, accept=None, allow_redirects=True):
+        def get(self, url, params=None, accept=None, allow_redirects=True,
+                headers=None):
             if SUPPL_PAGE in url:
                 raise HttpError("connection reset")
             return super().get(url, params, accept, allow_redirects)
@@ -364,7 +372,8 @@ def test_some_supplements_arriving_is_partial_failure():
     """Two links found, one 404s. Reporting `fetched_unverified` would hide a real
     loss behind a status that already means "we cannot verify the count"."""
     class OneDead(FakeHttp):
-        def get(self, url, params=None, accept=None, allow_redirects=True):
+        def get(self, url, params=None, accept=None, allow_redirects=True,
+                headers=None):
             if url.endswith("media-2.zip"):
                 self.calls.append(url)
                 return Response(url=url, status=404, content=b"", content_type="")
@@ -389,7 +398,8 @@ def test_links_found_but_none_retrievable_is_page_not_parsed_not_none_listed():
 
 def test_a_supplement_transport_failure_is_a_problem_not_an_abort():
     class OneExplodes(FakeHttp):
-        def get(self, url, params=None, accept=None, allow_redirects=True):
+        def get(self, url, params=None, accept=None, allow_redirects=True,
+                headers=None):
             if url.endswith("media-1.pdf"):
                 raise HttpError("connection reset")
             return super().get(url, params, accept, allow_redirects)
@@ -589,7 +599,8 @@ def test_an_unreachable_article_page_leaves_the_status_to_the_fetcher(response, 
 
 def test_a_transport_failure_on_the_article_page_is_a_problem():
     class Exploding(FakeHttp):
-        def get(self, url, params=None, accept=None, allow_redirects=True):
+        def get(self, url, params=None, accept=None, allow_redirects=True,
+                headers=None):
             raise HttpError("connection reset")
 
     result = PmcSupplementsSource(Exploding()).fetch(
@@ -644,7 +655,8 @@ def test_a_dead_publisher_host_falls_through_to_the_bin_url():
 
 def test_a_transport_failure_on_one_candidate_still_tries_the_next():
     class SpringerDown(FakeHttp):
-        def get(self, url, params=None, accept=None, allow_redirects=True):
+        def get(self, url, params=None, accept=None, allow_redirects=True,
+                headers=None):
             if SPRINGER in url:
                 raise HttpError("connection reset")
             return super().get(url, params, accept, allow_redirects)
@@ -686,7 +698,8 @@ def test_a_plain_failure_is_partial_failure_without_blaming_the_gate():
 
 def test_one_gated_file_among_several_is_still_partial_failure():
     class OneGated(FakeHttp):
-        def get(self, url, params=None, accept=None, allow_redirects=True):
+        def get(self, url, params=None, accept=None, allow_redirects=True,
+                headers=None):
             if MOESM2 in url:
                 self.calls.append(url)
                 return Response(url=url, status=200, content=POW_HTML,
@@ -812,7 +825,8 @@ def test_a_broken_oa_service_is_not_read_as_absence(response, status):
 
 def test_a_transport_failure_on_oa_fcgi_is_a_recorded_problem():
     class Exploding(FakeHttp):
-        def get(self, url, params=None, accept=None, allow_redirects=True):
+        def get(self, url, params=None, accept=None, allow_redirects=True,
+                headers=None):
             raise HttpError("connection reset")
 
     result = PmcOaSource(Exploding()).fetch(_pmc_ids(), need_pdf=True, need_supplements=False)
@@ -860,7 +874,8 @@ def test_the_advertised_pdf_is_still_validated(response, expected):
 
 def test_a_transport_failure_on_the_pdf_is_download_failed():
     class Exploding(FakeHttp):
-        def get(self, url, params=None, accept=None, allow_redirects=True):
+        def get(self, url, params=None, accept=None, allow_redirects=True,
+                headers=None):
             if OA_PDF in url:
                 raise HttpError("read timeout")
             return super().get(url, params, accept, allow_redirects)
@@ -973,7 +988,8 @@ def test_a_package_that_cannot_be_read_is_named_not_swallowed(response, expected
 
 def test_a_transport_failure_on_the_package_is_a_recorded_problem():
     class Exploding(FakeHttp):
-        def get(self, url, params=None, accept=None, allow_redirects=True):
+        def get(self, url, params=None, accept=None, allow_redirects=True,
+                headers=None):
             if OA_TGZ in url:
                 raise HttpError("connection reset")
             return super().get(url, params, accept, allow_redirects)
@@ -1486,7 +1502,8 @@ def test_a_transport_failure_on_one_object_does_not_sink_the_rest():
     deposit = [(f"{V1}/supplement-1.xlsx", 100), (f"{V1}/supplement-2.xlsx", 100)]
 
     class Exploding(FakeS3Http):
-        def get(self, url, params=None, accept=None, allow_redirects=True):
+        def get(self, url, params=None, accept=None, allow_redirects=True,
+                headers=None):
             if "supplement-1.xlsx" in url:
                 raise HttpError("connection reset")
             return super().get(url, params, accept, allow_redirects)
@@ -1593,7 +1610,8 @@ def test_an_unreadable_listing_claims_nothing(page, status):
 
 def test_a_transport_failure_on_the_listing_is_a_recorded_problem():
     class Exploding(FakeHttp):
-        def get(self, url, params=None, accept=None, allow_redirects=True):
+        def get(self, url, params=None, accept=None, allow_redirects=True,
+                headers=None):
             raise HttpError("connection reset")
 
     result = PmcS3Source(Exploding()).fetch(_pmc_ids(), need_pdf=True,
@@ -1675,7 +1693,8 @@ def test_an_oversize_jats_is_refused_without_costing_the_pdf():
 
 def test_a_transport_failure_on_the_s3_xml_is_recorded():
     class Exploding(FakeS3Http):
-        def get(self, url, params=None, accept=None, allow_redirects=True):
+        def get(self, url, params=None, accept=None, allow_redirects=True,
+                headers=None):
             if f"{V1}.xml" in url:
                 raise HttpError("read timeout")
             return super().get(url, params, accept, allow_redirects)
@@ -1825,7 +1844,8 @@ def test_a_broken_archive_endpoint_is_partial_failure_not_silence():
 
 def test_a_transport_failure_on_the_archive_is_partial_failure():
     class Exploding(FakeHttp):
-        def get(self, url, params=None, accept=None, allow_redirects=True):
+        def get(self, url, params=None, accept=None, allow_redirects=True,
+                headers=None):
             raise HttpError("connection reset")
 
     result = EuropePmcSource(Exploding()).fetch(
@@ -1940,7 +1960,8 @@ def test_no_pdf_url_and_no_pmcid_is_not_found_without_a_request():
 
 def test_a_transport_failure_moves_to_the_next_candidate():
     class FirstExplodes(FakeHttp):
-        def get(self, url, params=None, accept=None, allow_redirects=True):
+        def get(self, url, params=None, accept=None, allow_redirects=True,
+                headers=None):
             if OA_PDF_URL in url:
                 raise HttpError("connection reset")
             return super().get(url, params, accept, allow_redirects)
@@ -1996,7 +2017,8 @@ def test_a_missing_xml_never_costs_the_pdf(response, expected):
 
 def test_a_transport_failure_on_the_xml_is_recorded():
     class XmlExplodes(FakeHttp):
-        def get(self, url, params=None, accept=None, allow_redirects=True):
+        def get(self, url, params=None, accept=None, allow_redirects=True,
+                headers=None):
             if EPMC_XML in url:
                 raise HttpError("read timeout")
             return super().get(url, params, accept, allow_redirects)
@@ -2204,7 +2226,8 @@ def test_a_redirect_is_recorded_because_the_verdict_came_from_where_it_landed():
     landing = "https://publisher.example/paywall"
 
     class Redirecting:
-        def get(self, url, params=None, accept=None, allow_redirects=True):
+        def get(self, url, params=None, accept=None, allow_redirects=True,
+                headers=None):
             return Response(url=landing, status=200, content=PAYWALL_HTML * 20,
                             content_type="application/pdf")
 
@@ -2416,3 +2439,634 @@ def test_fetching_everything_leaves_no_filter_and_no_note():
     assert http.called_matching("supplement-1.jpg") == 1
     assert result.skipped_not_text_bearing == []
     assert not [a for a in result.attempts if a["action"] == "text_bearing_filter"]
+
+
+# -- Elsevier TDM: the only route to a Cell Press supplement ------------------
+#
+# The tier exists because Cloudflare serves `proxy_browser` a challenge on
+# ScienceDirect and Cell Press, so for a `10.1016` article these files have no other
+# automated route at all -- which is why the tests below lean on the *silent* failure
+# modes. Every trap here was measured live on 2026-08-26 (see the module docstring of
+# `sources/elsevier_tdm.py`), and each one fails by reporting an article as having no
+# supplements rather than by raising, which is the shape that survives a test suite.
+
+ELS_DOI = "10.1016/j.cell.2021.11.031"
+ELS_KEY = "els-key-that-must-never-be-recorded"
+ELS_LISTING = "api.elsevier.com/content/object/doi/"
+ELS_OBJECT = "https://api.elsevier.com/content/object/eid/1-s2.0-X-"
+
+
+def _els_config(**overrides) -> dict:
+    config = {"elsevier_api_key": ELS_KEY}
+    config.update(overrides)
+    return config
+
+
+def _els_ids(doi: str = ELS_DOI, publisher: str = "Elsevier BV") -> Identifiers:
+    return Identifiers(doi=doi, doi_raw=doi, publisher=publisher, has_suppl=True)
+
+
+def _att(ref="mmc1", filename=None, type="APPLICATION", size=64,
+         mimetype="application/octet-stream"):
+    """One `view=META` attachment entry, as Elsevier spells it."""
+    filename = filename or f"{ref}.xlsx"
+    return {
+        "ref": ref,
+        "filename": filename,
+        "type": type,
+        "mimetype": mimetype,
+        "size": str(size) if size is not None else None,
+        "prism:url": ELS_OBJECT + filename,
+    }
+
+
+def _els_meta(*attachments) -> bytes:
+    """The envelope, with `attachment` as a list."""
+    body = {"attachment-metadata-response": {"attachment": list(attachments)}}
+    return json.dumps(body).encode()
+
+
+def _els_http(*attachments, listing=None, routes=None, bodies=None) -> FakeHttp:
+    """The listing plus one object route per attachment, sized to match its `size`.
+
+    Sizes agree by default so that the integrity check is not what a test trips over
+    by accident; `bodies` overrides the bytes for one filename, which is how the
+    mismatch case is set up.
+    """
+    base = {ELS_LISTING: listing or (200, _els_meta(*attachments), "application/json")}
+    for entry in attachments:
+        declared = int(entry["size"]) if entry.get("size") else 8
+        payload = (bodies or {}).get(entry["filename"], b"x" * declared)
+        base[entry["prism:url"]] = (200, payload, entry["mimetype"])
+    base.update(routes or {})
+    return FakeHttp(base)
+
+
+def _els_fetch(*attachments, config=None, need_pdf=False, need_supplements=True,
+               ids=None, **http_kwargs):
+    http = _els_http(*attachments, **http_kwargs)
+    source = ElsevierTdmSource(http, _els_config(**(config or {})))
+    result = source.fetch(ids or _els_ids(), need_pdf=need_pdf,
+                          need_supplements=need_supplements)
+    return http, result
+
+
+# -- gating -------------------------------------------------------------------
+
+def test_applies_needs_a_key_and_an_elsevier_doi():
+    """The key gate is what makes a credentialed tier safe to ship in `OA_TIERS`:
+    without one this tier is a no-op, so a user who never registered gets no requests
+    and no failed attempts, and `--oa-only` keeps meaning what it says."""
+    with_key = ElsevierTdmSource(FakeHttp(), _els_config())
+    assert with_key.applies(_els_ids()) is True
+    assert with_key.applies(_els_ids(doi=DOI, publisher="Springer Nature")) is False
+
+    assert ElsevierTdmSource(FakeHttp(), {}).applies(_els_ids()) is False
+    assert ElsevierTdmSource(FakeHttp(), {"elsevier_api_key": "   "}).applies(
+        _els_ids()) is False, "whitespace is not a key; an empty header 401s"
+
+
+def test_a_publisher_naming_elsevier_applies_where_the_prefix_is_unknown():
+    """`ELSEVIER_DOI_PREFIXES` is a measured fast path, not the definition -- Elsevier
+    owns prefixes this list does not name, and a missing one should cost a slower
+    route rather than the files."""
+    source = ElsevierTdmSource(FakeHttp(), _els_config())
+    unlisted = _els_ids(doi="10.9999/unknown.prefix", publisher="Elsevier Inc.")
+    assert source.applies(unlisted) is True
+
+
+def test_nothing_needed_costs_no_request():
+    """The listing is the only thing this tier can ask for, so asking for it to learn
+    nothing is the whole cost of getting this wrong."""
+    http, result = _els_fetch(_att(), need_pdf=False, need_supplements=False)
+    assert http.calls == []
+    assert result.suppl_status is None and result.pdf_status is None
+
+
+# -- the two shapes that fail silently ---------------------------------------
+
+def test_a_single_attachment_arrives_as_a_dict_not_a_list():
+    """Measured live. An article with exactly one attachment returns `attachment` as a
+    **dict**, and iterating a dict yields its *keys* -- so the tier builds attachments
+    out of the strings "ref" and "filename" and fetches nothing, for precisely the
+    articles that have one supplement."""
+    only = _att(ref="mmc1", filename="mmc1.xlsx")
+    body = json.dumps(
+        {"attachment-metadata-response": {"attachment": only}}).encode()
+    http = _els_http(only, listing=(200, body, "application/json"))
+    result = ElsevierTdmSource(http, _els_config()).fetch(
+        _els_ids(), need_pdf=False, need_supplements=True)
+
+    assert [f.name for f in result.by_role("supplement")] == ["mmc1.xlsx"]
+    assert result.suppl_status == "fetched"
+
+
+def test_a_video_supplement_survives_where_a_type_filter_would_drop_it():
+    """Trap 1, and the reason the filter is on `ref` rather than `type`. Supplements
+    arrive as `VIDEO` and `VIDEO-FLASH` as well as `APPLICATION`, so filtering on
+    `type == "APPLICATION"` silently loses all four video supplements of
+    10.1016/j.cell.2020.11.028.
+
+    Asserted with the policy off, because a video is only fetched at all in a
+    `text_bearing_only: false` run -- the point here is that it was *enumerated*.
+    """
+    _http, result = _els_fetch(
+        _att(ref="mmc1", filename="mmc1.xlsx"),
+        _att(ref="mmc2", filename="mmc2.mp4", type="VIDEO"),
+        _att(ref="mmc3", filename="mmc3.flv", type="VIDEO-FLASH"),
+        config=EVERYTHING,
+    )
+    assert [f.name for f in result.by_role("supplement")] == ["mmc1.xlsx"]
+    assert [f.name for f in result.by_role("media")] == ["mmc2.mp4", "mmc3.flv"], \
+        "audio/video is the media role, and it is decided on the extension"
+
+
+def test_a_video_is_refused_by_policy_and_named_rather_than_dropped():
+    """The same two videos under the shipped default. They are refused, and the
+    manifest still says what a `text_bearing_only: false` run would have fetched --
+    which is the difference between this and the `type` filter above: both come away
+    with one file, and only one of them leaves a record."""
+    _http, result = _els_fetch(
+        _att(ref="mmc1", filename="mmc1.xlsx"),
+        _att(ref="mmc2", filename="mmc2.mp4", type="VIDEO"),
+    )
+    assert [f.name for f in result.by_role("media")] == []
+    assert [e["name"] for e in result.skipped_not_text_bearing] == ["mmc2.mp4"]
+    filter_notes = [a for a in result.attempts if a.get("action") == "text_bearing_filter"]
+    assert filter_notes and filter_notes[0]["files"] == ["mmc2.mp4"]
+    assert result.suppl_status == "fetched", \
+        "a policy refusal is not a loss and must not demote the verdict"
+
+
+def test_the_video_poster_frames_are_excluded_and_recorded():
+    """`IMAGE-MMC-THUMBNAIL` and `IMAGE-MMC-DOWNSAMPLED` carry `mmc` refs, so the
+    Trap 1 filter would take them -- and they are derived renditions of a video, not
+    supplements the article has. Counting them would inflate the article's supplement
+    count. Excluded, but *recorded*: nothing this tool drops is silent.
+
+    Asserted with the policy off, which is the run where it matters -- with it on
+    these would be refused as images anyway.
+    """
+    _http, result = _els_fetch(
+        _att(ref="mmc1", filename="mmc1.mp4", type="VIDEO"),
+        _att(ref="mmc1", filename="mmc1.jpg", type="IMAGE-MMC-THUMBNAIL"),
+        _att(ref="mmc1", filename="mmc1-small.jpg", type="IMAGE-MMC-DOWNSAMPLED"),
+        config=EVERYTHING,
+    )
+    assert [f.name for f in result.files] == ["mmc1.mp4"]
+    derived = [a for a in result.attempts
+               if a.get("action_detail") == "derived_rendition"]
+    assert derived and derived[0]["skipped"] == 2
+    assert sorted(derived[0]["files"]) == ["mmc1-small.jpg", "mmc1.jpg"]
+
+
+# -- the free integrity check --------------------------------------------------
+
+def test_a_declared_size_mismatch_is_never_written_to_disk():
+    """The listing declares `size` and it matched the bytes received on every file the
+    probe measured, so a truncated transfer is detectable here for free -- something
+    `pmc_s3` cannot do, because S3's `<Size>` is sometimes absent. A short body must
+    not reach the corpus: it would look like a valid spreadsheet."""
+    entry = _att(ref="mmc1", filename="mmc1.xlsx", size=1024)
+    _http, result = _els_fetch(entry, bodies={"mmc1.xlsx": b"truncated"})
+
+    assert result.files == []
+    mismatch = [a for a in result.attempts if a.get("status") == "size_mismatch"]
+    assert mismatch and mismatch[0]["declared"] == 1024
+    assert mismatch[0]["received"] == len(b"truncated")
+    assert any("declared 1024 bytes and sent 9" in p for p in result.problems)
+
+
+def test_an_oversize_attachment_is_refused_without_being_downloaded():
+    """The pre-check the listing pays for: `size` is known before the request, so the
+    cap costs no transfer at all."""
+    entry = _att(ref="mmc1", filename="mmc1.xlsx", size=300 * 1024 * 1024)
+    http, result = _els_fetch(entry, config={"max_file_mb": 200})
+
+    assert http.called_matching("mmc1.xlsx") == 0, "nothing may be transferred"
+    assert result.files == []
+    assert any("exceeds the 200 MB cap" in p for p in result.problems)
+
+
+# -- the cap, and the ordering the codebase requires pinned per tier ----------
+
+def test_an_elsevier_refused_figure_never_spends_a_cap_slot_a_table_needed():
+    """`keep_text_bearing` before `apply_files_cap`, always. Its docstring asks each
+    tier to pin this rather than trust the sentence, and the measurement behind the
+    rule is `pmc_s3`'s: eight figures took cap slots from eight supplementary tables.
+
+    Both files here are the *supplement* role -- a `.jpg` is an image, not audio or
+    video -- so they compete for the same one slot, and the wrong order loses the
+    spreadsheet to a figure that would then be refused anyway.
+    """
+    http, result = _els_fetch(
+        _att(ref="mmc1", filename="mmc1.jpg", type="IMAGE"),
+        _att(ref="mmc2", filename="mmc2.xlsx"),
+        config={"max_files": 1},
+    )
+    assert [f.name for f in result.by_role("supplement")] == ["mmc2.xlsx"]
+    assert http.called_matching("mmc1.jpg") == 0
+    assert not any(a.get("action") == "cap" for a in result.attempts), \
+        "the figure left by policy, so the cap was never reached"
+
+
+def test_the_cap_counts_files_not_links():
+    """"file", not "link": the API enumerated these, so a dropped one is a known file
+    rather than an anchor that may not have been distinct -- the division
+    `apply_files_cap` keeps a parameter for."""
+    _http, result = _els_fetch(
+        _att(ref="mmc1", filename="mmc1.xlsx"),
+        _att(ref="mmc2", filename="mmc2.xlsx"),
+        config={"max_files": 1},
+    )
+    assert any("supplementary file(s) not fetched" in p for p in result.problems)
+    cap = [a for a in result.attempts if a.get("action") == "cap"]
+    assert cap and cap[0]["via"] == "object_api" and cap[0]["dropped"] == 1
+    assert result.suppl_status == "fetched_unverified", \
+        "the cap stopped us short of a file the listing did name"
+
+
+# -- what the statuses claim ---------------------------------------------------
+
+def test_the_publishers_own_index_earns_fetched():
+    """`fetched`, not `fetched_unverified`. The argument is `fetcher`'s own for
+    `pmc_s3`: this is the deposit's index served by the party holding the bytes, not a
+    regex over a rendered page -- and here that party is the publisher."""
+    _http, result = _els_fetch(
+        _att(ref="mmc1", filename="mmc1.xlsx"),
+        _att(ref="mmc2", filename="mmc2.docx"),
+    )
+    assert result.suppl_status == "fetched"
+    assert len(result.by_role("supplement")) == 2
+
+
+def test_an_empty_attachment_list_is_the_publisher_saying_none():
+    """Measured: 10.1016/j.coi.2022.102188, a Current Opinion review, genuinely has
+    none and the hand-fetched corpus entry has none either. Elsevier is the publisher,
+    so its own empty attachment list is `none_listed` by definition.
+
+    Settled, and safe to claim: `fetcher`'s loop clears `need_supplements` only when
+    files arrived or every named file was policy-refused, so this does not stop
+    `pmc_supplements` or the browser tier from having their turn.
+    """
+    _http, result = _els_fetch()
+    assert result.suppl_status == "none_listed"
+
+
+def test_a_body_with_no_attachment_list_never_claims_none_listed():
+    """The guard that separates "the publisher says none" from "this code could not
+    read the response". Claiming the settled `none_listed` over an unparsed body is
+    how a shape change at Elsevier would quietly empty the Elsevier half of a corpus
+    -- so an unreadable envelope records its keys and claims nothing."""
+    body = json.dumps({"service-error": {"status": {"statusText": "x"}}}).encode()
+    http = _els_http(listing=(200, body, "application/json"))
+    result = ElsevierTdmSource(http, _els_config()).fetch(
+        _els_ids(), need_pdf=False, need_supplements=True)
+
+    assert result.suppl_status is None, "no claim on a body we could not read"
+    shape = [a for a in result.attempts if a.get("status") == "payload_shape"]
+    assert shape and shape[0]["keys"] == ["service-error"], \
+        "record the keys, so a live run can name the real envelope"
+
+
+@pytest.mark.parametrize("status,expected", [
+    (401, "auth_failed"),
+    (403, "not_entitled"),
+    (404, "no_object_record"),
+    (429, "rate_limited"),
+])
+def test_the_client_errors_stay_four_different_answers(status, expected):
+    """Four codes, four operator actions: the key is wrong, the key is real but
+    unlicensed, Elsevier has no object record for this DOI, and the unpublished quota
+    is reached. Folding them into one `download_failed` makes the only one a user can
+    fix indistinguishable from the three they cannot.
+
+    None of them claims a supplement status: a 404 in particular is not an
+    authoritative "no supplements", so the later tiers keep their turn.
+    """
+    http = _els_http(listing=(status, b"", "application/json"))
+    result = ElsevierTdmSource(http, _els_config()).fetch(
+        _els_ids(), need_pdf=False, need_supplements=True)
+
+    assert [a["status"] for a in result.attempts] == [expected]
+    assert result.suppl_status is None
+
+
+def test_a_failed_download_is_a_partial_failure_not_an_empty_deposit():
+    entry = _att(ref="mmc1", filename="mmc1.xlsx")
+    http = _els_http(entry, routes={entry["prism:url"]: (500, b"", "text/plain")})
+    result = ElsevierTdmSource(http, _els_config()).fetch(
+        _els_ids(), need_pdf=False, need_supplements=True)
+
+    assert result.suppl_status == "partial_failure"
+    assert any("could not be fetched" in p for p in result.problems)
+
+
+# -- the accepted author manuscript ------------------------------------------
+
+def test_the_author_manuscript_is_accepted_as_the_article_pdf():
+    """`type == "AAM-PDF"`, `ref == "am"`, present on 8 of the 14 sampled articles.
+    It is the accepted manuscript rather than the typeset version of record, which is
+    recorded in the attempt -- but it is article PDF that Cloudflare otherwise puts
+    out of reach entirely, and for text extraction the difference is cosmetic."""
+    aam = _att(ref="am", filename="am.pdf", type="AAM-PDF", size=None,
+               mimetype="application/pdf")
+    http = _els_http(aam, bodies={"am.pdf": make_pdf()})
+    result = ElsevierTdmSource(http, _els_config()).fetch(
+        _els_ids(), need_pdf=True, need_supplements=False)
+
+    assert [f.name for f in result.by_role("fulltext_pdf")] == ["fulltext.pdf"]
+    rendition = [a for a in result.attempts if a.get("action") == "author_manuscript"]
+    assert rendition and rendition[0]["rendition"] == "accepted_author_manuscript", \
+        "the manifest has to say which rendition this is"
+
+
+def test_the_author_manuscript_is_not_counted_as_a_supplement():
+    """`ref == "am"` does not begin `mmc`, so it must not reach the supplement list --
+    otherwise every article offering an AAM reports one extra supplement it does not
+    have, and an article with only an AAM stops reading as `none_listed`."""
+    aam = _att(ref="am", filename="am.pdf", type="AAM-PDF", size=None,
+               mimetype="application/pdf")
+    http = _els_http(aam, bodies={"am.pdf": make_pdf()})
+    result = ElsevierTdmSource(http, _els_config()).fetch(
+        _els_ids(), need_pdf=False, need_supplements=True)
+
+    assert result.by_role("supplement") == []
+    assert result.suppl_status == "none_listed"
+
+
+# -- secret hygiene: the argument `Http.get`'s `headers` exists for -----------
+
+def test_the_key_travels_as_a_header_on_every_request():
+    entry = _att(ref="mmc1", filename="mmc1.xlsx")
+    http, _result = _els_fetch(entry)
+
+    assert len(http.calls) == 2, "one listing, one object"
+    for sent in http.headers:
+        assert sent["X-ELS-APIKey"] == ELS_KEY
+
+
+def test_the_key_reaches_no_recorded_url_attempt_or_problem():
+    """The test that makes `Http.get`'s design decision enforceable rather than
+    merely argued. Elsevier accepts `apiKey` as a query parameter, and every tier
+    records the URL it asked for into `corpus/*/manifest.json` -- so the query-string
+    spelling would copy this secret onto disk once per Elsevier article, recoverable
+    only by rewriting every manifest.
+
+    Asserted over everything that gets persisted, including the params the tier sent,
+    because a key added to `params` would never show up in a `url` field.
+    """
+    aam = _att(ref="am", filename="am.pdf", type="AAM-PDF", size=None,
+               mimetype="application/pdf")
+    entry = _att(ref="mmc1", filename="mmc1.xlsx")
+    http = _els_http(entry, aam, bodies={"am.pdf": make_pdf()})
+    result = ElsevierTdmSource(http, _els_config()).fetch(
+        _els_ids(), need_pdf=True, need_supplements=True)
+
+    recorded = json.dumps({"attempts": result.attempts,
+                           "problems": result.problems,
+                           "files": [f.url for f in result.files]})
+    assert ELS_KEY not in recorded, "the key must never reach a manifest"
+    assert not any(ELS_KEY in url for url in http.calls), "nor a requested URL"
+    assert not any(ELS_KEY in json.dumps(p) for p in http.params), \
+        "nor the query string, which is the spelling Http.get refused"
+
+
+def test_the_environment_overrides_a_config_file_key():
+    """`config.yaml` is tracked in git and ships `elsevier_api_key: null`, so a
+    file-wins rule would let that committed null blank out a real key on every run --
+    and it would surface as a 401 from Elsevier rather than as a precedence bug."""
+    from_file = {"elsevier_api_key": None, "corpus_dir": "corpus"}
+    with mock.patch.dict(os.environ,
+                         {"MANUSCRIPT_HARVEST_ELSEVIER_API_KEY": ELS_KEY}):
+        merged = _with_env_credentials(from_file)
+    assert merged["elsevier_api_key"] == ELS_KEY
+    assert from_file["elsevier_api_key"] is None, \
+        "a copy, never a mutation: callers reuse one config across a batch"
+
+    with mock.patch.dict(os.environ, {}, clear=True):
+        assert _with_env_credentials({"elsevier_api_key": "from-file"})[
+            "elsevier_api_key"] == "from-file"
+
+
+# -- placement -----------------------------------------------------------------
+
+def test_elsevier_tdm_is_tried_before_the_proof_of_work_wall():
+    """The second placement in `OA_TIERS` that is an argument rather than an
+    accident. `pmc_supplements` walks into PMC's proof-of-work page and then 403s, so
+    a tier that can settle the supplements without it goes first -- and this one is
+    the *only* automated route to a Cell Press supplement, because Cloudflare
+    challenges the browser tier on those hosts.
+
+    It is in `OA_TIERS` despite needing a credential: `--oa-only` promises "never
+    open a browser", and `ncbi_api_key` is already an optional key two of these tiers
+    send. `applies` returns False without a key, so every tier here still works with
+    no credentials at all.
+    """
+    assert OA_TIERS.index("elsevier_tdm") < OA_TIERS.index("pmc_supplements")
+    assert "elsevier_tdm" in OA_TIERS, \
+        "a browserless tier belongs in the --oa-only set; see sources/__init__"
+
+    shipped = yaml.safe_load(
+        (Path(__file__).resolve().parent.parent / "config.yaml").read_text())
+    assert shipped["fetch"]["tiers"] == list(DEFAULT_TIERS)
+    assert "elsevier_api_key" in shipped["fetch"], \
+        "the key has to be declared, or applies() cannot find it absent"
+    assert shipped["fetch"]["min_interval_overrides"].get("api.elsevier.com"), \
+        "one request per attachment against an API documented at 10 req/s"
+
+
+def test_the_live_envelope_and_field_names_are_the_ones_the_tier_reads():
+    """The shape as measured through this tier against 10.1016/j.cell.2021.11.031 --
+    `coredata` beside `attachment`, and not one of the fields `@`-prefixed.
+
+    This is what let the two-spelling tolerance come out of `_field`. It is pinned
+    here because the failure it guards is silent: a renamed field yields `""` for
+    every `ref`, and the tier then reports every Elsevier article as having no
+    supplements rather than raising.
+    """
+    body = json.dumps({"attachment-metadata-response": {
+        "coredata": {"prism:doi": ELS_DOI},
+        "attachment": [{
+            "@_fa": "true",
+            "eid": "1-s2.0-S0092867421013246-mmc1.xlsx",
+            "ref": "mmc1", "filename": "mmc1.xlsx", "type": "APPLICATION",
+            "mimetype": "application/excel", "size": "8",
+            "prism:url": ELS_OBJECT + "mmc1.xlsx",
+        }],
+    }}).encode()
+    http = FakeHttp({
+        ELS_LISTING: (200, body, "application/json"),
+        ELS_OBJECT + "mmc1.xlsx": (200, b"x" * 8, "application/excel"),
+    })
+    result = ElsevierTdmSource(http, _els_config()).fetch(
+        _els_ids(), need_pdf=False, need_supplements=True)
+
+    assert result.suppl_status == "fetched"
+    stored = result.by_role("supplement")
+    assert [f.name for f in stored] == ["mmc1.xlsx"]
+    assert stored[0].content_type == "application/excel", "mimetype is read, not guessed"
+
+
+def test_the_article_figure_renditions_are_left_on_the_wire():
+    """Measured: 52 of the 59 attachments on 10.1016/j.cell.2021.11.031 are article
+    figures in three renditions plus inline equations -- ~38 MB of JPEG. None of them
+    carries an `mmc` ref, so the `ref` filter excludes them before a request is spent.
+
+    Pinned because the cost of getting this wrong is not a wrong answer but a silent
+    one: ~60 requests and tens of megabytes per article, for files no text comes out
+    of. Asserted with the policy *off*, so it is the `ref` filter being tested here
+    and not `text_bearing_only` doing the work.
+    """
+    _http, result = _els_fetch(
+        _att(ref="gr1", filename="gr1_lrg.jpg", type="IMAGE-HIGH-RES"),
+        _att(ref="figs1", filename="figs1.sml", type="IMAGE-THUMBNAIL"),
+        _att(ref="fx1", filename="fx1.jpg", type="IMAGE-DOWNSAMPLED"),
+        _att(ref="si1", filename="si1.gif", type="ALTIMG"),
+        _att(ref="mmc1", filename="mmc1.xlsx"),
+        config=EVERYTHING,
+    )
+    assert [f.name for f in result.files] == ["mmc1.xlsx"], \
+        "only the mmc ref is supplementary material"
+    assert result.suppl_status == "fetched"
+
+
+def test_an_article_holding_only_figures_is_none_listed_and_this_is_the_risk():
+    """A response listing 52 figure renditions and no `mmc` attachment is the normal
+    shape of an Elsevier *review*, and it reads as `none_listed`.
+
+    **This diverges from `pmc_s3`, which leaves the same case unset, and the
+    divergence is deliberate.** That tier's objection is that
+    `supplement_or_media` is a *filename heuristic*, so calling its silence
+    `none_listed` would promote a guess into a statement about what the publisher
+    deposited. Here the filter reads `ref`, which is Elsevier's own field -- the same
+    one Trap 1 says to trust over `type` -- and Elsevier is the publisher, so the
+    objection does not transfer.
+
+    **The consequence a reader has to know: `none_listed` sits directly above the
+    `hasSuppl` alarm in `_supplement_status`, so this suppresses
+    `expected_but_missing`.** That is the intended direction. `hasSuppl` comes from
+    Europe PMC's index, which for an Elsevier article is frequently a metadata-only
+    record (`inEPMC=N`) -- the least reliable source in play -- and letting the index
+    override the publisher's own attachment list would be backwards. It is the case
+    the `none_listed` precedence was written for: "a source that owns the content can
+    state authoritatively that there are none, even when the index disagrees."
+
+    The exposure, stated plainly: if Elsevier ever spells a supplement with a ref
+    that does not begin `mmc`, this suppresses the alarm for that article. Two
+    articles measured live (7 and 6 supplements) used `mmc` throughout. The guard
+    that keeps this honest is that the claim needs a *readable* attachment list --
+    an unparsed body claims nothing, which
+    `test_a_body_with_no_attachment_list_never_claims_none_listed` pins.
+    """
+    _http, result = _els_fetch(
+        _att(ref="gr1", filename="gr1_lrg.jpg", type="IMAGE-HIGH-RES"),
+        config=EVERYTHING,
+    )
+    assert result.files == []
+    assert result.suppl_status == "none_listed", \
+        "the publisher's own list held no multimedia component"
+
+
+# -- the error paths, each of which has to stay distinguishable ---------------
+
+def test_a_transport_failure_on_the_listing_claims_nothing():
+    """A listing that never completed has learned nothing about either artifact, so
+    both statuses stay None and the later tiers keep their turn."""
+    class Exploding:
+        def get(self, url, params=None, accept=None, allow_redirects=True,
+                headers=None):
+            raise HttpError("boom")
+
+    result = ElsevierTdmSource(Exploding(), _els_config()).fetch(
+        _els_ids(), need_pdf=False, need_supplements=True)
+
+    assert result.suppl_status is None and result.pdf_status is None
+    assert [a["status"] for a in result.attempts] == ["request_failed"]
+    assert any("boom" in p for p in result.problems)
+
+
+def test_a_server_error_on_the_listing_is_its_own_status():
+    """5xx is not one of the four client errors and must not borrow one of their
+    words: `auth_failed` would send someone to dev.elsevier.com over an Elsevier
+    outage."""
+    http = _els_http(listing=(500, b"", "text/plain"))
+    result = ElsevierTdmSource(http, _els_config()).fetch(
+        _els_ids(), need_pdf=False, need_supplements=True)
+
+    assert [a["status"] for a in result.attempts] == ["http_error"]
+    assert result.suppl_status is None
+    assert any("HTTP 500" in p for p in result.problems)
+
+
+def test_a_listing_body_that_is_not_json_claims_nothing():
+    http = _els_http(listing=(200, b"<html>not json</html>", "text/html"))
+    result = ElsevierTdmSource(http, _els_config()).fetch(
+        _els_ids(), need_pdf=False, need_supplements=True)
+
+    assert [a["status"] for a in result.attempts] == ["unreadable_payload"]
+    assert result.suppl_status is None
+
+
+@pytest.mark.parametrize("payload,why", [
+    ([], "a JSON list, not an object"),
+    ({"attachment-metadata-response": "text"}, "the envelope is not an object"),
+    ({"attachment-metadata-response": {"coredata": {}}}, "no attachment key"),
+    ({"attachment-metadata-response": {"attachment": "mmc1"}},
+     "attachment is neither a dict nor a list"),
+])
+def test_no_shape_but_the_measured_one_yields_an_attachment_list(payload, why):
+    """`_attachment_entries` returns None for anything it does not recognise, and None
+    is what stops `none_listed` being claimed. Each of these would otherwise be a way
+    to read zero attachments and call it "the publisher says none" -- see
+    `test_a_body_with_no_attachment_list_never_claims_none_listed` for why that
+    distinction is the one that matters."""
+    from manuscript_harvest.fetch.sources.elsevier_tdm import _attachment_entries
+    assert _attachment_entries(payload) is None, why
+
+
+def test_a_transport_failure_on_one_file_loses_only_that_file():
+    entry_ok = _att(ref="mmc1", filename="mmc1.xlsx")
+    entry_bad = _att(ref="mmc2", filename="mmc2.xlsx")
+
+    class OneExplodes(FakeHttp):
+        def get(self, url, params=None, accept=None, allow_redirects=True,
+                headers=None):
+            if "mmc2.xlsx" in url:
+                raise HttpError("connection reset")
+            return super().get(url, params, accept, allow_redirects, headers)
+
+    http = OneExplodes({
+        ELS_LISTING: (200, _els_meta(entry_ok, entry_bad), "application/json"),
+        entry_ok["prism:url"]: (200, b"x" * 64, "application/octet-stream"),
+    })
+    result = ElsevierTdmSource(http, _els_config()).fetch(
+        _els_ids(), need_pdf=False, need_supplements=True)
+
+    assert [f.name for f in result.by_role("supplement")] == ["mmc1.xlsx"]
+    assert result.suppl_status == "partial_failure", \
+        "one file kept and one lost is exactly what partial_failure names"
+    failed = [a for a in result.attempts if a.get("status") == "request_failed"]
+    assert failed and failed[0]["ref"] == "mmc2"
+
+
+def test_the_cap_goes_to_readable_files_before_supplementary_video():
+    """`max_files` is a request budget, and a video cannot be read -- so when the cap
+    binds, the spreadsheets get it and the dropped videos are reported under their own
+    wording rather than `apply_files_cap`'s "supplementary file(s)", whose count
+    would then disagree with its noun.
+
+    Needs the policy off: with it on the videos are refused before the cap is reached.
+    """
+    _http, result = _els_fetch(
+        _att(ref="mmc1", filename="mmc1.xlsx"),
+        _att(ref="mmc2", filename="mmc2.mp4", type="VIDEO"),
+        _att(ref="mmc3", filename="mmc3.mov", type="VIDEO"),
+        config={"max_files": 1, "text_bearing_only": False},
+    )
+    assert [f.name for f in result.by_role("supplement")] == ["mmc1.xlsx"]
+    assert result.by_role("media") == [], "no slots left after the readable file"
+    truncated = [a for a in result.attempts
+                 if a.get("status") == "truncated_media"]
+    assert truncated and truncated[0]["dropped"] == 2
+    assert any("supplementary video(s) not fetched" in p for p in result.problems)

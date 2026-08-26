@@ -654,10 +654,19 @@ class FakeHttp:
         self.routes = dict(routes or {})
         self.calls: List[str] = []
         self.params: List[dict] = []
+        #: One entry per call, parallel to `calls`. Recorded rather than ignored so
+        #: `elsevier_tdm`'s credential can be asserted on: the tier's whole secret
+        #: hygiene argument (`Http.get`) is that the key travels in a header and
+        #: never in a URL, and a fake that dropped headers could not tell the two
+        #: apart -- the leak test would pass against an implementation that sent the
+        #: key as a query parameter.
+        self.headers: List[dict] = []
 
-    def get(self, url, params=None, accept=None, allow_redirects=True) -> Response:
+    def get(self, url, params=None, accept=None, allow_redirects=True,
+            headers=None) -> Response:
         self.calls.append(url)
         self.params.append(dict(params or {}))
+        self.headers.append(dict(headers or {}))
         for fragment, response in self.routes.items():
             if fragment in url:
                 status, content, content_type = response
@@ -721,12 +730,14 @@ class FakeS3Http(FakeHttp):
         super().__init__(routes)
         self.pages = pages
 
-    def get(self, url, params=None, accept=None, allow_redirects=True) -> Response:
+    def get(self, url, params=None, accept=None, allow_redirects=True,
+            headers=None) -> Response:
         params = dict(params or {})
         if not params.get("list-type"):
-            return super().get(url, params, accept, allow_redirects)
+            return super().get(url, params, accept, allow_redirects, headers)
         self.calls.append(url)
         self.params.append(params)
+        self.headers.append(dict(headers or {}))
         page = self.pages[params.get("continuation-token")]
         if isinstance(page, tuple):
             status, body, content_type = page

@@ -34,6 +34,11 @@ DEFAULT_FETCH_CONFIG = {
     "tiers": DEFAULT_TIERS,
     "contact_email": None,
     "ncbi_api_key": None,
+    # Read from MANUSCRIPT_HARVEST_ELSEVIER_API_KEY when set, which overrides this --
+    # see `fetcher._with_env_credentials`. Declared here so `elsevier_tdm.applies`
+    # finds the key absent rather than missing, and a run without one is a no-op for
+    # that tier instead of an error.
+    "elsevier_api_key": None,
     "min_interval_seconds": 3.0,
     # Belongs with the defaults rather than only in `config.yaml`, because
     # `pmc_s3` is in `DEFAULT_TIERS` and is the one tier that spends a request per

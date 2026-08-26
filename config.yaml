@@ -15,6 +15,17 @@ fetch:
   # throttled by min_interval_seconds below, which is per host and does not drop
   # when a key is present, so lowering that is what makes a key worth having.
   ncbi_api_key: null
+
+  # Optional. A free TDM key from dev.elsevier.com, sent as an X-ELS-APIKey header.
+  # Unlocks the supplementary files -- and the accepted author manuscript PDF -- for
+  # Elsevier DOIs, which ScienceDirect and Cell Press otherwise serve our browser a
+  # Cloudflare challenge for, so without this those files can only be fetched by
+  # hand. Full text is NOT available on a free key (403 needs a separately approved
+  # entitlement); article text keeps coming from Europe PMC JATS.
+  # MANUSCRIPT_HARVEST_ELSEVIER_API_KEY overrides this when set -- prefer the env
+  # var, because this file is tracked in git.
+  elsevier_api_key: null
+
   min_interval_seconds: 3.0               # per host; 1-10 papers needs nothing cleverer
 
   # Per-host exceptions to the interval above, matched on the exact host name.
@@ -24,8 +35,13 @@ fetch:
   # so the default would leave a 14-supplement paper asleep for ~45 s and one at
   # the max_files cap for ~150 s. 0.2 s is 5 requests a second to a service built
   # for far more. Anything not listed here keeps the default above.
+  # api.elsevier.com is the same shape of case: elsevier_tdm spends one request per
+  # attachment, so at 3.0 s a 9-supplement article sleeps ~27 s against an API the
+  # dev portal documents at 10 req/s. 0.2 s is the rate the live probe ran cleanly
+  # at, and Object Retrieval publishes no quota, so it stays conservative.
   min_interval_overrides:
     "pmc-oa-opendata.s3.amazonaws.com": 0.2
+    "api.elsevier.com": 0.2
 
   timeout_seconds: 60
   max_files: 50                           # supplementary files per article; anything dropped is recorded
@@ -75,6 +91,13 @@ fetch:
     # and then 403s. The bucket is never challenged, so trying it first is what
     # stops the common case from asking for a browser it does not need.
     - pmc_s3
+    # Elsevier's TDM object API: supplementary files, and the accepted author
+    # manuscript, for a Cell Press or ScienceDirect DOI. Needs elsevier_api_key
+    # below and does nothing without it. Ahead of pmc_supplements for the same
+    # reason as pmc_s3 -- it never meets the proof-of-work page -- and it is the
+    # only automated route to these files at all: Cloudflare serves proxy_browser
+    # a challenge on those hosts.
+    - elsevier_tdm
     - pmc_supplements   # PMC lists the files; the publisher's OA host serves them
     - pmc_oa            # oa.fcgi: mainly an "is this in the OA subset" signal now
     - biorxiv           # 10.1101 and 10.64898 preprints
