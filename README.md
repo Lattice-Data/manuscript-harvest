@@ -97,7 +97,7 @@ holding your `config.yaml` and you get those defaults silently** — worth knowi
 after `pip install -e .`, when the commands work from anywhere. `--corpus-dir` on
 any subcommand is the direct way to say where the corpus is.
 
-Every key is commented in `config.yaml`. Three are worth calling out here.
+Every key is commented in `config.yaml`. Four are worth calling out here.
 
 `fetch.contact_email` — **set this to your own address** before running against a
 publisher. Crossref, NCBI and Europe PMC all ask callers to identify themselves,
@@ -116,6 +116,11 @@ keys need changing:
 read.** Pointed at an open-access one, `check` passes with no session at all and
 tells you nothing. To turn the proxy off entirely, set `fetch.proxy.enabled: false`
 or pass `--no-proxy`.
+
+`fetch.text_bearing_only` decides *which files a corpus holds*, so it is worth
+knowing before the first run: on by default, it fetches only supplementary files text
+can be extracted from. Set it to `false` to fetch everything, exactly as before the
+key existed. See [Fetching only what text can come out of](#fetching-only-what-text-can-come-out-of).
 
 ### Before you run it against a publisher
 
@@ -163,12 +168,13 @@ the run. Repeats are collapsed after normalization, so `10.1038/X` and
 `get` prints the article directory on **stdout** and everything else on stderr, so
 `DIR=$(manuscript-fetch get 10.1038/...)` gives you the path.
 
-Sources are tried in order. The first four need no credentials and no browser;
+Sources are tried in order. The first five need no credentials and no browser;
 `--oa-only` guarantees nothing ever opens one:
 
 | Tier | What it gives |
 |---|---|
 | `europepmc` | PDF via `fullTextUrlList`, JATS XML, supplements ZIP — the ZIP is not universal |
+| `pmc_s3` | PMC's Open Access bucket on S3: lists the whole deposit anonymously, then fetches each object — PDF, JATS, supplements, figures. Not challenged, unlike PMC's own `/bin/` URLs, and it knows each file's size before downloading it |
 | `pmc_supplements` | PMC lists the files; the publisher's open-access host serves the bytes |
 | `pmc_oa` | `oa.fcgi`: mainly an "is this in the OA subset" signal (see Known limitations) |
 | `biorxiv` | 10.1101 and 10.64898 (openRxiv) preprints: PDF, JATS, supplements |
@@ -181,14 +187,15 @@ rather than by reading an enumeration, which is exactly why they report
 **Flags.** `get` and `batch` share `--oa-only`, `--no-proxy`, `--headed`,
 `--force`, `--no-supplements`, `--tiers` (comma-separated order), `--corpus-dir`,
 and `--json`/`--report` for the manifest. `usage` takes `--by-size` and `--limit`;
-`prune` takes `--max-gb` and `--dry-run`; `login` and `check` take `--url`.
+`prune` takes `--max-gb` and `--dry-run`; `revalidate` and `drop-media` take
+optional slugs and `--apply`; `login` and `check` take `--url`.
 
 ### What the statuses mean
 
 The point of this vocabulary is that "no supplements" and "we failed to get the
 supplements" must never look alike.
 
-`fulltext.status`, fourteen values: `ok` · `scanned_pdf_suspected` (saved, but has no
+`fulltext.status`, fifteen values: `ok` · `scanned_pdf_suspected` (saved, but has no
 extractable text — needs OCR) · `not_research_article` (the DOI resolves to a
 correction, retraction or editorial notice — a real publication, but not the paper) ·
 `identity_unverified` (a document arrived and does not appear to be this paper; the
@@ -197,8 +204,9 @@ bytes are kept, because they are the evidence) · `paywalled` · `not_in_oa_subs
 the file is public behind a proof-of-work page, so route through the browser tier) ·
 `publisher_stub_page` (a plausible 200-OK shell served to automation instead of the
 article) · `link_resolver_error` (a resolver answered "no such article here", so
-this is not a page we failed to parse) · `not_a_pdf` · `download_failed` ·
-`not_found`
+this is not a page we failed to parse) · `too_large` (the deposit declares a size
+over `fetch.max_file_mb`, so it was refused before the transfer) · `not_a_pdf` ·
+`download_failed` · `not_found`
 
 Only the first two mean the article is on disk. The two new ones exist because a
 document can be perfectly valid and still not be the paper that was asked for, and
@@ -227,13 +235,14 @@ status and a title match rescues it, which keeps the real articles whose publish
 omit the DOI. A document with no extractable text is `scanned_pdf_suspected` and is
 never called wrong: "cannot tell" is not "mismatch".
 
-`supplementary_status`, nine values:
+`supplementary_status`, ten values:
 
 | Status | Meaning |
 |---|---|
 | `none_listed` | the publisher says there are none (`hasSuppl: N`) |
-| `fetched` | an archive that *is* the deposit was unpacked whole — they exist and we have them |
-| `fetched_unverified` | every file we identified arrived, but nothing bounds the set |
+| `fetched` | the deposit itself was enumerated and every file in it arrived — they exist and we have them |
+| `fetched_unverified` | every file we identified arrived, but nothing bounds the set — or the set was enumerated and the `max_files` cap stopped the walk short of it |
+| `none_text_bearing` | the supplements were named, and no text can be extracted from any of them, so none was fetched — see [Fetching only what text can come out of](#fetching-only-what-text-can-come-out-of) |
 | `partial_failure` | some arrived; at least one failed |
 | `expected_but_missing` | `hasSuppl: Y` and we came away with nothing — **the bug case** |
 | `none_retrieved` | a tier tried and every file it went after was lost |
@@ -241,15 +250,30 @@ never called wrong: "cannot tell" is not "mismatch".
 | `unknown_none_found` | nobody said whether any exist, and none were found |
 | `not_requested` | `--no-supplements` |
 
+With `fetch.text_bearing_only` on — the default — every one of these is a statement
+about the supplementary files **text can be extracted from**. `fetched` does not
+demote to `fetched_unverified` because some figures were refused: the refused names
+are recorded per file in the manifest's `attempts`, which is a stronger record than
+a weaker status, and demoting would raise the extraction stage's
+`supplement_set_unverified` caveat over every illustrated article in the corpus.
+
 `none_retrieved` and `unknown_none_found` both come back with an empty
 `supplementary/`, and separating them is the point: the first means a tier looked
 and lost everything, the second that no tier ever tried.
 
 **Why `fetched` splits in two.** The two are separated by what *bounded* the set —
-a ZIP or tarball member list is not a guess, while a regex over page anchors cannot
-know what it failed to match. Both count as settled, so an article still finishes
+a ZIP or tarball member list is not a guess, nor is an S3 object listing, while a
+regex over page anchors cannot know what it failed to match. Both count as settled, so an article still finishes
 `complete` and is never re-fetched; an unbounded set is not a failed one. The
 measured case that forced the split is in `fetch/fetcher.py`.
+
+A `max_files` truncation lands in `fetched_unverified` for the same reason rather
+than in `partial_failure`: it is this tool declining to spend more requests on one
+article, not a file that would not come, and it is deterministic — calling it a
+failure would leave the article unsettled and make every later batch re-download the
+whole deposit to drop the identical tail again. What was dropped is always in
+`problems`. A file refused over `max_file_mb` *is* a failure: that is one named file,
+and raising the cap gets it.
 
 A refusal is never written to disk as `fulltext.pdf`: acceptance requires PDF magic
 bytes (not the `Content-Type` header, which lies), a successful parse, a body that
@@ -274,12 +298,75 @@ It never downloads and never deletes; the worst it can do is move an article fro
 over the 392 articles here it corrected exactly the two in the table above and left
 the other 390 untouched.
 
+### Fetching only what text can come out of
+
+Half of every supplement set is files no text can be extracted from. Measured over
+this corpus: of **5116 stored supplementary entries, 2428 (47%) are image, audio or
+video**. 138 articles hold at least one, and inside those articles 71% of the
+supplement slots are non-text. Each one costs a request, a manifest entry and an
+extraction record whose only content is the word `image_no_text`.
+
+So `fetch.text_bearing_only` is on by default and the fetch stage takes only what
+something downstream can read:
+
+| | |
+|---|---|
+| **Kept** | `pdf` `txt` `md` `csv` `tsv` `xlsx` `xls` `xlsm` `docx` `doc` `rtf` `pptx` `xml` `nxml` `json` `html`, and archives — `zip` `gz` `tar` `tgz` |
+| **Skipped** | figure images (`jpg` `png` `tif` `gif` `bmp` `eps` `ps` `svg` `webp` `ai`) and audio/video (`mp4` `mov` `avi` `mkv` `wmv` `mpg` `mpeg` `m4v` `mp3` `wav` `flv`) |
+| **Kept anyway** | anything with an unrecognised extension, or none at all |
+
+**Archives are kept** although nothing reads them directly: `.zip` alone is 5.05 GB
+of this corpus's 5.11 GB of archives, those zips are mostly supplementary tables,
+and the extraction stage already unpacks them. **Unknown means kept**, not skipped —
+13 supplements here were saved by the browser tier as `NN_url` with no extension at
+all, several of them real PDFs and spreadsheets, and a whitelist would have refused
+those plus every format a publisher adopts after today. Scanned PDFs are kept too:
+68 supplements here extract as `no_text_scanned_pdf`, which no predicate over a
+filename can know in advance.
+
+**Nothing is silent.** Every refused file is named in the manifest's `attempts`
+under a `text_bearing_filter` note, with the reason, the role, and where in the flow
+it was refused — `before_download` (a tier read the name from a listing or an anchor;
+no bytes moved), `on_unpack` (a member of an archive that arrived as one blob), or
+`after_download` (the fetcher caught a name only `Content-Disposition` could give).
+So a manifest says exactly what `text_bearing_only: false` would have fetched, and
+that setting restores the previous behaviour exactly.
+
+The article's own PDF, JATS and landing page are exempt by role, not by extension: a
+policy about supplementary material must never be able to refuse the paper.
+
+**And a refusal never costs the article a later tier.** A tier that names the whole
+supplement set and refuses all of it ends the search, exactly as a tier that fetched
+one would — but a tier that refused a figure and *lost* a readable file beside it did
+not account for the set, so the run carries on down the tier order. That distinction
+is the difference between saving a wasted request and losing a supplementary
+spreadsheet: PMC's `/bin/` URLs sit behind a proof-of-work page that only the browser
+tier clears, and giving up on the refusal would print "the browser tier is required
+for them" while making it unreachable.
+
+**Files fetched before this existed** are removed by a separate command, which
+reports by default and deletes only with `--apply`:
+
+    manuscript-fetch drop-media            # report only
+    manuscript-fetch drop-media --apply    # delete them, and record the removals
+
+It reclaims ~2.9 GB and 2428 entries here. `fulltext.pdf`, `fulltext.nxml`,
+`landing.html` and `manifest.json` are never touched, `supplementary_status` is left
+alone — the text-bearing set is unchanged — and each removed entry keeps its name,
+size and sha256 beside a marker naming the policy. **It keeps no `path`**, which is
+the whole design: `manifest_is_complete` calls an article incomplete when an entry
+names a file that is not there, so a removal that kept its path would make the next
+batch re-fetch all 138 articles, re-download the figures and undo the sweep, forever.
+Running it twice does nothing the second time. A deletion the filesystem refuses is
+printed with its path and its errno and exits 1 — see [Exit codes](#exit-codes) — and
+that file keeps its `path`, so the next pass offers it again.
+
 ### Disk usage
 
 Articles average **~40 MB**, so a few hundred papers is tens of gigabytes.
 
     manuscript-fetch usage --by-size     # what is taking the space
-    manuscript-fetch prune --dry-run     # what a sweep would remove
+    manuscript-fetch prune --dry-run     # what a budget sweep would evict
     manuscript-fetch prune --max-gb 20
 
 Set `fetch.max_corpus_gb` and the budget is enforced automatically after every
@@ -287,6 +374,13 @@ fetch, evicting oldest first. **Eviction keeps the manifest** — only the bytes
 the record of what existed stays, and the article is marked `evicted` rather than
 incomplete so the next batch does not re-download what the budget just freed. The
 newest article is never evicted. Re-fetch with `--force`.
+
+`prune` and `drop-media` are opposite commands and neither replaces the other.
+Measured over the whole 26.90 GB corpus, **70% of the bytes are text-bearing files
+and 19% are archives**, against 8% audio/video and 2.8% images — so there is no
+useful "drop the media" saving against a *budget*: staying inside one means giving up
+whole articles, which is what `prune` does. `drop-media` gives up files from every
+article instead, and its saving is a tenth of the bytes but half of the entries.
 
 ### Exit codes
 
@@ -297,11 +391,19 @@ Scripting either stage means reading the taxonomy off the exit code:
 | `fetch get`, `extract one` | `complete` | `partial` | anything else, or a bad DOI |
 | `fetch batch`, `extract all` | every article `complete` | at least one was not | no usable input |
 | `fetch check` | session works | it does not | — |
+| `fetch drop-media` | the sweep finished (with nothing to do, or everything removed) | the filesystem refused at least one deletion | — |
 | `extract review` | nothing queued | questions are queued | — |
 | `extract table` | a card was printed | re-read failed | ambiguous match |
 | `select readiness` | every article can carry a negative | at least one cannot | no articles |
 | `select verify` | every quote verified | at least one did not | no article, or nothing to verify against |
 | `select eval` | scored | below `--fail-under` | no labels, or nothing to score |
+
+`drop-media` is the only one of these whose 1 means "the tool could not finish".
+An `unlink` needs write permission on the containing directory, so a read-only mount
+or a corpus owned by another account fails every file in it; each refusal is printed
+with its path and its errno, and the exit code is there because the closing count
+would otherwise describe a corpus the sweep never reached. Nothing is half-done: a
+file that survived keeps its manifest `path`, so a later pass offers it again.
 
 Other subcommands use 2 for "nothing to do" — `extract status` and `show` when
 nothing is extracted, `fetch prune` with no budget set. So
@@ -474,6 +576,17 @@ vocabulary — things true about an extraction without being a per-file failure:
 for any page-scraping route, so it is a caveat, not a defect. Before these existed
 the extractor never read the fetch stage's own verdict, so an article whose manifest
 said `expected_but_missing` extracted as `complete` with an empty supplement list.
+
+**There is deliberately no caveat for a `drop-media` removal**, and none of the above
+fires on one. `manifest_entry_without_a_path` means "this manifest is malformed", and
+a policy removal is recognised by its marker and counted separately — otherwise that
+caveat would come to mean "malformed, or perfectly fine" on 138 articles and stop
+being worth reading. A removal earns no caveat of its own either: every file the
+sweep takes is one this stage would have dispatched to `image_no_text` or
+`media_no_text`, which produce no block and no character, so `blocks.jsonl` is
+identical before and after. What went is listed in `removed_not_text_bearing`.
+`none_text_bearing` likewise raises nothing: nothing was lost and nothing is
+unbounded, so an empty supplement list under that status is a complete extraction.
 
 ### When a PDF's fonts do not say what their glyphs mean
 
@@ -833,8 +946,11 @@ itself twice on its first run, producing the low-value-heading rule and the
 
 Deliberate non-goals first — scope commitments, not gaps:
 
-- **No OCR** (text-based PDFs only), and **no vision pass** (figure images are
-  recorded as `image_no_text` and not read).
+- **No OCR** (text-based PDFs only), and **no vision pass**. Since
+  `fetch.text_bearing_only` a figure image is not even fetched — 47% of the
+  supplementary entries in this corpus were files no text can be extracted from — and
+  the ones already stored are removed by `drop-media`, which keeps their names, sizes
+  and hashes. Set the key to `false` to keep fetching them.
 - **No table structure recovered from PDFs.** `page.find_tables()` exists, but a
   table found in a PDF has no stable `data_ref` to re-read, and the card contract is
   built on one.

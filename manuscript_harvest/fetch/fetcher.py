@@ -8,8 +8,11 @@ result look identical downstream unless something names them apart, and the trap
 here is an empty `supplementary/` directory:
 
     none_listed          the publisher says this article has no supplements
-    fetched              an archive that IS the deposit was unpacked whole
-    fetched_unverified   every file we identified arrived, but nothing bounds the set
+    fetched              the deposit itself was enumerated and all of it arrived
+    fetched_unverified   every file we identified arrived, but nothing bounds the
+                         set -- or `max_files` stopped us short of one that does
+    none_text_bearing    supplements were named, and no text can be extracted from
+                         any of them -- so none was fetched
     partial_failure      we got some; at least one download or archive failed
     expected_but_missing hasSuppl=Y, and we came away with nothing  <-- the bug case
     none_retrieved       a tier tried and every file it went after was lost
@@ -18,6 +21,37 @@ here is an empty `supplementary/` directory:
     not_requested        --no-supplements
 
 `expected_but_missing` is the state the whole taxonomy exists to expose.
+
+`none_text_bearing` exists because `fetch.text_bearing_only` can empty a deposit
+that was read perfectly. 47% of the 5116 supplementary entries in this corpus are
+images, audio or video, and for some articles that is *all* of them -- a
+supplement set of four figure JPEGs and nothing else. With the filter on, the tier
+enumerates the deposit, names every file, refuses every one, and comes away with
+zero. Every other empty-handed word in this list would be a lie about that
+article: `expected_but_missing` is the alarm, and nothing is missing; `none_listed`
+is a claim about what the *publisher* says, and the publisher said four files;
+`none_retrieved` and `page_not_parsed` blame a route that worked. So the state gets
+its own word, and the word says what actually happened -- we know what the
+supplements are, and no text can come out of them. Which files those were is in the
+`text_bearing_filter` attempts note, so a reader can see exactly what a
+`text_bearing_only: false` run would have fetched.
+
+It is settled (`store.SUPPL_SETTLED`): re-running skips the same files by the same
+rule and arrives in the same place, so leaving it unsettled would make every later
+batch re-list and re-refuse the 138 articles that hold one of these files forever.
+That is the trap `SUPPL_SETTLED`'s own docstring is about.
+
+**The filter also changes what the other words claim, and this is the load-bearing
+part.** With `text_bearing_only` on, every status here is a statement about the
+supplementary files *text can be extracted from*: `fetched` still means "the deposit
+was enumerated and all of it arrived" for that set, and does not demote to
+`fetched_unverified` because some members were refused. The alternative was tried on
+paper and rejected: `fetched_unverified` is what `extract/extractor.py` turns into
+the `supplement_set_unverified` caveat, so demoting would raise "no tier could
+confirm the set is complete" over every illustrated article in the corpus --
+borrowing a signal that means something else, the same defect that keeps a policy
+removal from raising `manifest_entry_without_a_path`. The refusals are recorded per
+file instead, which is a stronger record than a weaker status.
 
 `fetched_unverified` exists because the taxonomy told its own version of that lie.
 For 10.1016/j.xgen.2026.101304 the adapter matched 1 of 12 supplementary links,
@@ -29,7 +63,9 @@ evidence, because a regex over page anchors cannot know what it failed to match.
 So the two are split by *what bounded the set*, which is the only thing the code
 can actually know. Europe PMC's supplementary ZIP and the PMC OA tarball are
 self-delimiting -- unpacking the archive yields the deposit, and a member list is
-not a guess. Every other route pattern-matches a rendered page: `pmc_supplements`
+not a guess -- and `pmc_s3`'s object listing is the same kind of evidence one step
+earlier: it is the deposit's index, served by the store that holds the bytes.
+Every other route pattern-matches a rendered page: `pmc_supplements`
 regexes PMC's HTML for `/bin/` paths, the browser tier scrapes anchors, bioRxiv
 regexes its supplement page. Those get `fetched_unverified` even when they are in
 fact complete -- as most of the eight ground-truth papers are. That is not an alarm.
@@ -38,12 +74,25 @@ and only the first licenses "they exist and we have them".
 
 Both are settled: see `store.SUPPL_SETTLED`. An unbounded set is not a failed one,
 and re-running would scrape the same page and get the same answer.
+
+`max_files` lands in `fetched_unverified` for that second reason rather than in
+`partial_failure`, and every tier that can hit it agrees: `europepmc._unpack_zip`
+truncates and its caller still says `fetched`, `proxy_browser._download_all`
+measures success against what it attempted so the cap cannot masquerade as a
+failure, and `pmc_s3` demotes one notch to `fetched_unverified` because there the
+listing did say how much was left. A count cap is this tool declining to spend more
+requests on one article, not a file that would not come; it is deterministic, so
+calling it a failure leaves the article unsettled and makes every later batch
+re-download the whole deposit to drop the identical tail again. A file refused over
+`max_file_mb` is a failure, because that is one named file and raising the cap gets
+it.
 """
 
 from functools import reduce
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from .. import text_bearing
 from . import store
 from .http import Http
 from .identifiers import Identifiers, normalize_doi, resolve_identifiers
@@ -59,17 +108,36 @@ from .validate import (
     pdf_sample_text,
 )
 from .sources.base import (
+    AFTER_DOWNLOAD,
     ROLE_LANDING,
     ROLE_MEDIA,
     ROLE_PDF,
     ROLE_SUPPLEMENT,
     ROLE_XML,
+    not_text_bearing_note,
 )
 
 # Statuses that mean the PDF is on disk and usable. Defined in `store`, which is
 # where `finalize_status` reads it, so the orchestrator and the record it writes
 # cannot disagree about what counts as having the article.
 _PDF_SUCCESS = store.PDF_USABLE
+
+#: Tier `suppl_status` values that mean *another route may still hold the files*: a
+#: download or an archive that failed, or a page nothing could read. Exactly the
+#: statuses a tier can set that `store.SUPPL_SETTLED` does not contain, and the one
+#: fact two decisions in this module turn on -- so it is written once here rather
+#: than restated at each, which is how they came apart in the first place:
+#:
+#: - `_supplement_status` refuses to claim the settled `none_text_bearing` when one
+#:   of these was reported, because a re-run *can* change it.
+#: - the tier loop refuses to stop asking for supplements when one of these was
+#:   reported, because a later tier is the only thing that can change it. The two
+#:   have to agree: a run that gives up on the tier chain and then records an
+#:   unsettled verdict re-fetches the same truncated run on every later batch.
+#:
+#: Everything else a tier can report -- `fetched`, `fetched_unverified`,
+#: `none_listed`, or nothing at all -- is a tier that accounted for what it saw.
+SUPPL_RECOVERABLE = {"partial_failure", "page_not_parsed"}
 
 
 def _best_pdf_status(reported: List[str]) -> str:
@@ -138,6 +206,25 @@ def _still_on_disk(directory, entry: Optional[dict]) -> bool:
     return bool(path) and (Path(directory) / path).exists()
 
 
+def _entry_accounted_for(directory, entry: Optional[dict]) -> bool:
+    """Is this existing manifest entry still a true statement about the corpus?
+
+    `_still_on_disk` asks the narrower question and cannot answer this one: a
+    supplement the `drop-media` pruner removed names no file *by design* -- keeping a
+    `path` key over a deleted file is what would make every batch re-fetch the
+    article forever, which is why the pruner drops it and leaves `name`, `bytes`,
+    `sha256` and its marker (`store.mark_entry_removed`).
+
+    Asked of the whole existing set before a re-fetch decides whether to keep it. Ask
+    `_still_on_disk` there instead and one removed entry makes the whole set look
+    gone, so a `--force` re-fetch that comes away empty-handed replaces it with `[]`
+    -- discarding the spreadsheets still on disk from the record *and* the account of
+    what was removed and why. That is the same loss 186b2e4 fixed for a failed
+    re-fetch of a good set, one policy later.
+    """
+    return store.entry_removed_by_policy(entry) or _still_on_disk(directory, entry)
+
+
 def suppl_flag_is_authoritative(ids: Identifiers) -> bool:
     """Can `hasSuppl: N` be believed as "this article has no supplements"?
 
@@ -177,7 +264,21 @@ def _supplement_status(
     want_supplements: bool,
     collected: int,
     reported: List[str],
+    skipped_supplements: int = 0,
 ) -> str:
+    """The one place that names what happened to this article's supplements.
+
+    `skipped_supplements` counts supplementary files `fetch.text_bearing_only`
+    refused, across every tier and both filter points. It defaults to 0 so that the
+    other arguments still read as the whole story when nothing was refused -- and
+    because a caller passing four positional arguments is asking the question this
+    function has always answered.
+
+    Only files that were going to be *supplements* count. A refused article figure
+    (`pmc_s3`'s `media/`) says nothing about supplementary material, which is the
+    same division `pmc_s3._fetch_payload` draws when it decides whether a lost
+    download cost the article its `fetched`.
+    """
     if not want_supplements:
         return "not_requested"
     if suppl_flag_is_authoritative(ids):
@@ -197,6 +298,29 @@ def _supplement_status(
         if "fetched_unverified" in reported:
             return "fetched_unverified"
         return "partial_failure"
+    # Nothing arrived, and files we could name are the reason. Above every other
+    # empty-handed word because it is the only one with direct evidence behind it:
+    # a refused file is a file some tier *saw*, which outranks `none_listed`'s claim
+    # that none exist (bioRxiv's supplement page can be stale where a Europe PMC ZIP
+    # is not) and outranks the `hasSuppl` alarm below, which this explains away.
+    #
+    # Guarded on nothing having been lost (`SUPPL_RECOVERABLE`, which the tier loop
+    # reads too), and that guard is the whole safety of the word. `none_text_bearing`
+    # is settled, so claiming it over a run that also lost a spreadsheet would freeze
+    # that loss into the manifest and no later batch would ever look again. A deposit
+    # of three JPEGs and one .xlsx that 500s must stay `expected_but_missing`:
+    # re-running *can* change that, which is exactly what settled means and why this
+    # cannot be claimed there. `page_not_parsed` is in the guard for the same reason
+    # -- a wall another route hit may still hold files, and `--headed` may get them.
+    #
+    # The guard only holds if the tier that reported nothing really did account for
+    # what it saw. `pmc_s3` is the tier that can fail to: its listing can stop half
+    # way, and an enumeration that stopped has named no deposit. That is fixed where
+    # the fact lives, in `pmc_s3._fetch_payload`, which reports `partial_failure` on
+    # an incomplete listing whether or not anything was kept -- nothing about a
+    # `SourceResult` carries "the listing was truncated" up to here.
+    if skipped_supplements and not SUPPL_RECOVERABLE & set(reported):
+        return "none_text_bearing"
     # A source that owns the content (bioRxiv for its own preprints) can state
     # authoritatively that there are none, even when the index disagrees.
     if "none_listed" in reported:
@@ -246,6 +370,10 @@ def build_http(config: dict) -> Http:
     return Http(
         contact_email=fetch_cfg.get("contact_email"),
         min_interval_seconds=fetch_cfg.get("min_interval_seconds", 3.0),
+        # Per-host exceptions to that interval. Absent means an empty mapping, which
+        # is the single global interval this had before -- so a config that does not
+        # mention the key behaves exactly as it did.
+        min_interval_overrides=fetch_cfg.get("min_interval_overrides"),
         timeout_seconds=fetch_cfg.get("timeout_seconds", 60),
         ncbi_api_key=fetch_cfg.get("ncbi_api_key"),
         max_bytes=int(response_mb * 1024 ** 2) if response_mb else None,
@@ -319,6 +447,16 @@ def fetch_publication(
     supplements: List = []
     media: List = []
     seen_digests: Dict[tuple, str] = {}
+    # Every file any tier declined under `fetch.text_bearing_only`, theirs and this
+    # function's, in one list. Not written to the manifest as a key of its own:
+    # `attempts` already carries the names with the tier and the point in the flow
+    # that refused them, and this is only needed to tell `_supplement_status` why the
+    # supplement set is empty. Writing them into `record["supplementary"]` as
+    # path-less entries was the tempting alternative and is exactly what the pruner's
+    # marker is careful *not* to look like -- an entry in that list is a promise that
+    # a file arrived, and there are no bytes here to promise.
+    skipped_files: List[dict] = []
+    text_bearing_only = text_bearing.policy_is_on(fetch_cfg)
 
     for source in build_sources(tier_names, http, fetch_cfg):
         if not need_pdf and not need_supplements:
@@ -343,6 +481,10 @@ def fetch_publication(
         record["attempts"].extend(result.attempts)
         record["problems"].extend(result.problems)
         suppl_advice.extend(result.suppl_advice)
+        skipped_files.extend(result.skipped_not_text_bearing)
+        # What this tier refused before spending the request, so the central filter
+        # below can add only what it caught itself.
+        skipped_here: List[tuple] = []
         if result.pdf_status:
             pdf_statuses.append(result.pdf_status)
         if result.suppl_status:
@@ -389,6 +531,25 @@ def fetch_publication(
             elif item.role == ROLE_LANDING and landing_file is None:
                 landing_file = item
             elif item.role in (ROLE_SUPPLEMENT, ROLE_MEDIA):
+                # The guarantee. Whatever a tier hands back, this is what decides
+                # whether it lands, and it is deliberately a second check rather than
+                # a first: four tiers know a filename in advance and refuse it before
+                # spending the request, which this cannot do, and none of them knows
+                # the *final* name. `proxy_browser` reads it from
+                # `Content-Disposition` after the body is in hand -- ClinicalKey
+                # serves twelve supplements from one extensionless endpoint -- and
+                # `store.sanitize_filename` has not run yet either. So the tiers save
+                # the requests and this decides what the corpus holds, which is the
+                # only place a future tier cannot get wrong by omission.
+                #
+                # Only these two roles. The article's own PDF, JATS and landing page
+                # are never asked: a policy about supplementary material must not be
+                # able to refuse the article, whatever a publisher names the file.
+                reason = text_bearing.skip_reason(item.name) if text_bearing_only \
+                    else None
+                if reason is not None:
+                    skipped_here.append((item.name, item.role, reason))
+                    continue
                 # Europe PMC's ZIP and the PMC listing overlap, so the same file
                 # can arrive twice. The key is (bytes, name), not bytes alone:
                 # distinct supplements legitimately share content (empty
@@ -402,9 +563,55 @@ def fetch_publication(
                 item.tier = source.name
                 (supplements if item.role == ROLE_SUPPLEMENT else media).append(item)
 
+        if skipped_here:
+            record["attempts"].append(
+                not_text_bearing_note(source.name, skipped_here, where=AFTER_DOWNLOAD))
+            skipped_files.extend(
+                {"name": name, "role": role, "reason": why}
+                for name, role, why in skipped_here)
+        refused_supplements = sum(
+            1 for entry in result.skipped_not_text_bearing
+            if entry["role"] == ROLE_SUPPLEMENT
+        ) + sum(1 for _name, role, _why in skipped_here if role == ROLE_SUPPLEMENT)
+
         if pdf_file is not None:
             need_pdf = False
         if supplements:
+            need_supplements = False
+        elif refused_supplements and result.suppl_status not in SUPPL_RECOVERABLE:
+            # This tier named the article's supplementary files and every one of them
+            # was a file no text can come out of. Stopping here is not a new early
+            # exit: the branch above stops the loop as soon as *any* supplement
+            # arrives, so a run that kept those JPEGs would have stopped in exactly
+            # this place. Carrying on instead would send `pmc_supplements` into PMC's
+            # proof-of-work wall and then open a browser, to find the same figures --
+            # and each of those tiers can report `page_not_parsed` or
+            # `partial_failure` on the way, which would block `none_text_bearing`
+            # (see `_supplement_status`) and end the article on the
+            # `expected_but_missing` alarm with nothing wrong with it.
+            #
+            # **`SUPPL_RECOVERABLE` is the whole guard, and without it this exit is a
+            # data loss.** "A run that kept those JPEGs would have stopped here" is
+            # only true when the refused file would in fact have *arrived*. A tier
+            # that refused a figure and *lost* a spreadsheet beside it did not
+            # account for the set, and the branch above would not have fired for it
+            # -- so stopping there abandons the rescue chain the tier order exists
+            # for. Measured on two shapes, both of which lose a `.xlsx` forever
+            # without this condition: `pmc_supplements` refusing `fig1.jpg` and then
+            # meeting NCBI's proof-of-work page on `supplement-2.xlsx` -- the normal
+            # case for a non-Springer publisher, and `proxy_browser` is the only
+            # route through that wall, while the manifest prints "the browser tier is
+            # required for them"; and `pmc_s3` refusing a listed figure while the S3
+            # copy of the table 500s, where the next tier serves it from `/bin/`.
+            # Both end `expected_but_missing`, which is not settled, so every later
+            # batch repeats the identical truncated run.
+            #
+            # A tier that means "I saw the set and refused all of it" says so by
+            # leaving `suppl_status` unset -- `pmc_s3`'s `if not kept`, `europepmc`'s
+            # `if not members`, `pmc_supplements`' and `biorxiv`'s `if not wanted`,
+            # `proxy_browser`'s `if not attempted`. `fetched`/`fetched_unverified`
+            # also stop the loop and must: the tier bounded the set, and this
+            # function's own `AFTER_DOWNLOAD` filter is what emptied it.
             need_supplements = False
 
     if not record["tiers_tried"]:
@@ -480,10 +687,10 @@ def fetch_publication(
     existing_supplementary = (existing or {}).get("supplementary") or []
     existing_media = (existing or {}).get("media") or []
     existing_supplementary_ok = bool(existing_supplementary) and all(
-        _still_on_disk(directory, entry) for entry in existing_supplementary
+        _entry_accounted_for(directory, entry) for entry in existing_supplementary
     )
     existing_media_ok = bool(existing_media) and all(
-        _still_on_disk(directory, entry) for entry in existing_media
+        _entry_accounted_for(directory, entry) for entry in existing_media
     )
 
     new_supplementary = _write_group(directory, store.SUPPLEMENT_DIR, supplements)
@@ -491,8 +698,24 @@ def fetch_publication(
         record["supplementary"] = new_supplementary
     elif existing_supplementary_ok:
         record["supplementary"] = existing_supplementary
+        # Two sentences because `_entry_accounted_for` accepts two different true
+        # statements, and only one of them is about bytes on disk. For an article
+        # `drop-media` swept end to end -- a supplement set that was all figures --
+        # every kept entry is a removal marker and `supplementary/` is not even there,
+        # so "the existing set already on disk" would be a durable falsehood in the
+        # one field that is prose about the corpus. The record is still the right thing
+        # to keep, which is what the swapped guard is for; it is the claim that had to
+        # narrow with it. Reachable for a minority of the 138 articles that hold a
+        # non-text supplement -- the ones where 100% rather than the measured 71% of
+        # the supplement slots are non-text -- and for the rest the first sentence
+        # stays true, because a spreadsheet is still there.
         record["problems"].append(
-            "re-fetch found no supplementary files; kept the existing set already on disk"
+            "re-fetch found no supplementary files; kept the existing record, whose "
+            "files a policy sweep had already removed"
+            if all(store.entry_removed_by_policy(entry)
+                   for entry in existing_supplementary)
+            else "re-fetch found no supplementary files; kept the existing set "
+                 "already on disk"
         )
     else:
         record["supplementary"] = new_supplementary  # []
@@ -503,9 +726,11 @@ def fetch_publication(
     elif existing_media_ok:
         record["media"] = existing_media
 
+    skipped_supplements = sum(1 for entry in skipped_files
+                              if entry["role"] == ROLE_SUPPLEMENT)
     if new_supplementary:
         record["supplementary_status"] = _supplement_status(
-            ids, want_supplements, len(supplements), suppl_statuses
+            ids, want_supplements, len(supplements), suppl_statuses, skipped_supplements
         )
     elif existing_supplementary_ok:
         # The old verdict is still the honest one: nothing this run learned
@@ -513,10 +738,11 @@ def fetch_publication(
         # less than what is actually on disk (e.g. `expected_but_missing` over
         # a set that was in fact retrieved earlier).
         record["supplementary_status"] = (existing or {}).get("supplementary_status") \
-            or _supplement_status(ids, want_supplements, 0, suppl_statuses)
+            or _supplement_status(ids, want_supplements, 0, suppl_statuses,
+                                  skipped_supplements)
     else:
         record["supplementary_status"] = _supplement_status(
-            ids, want_supplements, len(supplements), suppl_statuses
+            ids, want_supplements, len(supplements), suppl_statuses, skipped_supplements
         )
     # Advice outlives its obstacle unless something retires it. A tier that hit
     # PMC's bot check says "re-run with --headed"; if a later tier then collected

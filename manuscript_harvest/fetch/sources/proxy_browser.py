@@ -677,6 +677,15 @@ class ProxyBrowserSource(Source):
             return
 
         fetched, attempted = self._download_all(context, links, referer, result, "pmc")
+        if not attempted:
+            # `links` is non-empty just above, so the only way to attempt nothing is
+            # that the text-bearing filter took every one. `partial_failure` below
+            # would be the alarm for a file that would not come, over an article
+            # where nothing was lost; `fetcher._supplement_status` names this
+            # `none_text_bearing` from the skip count instead.
+            result.note("pmc_page", url=url, status="none_text_bearing",
+                        listed=len(links), attempted=0)
+            return
         if fetched and fetched == attempted:
             # `attempted` counts anchors the adapter recognised, not files PMC
             # holds, so this says "we got what we saw". See `store.SUPPL_SETTLED`.
@@ -877,17 +886,28 @@ class ProxyBrowserSource(Source):
                 fetched, attempted = self._download_all(
                     context, links, final_url, result, adapter.name
                 )
-                # Never plain `fetched` here. This is the site that reported
-                # `fetched` for 10.1016/j.xgen.2026.101304 while holding 1 of its
-                # 12 supplements: `attempted` counts the anchors
-                # `looks_like_supplement` matched, and a heuristic cannot know
-                # what it missed. See `store.SUPPL_SETTLED`.
-                result.suppl_status = (
-                    "fetched_unverified" if fetched and fetched == attempted
-                    else "partial_failure"
-                )
-                result.note("supplements", status=result.suppl_status, listed=len(links),
-                            attempted=attempted, fetched=fetched, adapter=adapter.name)
+                if not attempted:
+                    # Every anchor the adapter matched was a file no text can be
+                    # extracted from; `links` is non-empty in this branch. Same
+                    # reasoning as in `_pmc_supplements`: the status stays unset and
+                    # `fetcher._supplement_status` names it, rather than the
+                    # `partial_failure` the expression below would produce for an
+                    # article that lost nothing.
+                    result.note("supplements", status="none_text_bearing",
+                                listed=len(links), attempted=0, adapter=adapter.name)
+                else:
+                    # Never plain `fetched` here. This is the site that reported
+                    # `fetched` for 10.1016/j.xgen.2026.101304 while holding 1 of its
+                    # 12 supplements: `attempted` counts the anchors
+                    # `looks_like_supplement` matched, and a heuristic cannot know
+                    # what it missed. See `store.SUPPL_SETTLED`.
+                    result.suppl_status = (
+                        "fetched_unverified" if fetched and fetched == attempted
+                        else "partial_failure"
+                    )
+                    result.note("supplements", status=result.suppl_status,
+                                listed=len(links), attempted=attempted,
+                                fetched=fetched, adapter=adapter.name)
 
         try:
             page.close()
@@ -1106,10 +1126,25 @@ class ProxyBrowserSource(Source):
 
         Returning `attempted` rather than comparing against the full list is what
         keeps the `max_files` cap from masquerading as a partial failure -- and any
-        links dropped by the cap are recorded, not silently discarded.
+        links dropped by the cap are recorded, not silently discarded. A link the
+        text-bearing filter refused is out of `attempted` for the same reason: the
+        callers read `fetched == attempted` as "we got what we went for", and this
+        tier never went for it.
+
+        The filter reads the anchor's href, which is the only name available before
+        the request here -- and it is often not the name of the file. A href with no
+        extension is kept, which is the predicate's default and the right answer
+        twice over: ClinicalKey serves all twelve supplements of
+        10.1016/j.xgen.2026.101304 from `/ui/service/content/url`, and
+        `fetcher.fetch_publication` re-asks the question once
+        `Content-Disposition` has said what actually arrived.
         """
         # "link": scraped anchors, as in biorxiv -- see `Source.apply_files_cap`.
-        attempted = self.apply_files_cap(links, result, via=via, noun="link")
+        # Filtered ahead of the cap, and ahead of `_oversize_mb`'s HEAD request, so a
+        # refused figure costs neither a cap slot nor a round trip.
+        wanted = self.keep_text_bearing(
+            links, result, name_of=lambda link: link["url"], via=via)
+        attempted = self.apply_files_cap(wanted, result, via=via, noun="link")
 
         # Clearing a JS challenge costs a page load each, so a site that challenges
         # everything would otherwise burn one timeout per file. After a few

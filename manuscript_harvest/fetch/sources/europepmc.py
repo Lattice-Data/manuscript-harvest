@@ -23,9 +23,18 @@ import io
 import zipfile
 from typing import List
 
+from ... import text_bearing
 from ..http import HttpError
 from ..validate import better_pdf_failure, validate_pdf
-from .base import ROLE_PDF, ROLE_SUPPLEMENT, ROLE_XML, FetchedFile, Source, SourceResult
+from .base import (
+    ON_UNPACK,
+    ROLE_PDF,
+    ROLE_SUPPLEMENT,
+    ROLE_XML,
+    FetchedFile,
+    Source,
+    SourceResult,
+)
 
 REST_BASE = "https://www.ebi.ac.uk/europepmc/webservices/rest"
 RENDER_PDF = "https://europepmc.org/articles/{pmcid}?pdf=render"
@@ -215,14 +224,36 @@ class EuropePmcSource(Source):
             return
 
         try:
-            members = _unpack_zip(resp.content, self.max_files, self.max_file_bytes)
+            members, skipped = _unpack_zip(resp.content, self.max_files,
+                                           self.max_file_bytes,
+                                           text_bearing_only=self.text_bearing_only)
         except (zipfile.BadZipFile, ValueError) as e:
             result.suppl_status = "partial_failure"
             result.problems.append(f"europepmc supplement ZIP unreadable: {e}")
             result.note("supplements", url=url, status="unreadable_zip", error=str(e))
             return
 
+        # `on_unpack`, not `before_download`: this endpoint answers one ZIP for the
+        # whole article, so the transfer was paid before any member had a name. What
+        # the filter saves here is the disk write, the manifest entry and the
+        # extraction record -- which is most of what this change is about anyway: the
+        # corpus holds 2373 image files in only 0.75 GB, and image, audio and video
+        # are 47% of every supplementary entry in it. Every member is
+        # `ROLE_SUPPLEMENT` because that is what `_unpack_zip` calls them all; the
+        # media split `pmc_oa._classify` makes is documented there as deliberately not
+        # applied to this archive.
+        self.record_not_text_bearing(
+            result, [(name, ROLE_SUPPLEMENT, reason) for name, reason in skipped],
+            where=ON_UNPACK)
+
         if not members:
+            if skipped:
+                # An archive of nothing but figures. Not `empty_zip`, which says the
+                # deposit is empty, and no status: `fetcher._supplement_status` names
+                # this `none_text_bearing` from the skip count.
+                result.note("supplements", url=url, status="none_text_bearing",
+                            count=0, not_text_bearing=len(skipped))
+                return
             result.note("supplements", url=url, status="empty_zip", count=0)
             return
 
@@ -239,15 +270,35 @@ class EuropePmcSource(Source):
         # Plain `fetched`, one of only two places that earns it: the archive IS
         # the deposit, so its member list bounds the set rather than guessing at
         # it. Nothing here pattern-matches a page. See `store.SUPPL_SETTLED`.
+        #
+        # Still `fetched` when the filter refused some members, and for the same
+        # reason: the member list bounded the set, every file in it that text can
+        # come out of arrived, and the names of the rest are in the
+        # `text_bearing_filter` note. See `pmc_s3._fetch_payload` for the argument
+        # against demoting to `fetched_unverified` here.
         result.suppl_status = "fetched"
-        result.note("supplements", url=url, status="fetched", count=len(members))
+        result.note("supplements", url=url, status="fetched", count=len(members),
+                    not_text_bearing=len(skipped))
 
 
-def _unpack_zip(content: bytes, max_files: int, max_file_bytes: int):
-    """Return [(name, bytes)] for the real files in a ZIP.
+def _unpack_zip(content: bytes, max_files: int, max_file_bytes: int,
+                text_bearing_only: bool = True):
+    """Return `([(name, bytes)], [(name, reason)])` for the real files in a ZIP.
 
     Directory entries are skipped, and both the per-file size and the file count
     are capped -- an archive should not be able to fill the disk.
+
+    The second list is what `text_bearing_only` refused. Refused *before*
+    `archive.read(info)`, so a member nothing can read is never decompressed into
+    memory: supplements this large are real -- 10.1126/science.aax6234 ships a
+    487.8 MB one, which is what `proxy_browser._oversize_mb` exists for -- and a
+    figure or a movie among them is a whole-file allocation bought for nothing.
+    Refused before the `max_files` count too, so the cap's slots go to members
+    something downstream will parse.
+
+    Returning the refusals rather than noting them here keeps this function pure
+    over `(content, caps)` -- it has no `SourceResult` and does not want one -- and
+    keeps the caller the only place that decides what a refusal means for a status.
 
     Member names are returned *as recorded in the archive*, path and all. Nothing
     can write outside the corpus directory regardless, but the guard is downstream
@@ -263,9 +314,20 @@ def _unpack_zip(content: bytes, max_files: int, max_file_bytes: int):
     in `_classify`.
     """
     out = []
+    skipped = []
     with zipfile.ZipFile(io.BytesIO(content)) as archive:
         for info in archive.infolist():
             if info.is_dir():
+                continue
+            # Ahead of the size check on purpose. An oversize member raises, and that
+            # costs the whole archive its status -- right for a supplementary table a
+            # bigger cap would get, pointless for a video no cap makes readable. With
+            # the policy on, an oversize `.mov` is refused on its name instead and the
+            # tables beside it still arrive.
+            reason = text_bearing.skip_reason(info.filename) if text_bearing_only \
+                else None
+            if reason is not None:
+                skipped.append((info.filename, reason))
                 continue
             if info.file_size > max_file_bytes:
                 raise ValueError(
@@ -275,4 +337,4 @@ def _unpack_zip(content: bytes, max_files: int, max_file_bytes: int):
             out.append((info.filename, archive.read(info)))
             if len(out) >= max_files:
                 break
-    return out
+    return out, skipped

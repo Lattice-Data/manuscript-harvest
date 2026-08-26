@@ -16,9 +16,33 @@ fetch:
   # when a key is present, so lowering that is what makes a key worth having.
   ncbi_api_key: null
   min_interval_seconds: 3.0               # per host; 1-10 papers needs nothing cleverer
+
+  # Per-host exceptions to the interval above, matched on the exact host name.
+  # The 3.0 s default is a courtesy NCBI's E-utilities documents and asks for.
+  # PMC's Open Access S3 bucket asks for nothing -- it is a bulk object store,
+  # and the pmc_s3 tier spends one request per file rather than one per article,
+  # so the default would leave a 14-supplement paper asleep for ~45 s and one at
+  # the max_files cap for ~150 s. 0.2 s is 5 requests a second to a service built
+  # for far more. Anything not listed here keeps the default above.
+  min_interval_overrides:
+    "pmc-oa-opendata.s3.amazonaws.com": 0.2
+
   timeout_seconds: 60
   max_files: 50                           # supplementary files per article; anything dropped is recorded
   max_file_mb: 200
+
+  # Fetch only supplementary files text can be extracted from. Measured over this
+  # corpus: 2428 of the 5116 stored supplementary entries (47%) are images, audio or
+  # video, and 138 articles hold at least one -- files that cost a request, a
+  # manifest entry and an extraction record apiece, and yield no text. Kept: pdf,
+  # txt, md, csv, tsv, xlsx/xls/xlsm, docx/doc/rtf, pptx, xml/nxml, json, html, and
+  # archives (.zip/.gz/.tar/.tgz -- mostly supplementary tables, which extraction
+  # already unpacks). Skipped: figure images and audio/video. Anything with an
+  # unrecognised extension, or none at all, is kept. Every skip is named in the
+  # manifest's attempts, so a manifest says what a `false` run would have fetched.
+  # Set false to fetch everything, exactly as before this key existed. To remove
+  # what a previous run already stored: `manuscript-fetch drop-media`.
+  text_bearing_only: true
 
   # A ceiling on any single plain-HTTP response body, as a backstop. Distinct from
   # max_file_mb, which the tiers enforce against a Content-Length they ask for
@@ -28,19 +52,29 @@ fetch:
   # max_response_mb: 600
 
   # Disk budget for corpus_dir. Articles average ~40 MB, and the bulk is content
-  # the pipeline wants (45% PDF, 25% spreadsheets), so there is no useful
-  # "drop the media" saving -- staying inside a budget means giving up whole
-  # articles. When exceeded, the oldest are evicted oldest-first; their manifests
+  # the pipeline wants: measured over the whole 26.90 GB corpus, 70% of the bytes
+  # are text-bearing files and 19% are archives, against 8% audio/video and 2.8%
+  # images. So there is still no useful "drop the media" saving against a budget --
+  # staying inside one means giving up whole articles. (text_bearing_only above
+  # drops that media anyway, for a different reason: it is half the file *count*.)
+  # When exceeded, the oldest are evicted oldest-first; their manifests
   # are kept, so you keep the record of what was there and can re-fetch with
   # --force. null = unlimited. Applied automatically after every fetch whenever
   # this key is set; inspect with `usage`, or force a sweep now with `prune`.
-  max_corpus_gb: 25
+  max_corpus_gb: 30
 
-  # Tried in order. The first four need no credentials and no browser; the last
+  # Tried in order. The first five need no credentials and no browser; the last
   # one is the exception path. Drop "proxy_browser" (or pass --oa-only) to
   # guarantee nothing ever opens a browser.
   tiers:
     - europepmc         # PDF + JATS XML + supplementaryFiles ZIP
+    # PMC's own bulk S3 bucket: lists the whole deposit, then fetches each object
+    # anonymously. Sits here because europepmc still answers a whole article in
+    # one request, while this one costs a request per file -- but ahead of
+    # pmc_supplements, which is the tier that walks into PMC's proof-of-work page
+    # and then 403s. The bucket is never challenged, so trying it first is what
+    # stops the common case from asking for a browser it does not need.
+    - pmc_s3
     - pmc_supplements   # PMC lists the files; the publisher's OA host serves them
     - pmc_oa            # oa.fcgi: mainly an "is this in the OA subset" signal now
     - biorxiv           # 10.1101 and 10.64898 preprints

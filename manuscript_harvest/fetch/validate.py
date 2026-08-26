@@ -122,7 +122,20 @@ _MIN_DOWNLOAD_BYTES = 100
 #: where `fetcher` keeps the *higher-ranked* one, so `paywalled` then
 #: `session_expired` resolved to different words depending on whether the two came
 #: from one tier or two. Same set, same order, one definition.
-PDF_DIAGNOSES = ("paywalled", "session_expired", "proxy_not_configured",
+#:
+#: `too_large` is first, and it is the only one of these that is not a statement
+#: about a publisher: the file exists, it is public, and this tool refused it over
+#: `fetch.max_file_mb` before transferring a byte. That stays true whatever a later
+#: tier's route reports, and the action it names -- raise the cap -- is the one that
+#: gets the file. `pmc_s3` is the tier that produces it, and it produces it while
+#: asserting the opposite of what a generic miss would overwrite it with: a complete
+#: listing holding keys is that tier saying the article *is* in the Open Access
+#: subset, and without a rank here `pmc_oa` running next reported
+#: `not_in_oa_subset` over it -- measured, `_best_pdf_status(["too_large",
+#: "not_in_oa_subset"])` returned the second, and both tiers key on nothing but
+#: `ids.pmcid`, so in the shipped tier order the second one always runs. A word this
+#: table does not rank is a word `better_pdf_failure` cannot keep.
+PDF_DIAGNOSES = ("too_large", "paywalled", "session_expired", "proxy_not_configured",
                  "publisher_stub_page", "link_resolver_error")
 
 

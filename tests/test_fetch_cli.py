@@ -22,6 +22,7 @@ import pytest
 import yaml
 
 from manuscript_harvest.fetch import cli, store
+from manuscript_harvest.fetch.fetcher import build_http
 
 
 def _config_file(tmp_path, **fetch_overrides):
@@ -342,6 +343,69 @@ def test_oa_only_replaces_the_tier_list_entirely():
     merged = cli._apply_cli_overrides(cli.load_config("nonexistent.yaml"), args)
     assert merged["fetch"]["tiers"] == list(cli.OA_TIERS)
     assert "proxy_browser" not in merged["fetch"]["tiers"]
+
+
+def test_a_run_with_no_config_file_can_still_reach_the_s3_bucket_at_speed(tmp_path):
+    """`pmc_s3` is in `DEFAULT_TIERS`, so the interval exception it depends on cannot
+    live only in the repo's `config.yaml`.
+
+    `--config` defaults to the bare name `config.yaml` and is resolved against the
+    working directory -- which is precisely what `config.warn_if_config_missing`
+    exists for -- and `pyproject.toml` packages only `manuscript_harvest*`, so an
+    installed `manuscript-fetch` has no `config.yaml` to find at all. On the
+    built-in defaults alone every S3 object cost the global 3.0 s: ~45 s of pure
+    sleep for a 14-supplement article and ~150 s for one at the `max_files` cap, per
+    article, with correct files, correct statuses, a note on stderr and exit 0. The
+    only symptom was a batch that took hours.
+    """
+    fetch_cfg = cli.load_config(tmp_path / "nonexistent.yaml")["fetch"]
+
+    assert "pmc_s3" in fetch_cfg["tiers"]
+    assert fetch_cfg["min_interval_overrides"] == \
+        {"pmc-oa-opendata.s3.amazonaws.com": 0.2}
+    assert build_http({"fetch": fetch_cfg}).min_interval_overrides == \
+        {"pmc-oa-opendata.s3.amazonaws.com": 0.2}, "and it reaches the client"
+
+
+def test_a_run_with_no_config_file_still_fetches_only_what_text_comes_out_of(tmp_path):
+    """This key decides which files a corpus holds, so the shipped `config.yaml` and
+    the built-in defaults must not disagree -- and nothing else compares the two.
+
+    Three places state the default and all three are pinned here: `config.yaml` for a
+    run that finds it, `DEFAULT_FETCH_CONFIG` for a run that does not (`--config`
+    resolves against the working directory, and `pyproject.toml` packages only
+    `manuscript_harvest*`, so an installed `manuscript-fetch` finds none), and
+    `text_bearing.policy_is_on` for a `fetch` mapping that never passed through
+    either.
+    """
+    from pathlib import Path
+
+    import yaml
+
+    from manuscript_harvest import text_bearing
+
+    assert cli.DEFAULT_FETCH_CONFIG["text_bearing_only"] is True
+    assert cli.load_config(tmp_path / "nonexistent.yaml")["fetch"][
+        "text_bearing_only"] is True
+    shipped = yaml.safe_load(
+        (Path(__file__).resolve().parent.parent / "config.yaml").read_text())
+    assert shipped["fetch"]["text_bearing_only"] is True
+    assert text_bearing.policy_is_on({}) is True
+
+    # And one key turns it off, all the way through to the tier.
+    off = cli.load_config(_config_file(tmp_path, text_bearing_only=False))["fetch"]
+    assert text_bearing.policy_is_on(off) is False
+
+
+def test_a_users_own_overrides_are_added_to_the_default_not_swapped_for_it(tmp_path):
+    """`merge_config` recurses into dicts, which is what makes naming one more host
+    a one-line change; the same recursion means the shipped entry cannot be removed
+    by deleting it, only by setting it to a slower number. Worth pinning because the
+    two readings differ silently."""
+    config = _config_file(tmp_path, min_interval_overrides={"api.example": 1.0})
+    overrides = cli.load_config(config)["fetch"]["min_interval_overrides"]
+
+    assert overrides == {"pmc-oa-opendata.s3.amazonaws.com": 0.2, "api.example": 1.0}
 
 
 def test_no_proxy_and_headed_reach_the_nested_config():

@@ -15,6 +15,11 @@ The supplementary-material page is HTML, so this tier scrapes -- as
 media links follow a fixed
 `/DC<n>/embed/media-<n>.<ext>` shape -- and when the pattern does not match, the
 result is `page_not_parsed` rather than a silent zero.
+
+`media-<n>` names the embed slot, not the file type: 10.1101/2025.07.21.666016
+serves `media-1.pdf` and `media-2.zip` through it. So `fetch.text_bearing_only`
+reads the extension like everywhere else and this tier keeps both, while an
+`.mp4` in the same slot is refused before the request.
 """
 
 import re
@@ -146,9 +151,24 @@ class BiorxivSource(Source):
                         detail="page loaded; no supplementary links present")
             return
 
+        # Filtered *after* the `none_listed` branch above, which is the whole
+        # ordering argument: bioRxiv is the authority on whether its own preprint has
+        # supplements, and "the page listed two videos and we declined them" is not
+        # the same statement as "the page lists none". Filtering first would put the
+        # first case under the second's name and record a false absence -- the exact
+        # mistake `none_listed` was introduced to stop the index making.
+        wanted = self.keep_text_bearing(links, result)
+        if not wanted:
+            # Status left unset for `fetcher._supplement_status` to name from the
+            # skip count. Not `page_not_parsed`, which the loop below would reach on
+            # an empty list: the page parsed perfectly and told us what it holds.
+            result.note("supplements", url=page_url, status="none_text_bearing",
+                        found=len(links), attempted=0)
+            return
+
         # "link": these are anchors matched on a rendered page, so a dropped one is
         # not known to have been a distinct file.
-        attempted = self.apply_files_cap(links, result, noun="link")
+        attempted = self.apply_files_cap(wanted, result, noun="link")
 
         fetched = 0
         for url in attempted:
@@ -180,7 +200,8 @@ class BiorxivSource(Source):
         else:
             result.suppl_status = "page_not_parsed"
         result.note("supplements", url=page_url, status=result.suppl_status,
-                    found=len(links), attempted=len(attempted), fetched=fetched)
+                    found=len(links), attempted=len(attempted), fetched=fetched,
+                    not_text_bearing=len(result.skipped_not_text_bearing))
 
 
 def _version_key(value) -> int:

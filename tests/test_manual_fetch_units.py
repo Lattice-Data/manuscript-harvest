@@ -240,6 +240,35 @@ def test_a_missing_supplement_is_named(tmp_path):
     assert "science.adt8307_sm.pdf" in matched["detail"]
 
 
+def test_a_figure_the_fetch_stage_refuses_is_reported_not_failed(tmp_path):
+    """`manual_fetch.yaml` records what the *publisher* offers, and since
+    `fetch.text_bearing_only` that is no longer the set a fetch takes: a figure the
+    human saved is refused by policy. Failing on it would make this harness red for
+    every illustrated paper in the ground truth and say nothing about the fetcher --
+    while a missing spreadsheet beside it still has to fail."""
+    article = {
+        "doi": DOI, "source_dir": "Science", "main_pdf": None,
+        "supplements": [
+            {"file": "science.adt8307_figs1.jpg",
+             "sha256": hashlib.sha256(b"fig").hexdigest()},
+            {"file": "science.adt8307_tables1.xlsx",
+             "sha256": hashlib.sha256(b"table").hexdigest()},
+        ],
+        "expect": {"supplementary_status": "fetched"},
+    }
+    directory = _article_dir(tmp_path)
+
+    checks = manual_fetch.compare(article, _record(), directory,
+                                  root=_manual_root(tmp_path))
+
+    matched = next(c for c in checks if c["check"] == "supplements_matched")
+    assert matched["ok"] is False, "the spreadsheet really is missing"
+    assert "missing science.adt8307_tables1.xlsx;" in matched["detail"], \
+        "named as missing, and it is the only one"
+    assert "1 refused by fetch.text_bearing_only (science.adt8307_figs1.jpg)" \
+        in matched["detail"]
+
+
 def test_a_silently_wrong_supplement_status_fails(tmp_path):
     """The check the whole harness exists for: the article really has supplements,
     fetch came away with none, and called the question settled."""

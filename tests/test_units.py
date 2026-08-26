@@ -39,6 +39,7 @@ from manuscript_harvest.fetch.identifiers import (
     normalize_doi,
     unversioned_doi,
 )
+from manuscript_harvest.fetch.sources.europepmc import _unpack_zip
 from manuscript_harvest.fetch.sources.pmc_oa import _classify, _unpack_tgz, ftp_to_https
 from manuscript_harvest.fetch.validate import (
     classify_denial,
@@ -73,6 +74,7 @@ from tests.fakes import (
     make_pdf,
     make_scanned_pdf,
     make_tgz,
+    make_zip,
 )
 
 
@@ -535,9 +537,118 @@ def test_package_members_split_by_kind():
 
 
 def test_tar_cannot_escape_the_corpus_directory():
-    unpacked = _unpack_tgz(make_tgz([("../../evil.txt", b"x"), ("/abs/evil2.txt", b"y")]),
-                           max_files=10, max_file_bytes=1024)
+    # Two lists back since `fetch.text_bearing_only` landed: the members kept, and
+    # the ones no text can be extracted from. Neither of these is the second kind.
+    unpacked, skipped = _unpack_tgz(
+        make_tgz([("../../evil.txt", b"x"), ("/abs/evil2.txt", b"y")]),
+        max_files=10, max_file_bytes=1024)
     assert [n for n, _ in unpacked] == ["evil.txt", "evil2.txt"]
+    assert skipped == []
+
+
+def test_tar_members_no_text_can_come_out_of_are_refused_on_the_basename():
+    """The archive arrives as one blob, so the transfer is already paid -- what the
+    filter saves here is the disk write, the manifest entry and the extraction record
+    whose only content would be the word `image_no_text`. Judged on the basename,
+    which is the name `extract/extractor.py` would have dispatched on.
+
+    *Which* names are refused, and nothing about when: that a refused member is never
+    decompressed and never spends a `max_files` slot is
+    `test_a_refused_tar_member_is_never_read_and_never_spends_a_cap_slot` below, and
+    neither claim is visible in a return value at this cap.
+    """
+    package = make_tgz([("PMC1/table_s1.xlsx", b"xlsx"), ("PMC1/f1.jpg", b"\xff\xd8"),
+                        ("PMC1/movie1.mp4", b"\x00\x00\x00 ftyp")])
+
+    kept, skipped = _unpack_tgz(package, max_files=10, max_file_bytes=1024)
+
+    assert [n for n, _ in kept] == ["table_s1.xlsx"]
+    assert skipped == [("f1.jpg", "image"), ("movie1.mp4", "audio_video")]
+    # And with the policy off, exactly what it did before.
+    kept, skipped = _unpack_tgz(package, max_files=10, max_file_bytes=1024,
+                                text_bearing_only=False)
+    assert len(kept) == 3 and skipped == []
+
+
+def test_a_refused_tar_member_is_never_read_and_never_spends_a_cap_slot(monkeypatch):
+    """"Never decompressed" and "ahead of `max_files`" are the two claims
+    `_unpack_tgz`'s docstring makes and the only two a return value cannot show.
+
+    Both are load-bearing rather than tidy. A tarball member is read whole into
+    memory, and supplements this size are real -- 10.1126/science.aax6234 ships a
+    487.8 MB one -- so a movie among them is a whole-file allocation bought for
+    nothing. And a figure that spends a cap slot is a supplementary table that does
+    not arrive: moving the refusal after the count leaves `[]` here where the table
+    arrives today, which is silent data loss and was invisible to every other test in
+    this file because they all run at a cap no small fixture reaches.
+    """
+    import tarfile
+
+    read = []
+    original = tarfile.TarFile.extractfile
+
+    def watched(self, member):
+        read.append(getattr(member, "name", member))
+        return original(self, member)
+
+    monkeypatch.setattr(tarfile.TarFile, "extractfile", watched)
+    package = make_tgz([("PMC1/f1.jpg", b"\xff\xd8"), ("PMC1/movie1.mp4", b"ftyp"),
+                        ("PMC1/f2.jpg", b"\xff\xd8"), ("PMC1/table_s1.xlsx", b"xlsx")])
+
+    kept, skipped = _unpack_tgz(package, max_files=2, max_file_bytes=1024)
+
+    assert [n for n, _ in kept] == ["table_s1.xlsx"], \
+        "the cap's slots go to members something downstream will parse"
+    assert len(skipped) == 3
+    assert read == ["PMC1/table_s1.xlsx"], \
+        "and the three refused members were never decompressed"
+
+
+def test_a_refused_zip_member_is_never_read_and_never_spends_a_cap_slot(monkeypatch):
+    """`europepmc._unpack_zip`, the same two claims and the same reasons.
+
+    Written as its own test rather than folded into the tier's, because the tier test
+    can only see the returned names: whether `archive.read(info)` ran, and whether the
+    refusal happened before or after `len(out) >= max_files`, are invisible from
+    there. This is also the archive whose size argument is measured -- the docstring
+    cites a 487.8 MB member -- so the ordering claim is one a future editor would
+    reasonably assume is enforced.
+    """
+    import zipfile
+
+    read = []
+    original = zipfile.ZipFile.read
+
+    def watched(self, name, pwd=None):
+        read.append(getattr(name, "filename", name))
+        return original(self, name, pwd)
+
+    monkeypatch.setattr(zipfile.ZipFile, "read", watched)
+    archive = make_zip([("f1.jpg", b"\xff\xd8"), ("movie1.mp4", b"ftyp"),
+                        ("f2.png", b"\x89PNG"), ("table_s1.xlsx", b"xlsx")])
+
+    kept, skipped = _unpack_zip(archive, max_files=2, max_file_bytes=1024)
+
+    assert [n for n, _ in kept] == ["table_s1.xlsx"]
+    assert [n for n, _ in skipped] == ["f1.jpg", "movie1.mp4", "f2.png"]
+    assert read == ["table_s1.xlsx"], "and nothing refused was decompressed"
+
+
+def test_a_zip_member_no_text_can_come_out_of_is_refused_before_the_size_cap():
+    """Ahead of the size check as well, and that ordering is a judgement rather than
+    an accident: an oversize member raises and costs the whole archive its status,
+    which is right for a supplementary table a bigger cap would get and pointless for
+    a video no cap makes readable. So an oversize `.mov` is refused on its name and
+    the tables beside it still arrive."""
+    archive = make_zip([("movie1.mov", b"x" * 5000), ("table_s1.xlsx", b"xlsx")])
+
+    kept, skipped = _unpack_zip(archive, max_files=10, max_file_bytes=100)
+
+    assert [n for n, _ in kept] == ["table_s1.xlsx"]
+    assert skipped == [("movie1.mov", "audio_video")]
+    with pytest.raises(ValueError, match="over the"):
+        _unpack_zip(archive, max_files=10, max_file_bytes=100,
+                    text_bearing_only=False)
 
 
 def test_tar_member_over_cap_raises():
@@ -977,6 +1088,75 @@ def test_per_host_interval_is_enforced(monkeypatch):
     http._wait_for_host("https://b.example/1")   # different host: no wait
     assert slept and slept[0] == pytest.approx(3.0)
     assert len(slept) == 1
+
+
+@pytest.fixture
+def frozen_clock(monkeypatch):
+    """Collects what `_wait_for_host` slept, with time standing still.
+
+    A stopped clock makes each sleep exactly the interval that applied, so the
+    assertions read as the intervals themselves rather than as arithmetic.
+    """
+    slept = []
+    monkeypatch.setattr("manuscript_harvest.fetch.http.time.sleep", lambda s: slept.append(s))
+    monkeypatch.setattr("manuscript_harvest.fetch.http.time.monotonic", lambda: 100.0)
+    return slept
+
+
+def test_a_named_host_can_have_its_own_interval(frozen_clock):
+    """One number cannot be both the courtesy NCBI documents and a sane rate for an
+    AWS bulk store. `pmc_s3` fetches one object per request, so at 3.0 s a
+    14-supplement article spends ~45 s asleep and one at the cap ~150 s."""
+    http = Http(min_interval_seconds=3.0,
+                min_interval_overrides={"pmc-oa-opendata.s3.amazonaws.com": 0.2})
+    http._wait_for_host("https://pmc-oa-opendata.s3.amazonaws.com/PMC1.1/a.xlsx")
+    http._wait_for_host("https://pmc-oa-opendata.s3.amazonaws.com/PMC1.1/b.xlsx")
+    http._wait_for_host("https://www.ncbi.nlm.nih.gov/1")
+    http._wait_for_host("https://www.ncbi.nlm.nih.gov/2")
+
+    assert frozen_clock == [pytest.approx(0.2), pytest.approx(3.0)], \
+        "the override applies to its host and to nothing else"
+
+
+def test_an_override_is_matched_on_the_whole_host_not_a_suffix(frozen_clock):
+    """A rule for `s3.amazonaws.com` would quietly cover every bucket on it,
+    including hosts nobody here has measured. The match is case-insensitive, because
+    a hostname is."""
+    http = Http(min_interval_seconds=3.0,
+                min_interval_overrides={"PMC-OA-OPENDATA.s3.amazonaws.com": 0.2})
+    http._wait_for_host("https://someone-elses-bucket.s3.amazonaws.com/1")
+    http._wait_for_host("https://someone-elses-bucket.s3.amazonaws.com/2")
+    http._wait_for_host("https://pmc-oa-opendata.s3.amazonaws.com/1")
+    http._wait_for_host("https://pmc-oa-opendata.s3.amazonaws.com/2")
+
+    assert frozen_clock == [pytest.approx(3.0), pytest.approx(0.2)]
+
+
+def test_no_overrides_is_the_single_interval_it_always_was(frozen_clock):
+    """The default has to be byte-for-byte the old behaviour: this key is new, and
+    every config that does not mention it must throttle exactly as before."""
+    http = Http(min_interval_seconds=3.0)
+    assert http.min_interval_overrides == {}
+    http._wait_for_host("https://a.example/1")
+    http._wait_for_host("https://a.example/2")
+    assert frozen_clock == [pytest.approx(3.0)]
+
+
+def test_the_interval_overrides_are_reachable_from_the_config():
+    """`max_bytes` was a cap the config could not set for a while; this one is wired
+    from the start, and `pmc_s3` is unusable at the default interval without it.
+
+    `build_http` passes through exactly what it is given and invents nothing, which
+    is why the empty cases below stay empty. Where the S3 entry a real run needs
+    comes from is `cli.DEFAULT_FETCH_CONFIG` -- see
+    `test_fetch_cli.test_a_run_with_no_config_file_can_still_reach_the_s3_bucket_at_speed`,
+    because a default that exists only in the repo's `config.yaml` is not a default.
+    """
+    from manuscript_harvest.fetch.fetcher import build_http
+    built = build_http({"fetch": {"min_interval_overrides": {"x.example": 0.5}}})
+    assert built.min_interval_overrides == {"x.example": 0.5}
+    assert build_http({"fetch": {}}).min_interval_overrides == {}
+    assert build_http({}).min_interval_overrides == {}
 
 
 # -- HTTP transport: retries and caps ----------------------------------------

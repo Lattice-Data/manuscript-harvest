@@ -36,9 +36,11 @@ import tarfile
 from typing import List, Optional, Tuple
 from xml.etree import ElementTree
 
+from ... import text_bearing
 from ..http import HttpError
 from ..validate import validate_pdf
 from .base import (
+    ON_UNPACK,
     ROLE_MEDIA,
     ROLE_PDF,
     ROLE_SUPPLEMENT,
@@ -60,12 +62,43 @@ _IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".tif", ".tiff", ".bmp", "
 # same question about a *rendered page*. The inputs differ, and so does what is safe:
 # that one matches href plus anchor text, where a bare `suppl` also prefixes
 # "supplier", "supply" and "supplant", so it anchors on whole path segments. This one
-# only ever sees a tarball member's basename, where bare `suppl` is unambiguous. If
+# only ever sees a deposited file's basename, where bare `suppl` is unambiguous. If
 # either list gains a publisher pattern, review both.
 _SUPPLEMENT_MARKERS = re.compile(
     r"(suppl|_s\d+\b|-s\d+\b|moesm|esm|additional[_-]?file|media-?\d|table[_-]?s\d|data[_-]?s\d)",
     re.IGNORECASE,
 )
+
+
+def _extension(name: str) -> str:
+    """The lowercased extension including its dot, or `""` when there is none."""
+    lowered = name.lower()
+    return lowered[lowered.rfind("."):] if "." in lowered else ""
+
+
+def supplement_or_media(name: str) -> str:
+    """`ROLE_SUPPLEMENT` or `ROLE_MEDIA` for one deposited file, from its name alone.
+
+    The tail of `_classify`, lifted out so `pmc_s3` decides this the same way rather
+    than growing a second copy of the policy. Both tiers see the same deposit -- the
+    tarball and the S3 object listing hold the same files -- so two answers for one
+    filename would mean the same article sorting differently depending on which tier
+    reached it first, which is the drift `_classify`'s docstring already records
+    against `europepmc._unpack_zip`.
+
+    The marker check comes *first*, and PMC8941949 is why: it deposits both
+    `NIHMS1758707-supplement-1.jpg` and `nihms-1758707-f0001.jpg`. They are the same
+    file type and only the name separates a supplementary figure from one of the
+    article's own, so an extension-first order would file the supplement under
+    `media/` where no curator looks for it.
+
+    Unknown extensions fall to `ROLE_SUPPLEMENT` deliberately: the cost of a figure
+    landing in `supplementary/` is clutter, and the cost of a supplementary table
+    landing in `media/` is a curator not finding it.
+    """
+    if _SUPPLEMENT_MARKERS.search(name):
+        return ROLE_SUPPLEMENT
+    return ROLE_MEDIA if _extension(name) in _IMAGE_EXTENSIONS else ROLE_SUPPLEMENT
 
 
 def ftp_to_https(href: str) -> str:
@@ -171,11 +204,23 @@ class PmcOaSource(Source):
             return
 
         try:
-            members = _unpack_tgz(resp.content, self.max_files, self.max_file_bytes)
+            members, skipped = _unpack_tgz(resp.content, self.max_files,
+                                           self.max_file_bytes,
+                                           text_bearing_only=self.text_bearing_only)
         except (tarfile.TarError, ValueError, EOFError) as e:
             result.problems.append(f"pmc oa package unreadable: {e}")
             result.note("package", url=url, status="unreadable_archive", error=str(e))
             return
+
+        # `on_unpack`: the tarball arrives as one blob, so the transfer is already
+        # paid. Each refused name is put through `supplement_or_media` -- the same
+        # policy that would have decided its directory -- so that a refused article
+        # figure is recorded as one and cannot be counted against the supplements by
+        # `fetcher._supplement_status`.
+        self.record_not_text_bearing(
+            result,
+            [(name, supplement_or_media(name), reason) for name, reason in skipped],
+            where=ON_UNPACK)
 
         supplements, media, xml_member, pdf_member = _classify(members)
 
@@ -217,21 +262,44 @@ class PmcOaSource(Source):
             status="unpacked",
             supplements=len(supplements),
             media=len(media),
+            not_text_bearing=len(skipped),
             has_xml=xml_member is not None,
         )
 
 
-def _unpack_tgz(content: bytes, max_files: int, max_file_bytes: int) -> List[Tuple[str, bytes]]:
-    """Return [(basename, bytes)] for regular files in a .tar.gz.
+def _unpack_tgz(content: bytes, max_files: int, max_file_bytes: int,
+                text_bearing_only: bool = True):
+    """Return `([(basename, bytes)], [(basename, reason)])` for a .tar.gz's files.
 
     Only regular files are read, and only their basenames are kept, so neither an
     absolute path, a `..` traversal, nor a symlink member can write outside the
     corpus directory.
+
+    The second list is what `text_bearing_only` refused, decided on the basename --
+    the name the rest of the pipeline would have seen -- and before
+    `handle.read()`, so a figure is never decompressed. A package holds the
+    article's own figure images as well as its supplements, which is why this is
+    the archive where the filter drops the most: `_classify` below has sorted them
+    into `media/` since it was written, and with the policy on there is nothing
+    left to sort.
     """
     out: List[Tuple[str, bytes]] = []
+    skipped: List[Tuple[str, str]] = []
     with tarfile.open(fileobj=io.BytesIO(content), mode="r:gz") as archive:
         for member in archive:
             if not member.isfile():
+                continue
+            name = member.name.replace("\\", "/").rsplit("/", 1)[-1]
+            if not name:
+                continue
+            # Ahead of the size check, as in `europepmc._unpack_zip`: an oversize
+            # member raises and costs the whole package, which is worth doing for a
+            # table a bigger cap would get and not for a video that will never be
+            # read. The basename check moved up with it, since the name is what both
+            # tests read.
+            reason = text_bearing.skip_reason(name) if text_bearing_only else None
+            if reason is not None:
+                skipped.append((name, reason))
                 continue
             if member.size > max_file_bytes:
                 raise ValueError(
@@ -241,13 +309,10 @@ def _unpack_tgz(content: bytes, max_files: int, max_file_bytes: int) -> List[Tup
             handle = archive.extractfile(member)
             if handle is None:
                 continue
-            name = member.name.replace("\\", "/").rsplit("/", 1)[-1]
-            if not name:
-                continue
             out.append((name, handle.read()))
             if len(out) >= max_files:
                 break
-    return out
+    return out, skipped
 
 
 def _classify(members: List[Tuple[str, bytes]]):
@@ -258,23 +323,27 @@ def _classify(members: List[Tuple[str, bytes]]):
     a curator looks for supplementary tables, and padding it with figure JPEGs
     would bury them.
 
-    **This split is this tier's alone, and the tier that delivers the supplements
-    does not do it.** `europepmc._unpack_zip` marks every ZIP member a supplement,
-    and the OA-package route is off by default (`fetch.try_oa_package`), so the
-    policy above currently describes no file on disk. Measured over the 36 local
-    articles: 435 supplementary entries, 382 of them from `europepmc` and none from
+    **The split is no longer this tier's alone: `pmc_s3` shares its tail through
+    `supplement_or_media`, and that tier does deliver files.** Until it existed the
+    policy described nothing on disk, because `europepmc._unpack_zip` marks every ZIP
+    member a supplement and the OA-package route is off by default
+    (`fetch.try_oa_package`). Measured over the 36 local articles before `pmc_s3`
+    landed: 435 supplementary entries, 382 of them from `europepmc` and none from
     here, and 297 of those 382 are `.jpg`/`.gif` -- so the burying this docstring
     warns about is what a corpus actually looks like, and no `media/` directory
     exists. `10.1038_s41586-021-03465-8` holds the mixture plainly, with an article
     figure (`01_..._Fig5_HTML.gif`) beside a real supplement
     (`02_..._Fig9_ESM.gif`).
 
-    Sharing the split is the obvious fix and is deliberately not done here: it would
-    move those files out of `supplementary/` on every future fetch, which changes
-    per-file extraction statuses and can move an article's own status, and
-    `_unpack_zip`'s caller sets `suppl_status = "fetched"` unconditionally where this
-    one guards on `if supplements:` -- so a figures-only ZIP needs a decision first.
-    Recorded rather than done, so the inconsistency is at least not silent.
+    Giving `europepmc` the same split is the obvious fix and is deliberately still
+    not done: it would move those files out of `supplementary/` on every future
+    fetch, which changes per-file extraction statuses and can move an article's own
+    status, and `_unpack_zip`'s caller sets `suppl_status = "fetched"` unconditionally
+    where this one guards on `if supplements:` -- so a figures-only ZIP needs a
+    decision first. Recorded rather than done, so the inconsistency is at least not
+    silent. `pmc_s3` was safe to share with because it is new: it has no files on
+    disk to reclassify, and it makes the same `if supplements:` judgement this one
+    does.
     """
     supplements: List[Tuple[str, bytes]] = []
     media: List[Tuple[str, bytes]] = []
@@ -290,14 +359,8 @@ def _classify(members: List[Tuple[str, bytes]]):
         if lowered.endswith(".pdf") and not _SUPPLEMENT_MARKERS.search(name):
             pdfs.append((name, content))
             continue
-        if _SUPPLEMENT_MARKERS.search(name):
-            supplements.append((name, content))
-            continue
-        extension = lowered[lowered.rfind("."):] if "." in lowered else ""
-        if extension in _IMAGE_EXTENSIONS:
-            media.append((name, content))
-        else:
-            supplements.append((name, content))
+        bucket = media if supplement_or_media(name) == ROLE_MEDIA else supplements
+        bucket.append((name, content))
 
     # The article PDF is the shortest-named candidate; supplementary PDFs carry
     # extra qualifiers in their names and were already routed above.
