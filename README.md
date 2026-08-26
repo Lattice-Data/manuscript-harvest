@@ -129,7 +129,12 @@ proxy to reach articles your library subscribes to. That is ordinary licensed
 access, but it is *your* licence: check your institution's terms and your
 publishers' agreements, keep request rates polite — the default is one request per
 host every 3 seconds — and do not use this to bulk-download a catalogue.
-Everything the open-access tiers do needs no credentials and no browser.
+Everything the open-access tiers do needs no browser and no human. Two of them
+will use an API key if you configure one — `ncbi_api_key` raises NCBI's rate
+ceiling, and `elsevier_api_key` is the only way to reach a Cell Press supplement.
+Both are free, read-only and optional. But a key is still a secret: prefer
+`MANUSCRIPT_HARVEST_ELSEVIER_API_KEY` in the environment over `config.yaml`, which
+is tracked in git, and which the environment overrides when both are set.
 
 `login` writes `~/.manuscript-harvest/storage_state.json`. **That file is a live
 credential** — anyone holding it has your library session until it expires, with no
@@ -168,13 +173,17 @@ the run. Repeats are collapsed after normalization, so `10.1038/X` and
 `get` prints the article directory on **stdout** and everything else on stderr, so
 `DIR=$(manuscript-fetch get 10.1038/...)` gives you the path.
 
-Sources are tried in order. The first five need no credentials and no browser;
-`--oa-only` guarantees nothing ever opens one:
+Sources are tried in order. Every one but the last opens no browser and waits for
+no human, which is what `--oa-only` selects and guarantees. Two take an *optional*
+API key (`ncbi_api_key`, `elsevier_api_key`) and one of those does nothing without
+it — but none of them requires a credential to run, and `--oa-only` never opens a
+browser:
 
 | Tier | What it gives |
 |---|---|
 | `europepmc` | PDF via `fullTextUrlList`, JATS XML, supplements ZIP — the ZIP is not universal |
 | `pmc_s3` | PMC's Open Access bucket on S3: lists the whole deposit anonymously, then fetches each object — PDF, JATS, supplements, figures. Not challenged, unlike PMC's own `/bin/` URLs, and it knows each file's size before downloading it |
+| `elsevier_tdm` | Elsevier's TDM object API: supplementary files and the accepted author manuscript for a Cell Press or ScienceDirect DOI. Needs `elsevier_api_key` and is skipped without it. The **only** automated route to these files — Cloudflare challenges the browser tier on those hosts. Not full text: that is 403 on a free key |
 | `pmc_supplements` | PMC lists the files; the publisher's open-access host serves the bytes |
 | `pmc_oa` | `oa.fcgi`: mainly an "is this in the OA subset" signal (see Known limitations) |
 | `biorxiv` | 10.1101 and 10.64898 (openRxiv) preprints: PDF, JATS, supplements |

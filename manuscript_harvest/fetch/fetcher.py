@@ -88,6 +88,7 @@ re-download the whole deposit to drop the identical tail again. A file refused o
 it.
 """
 
+import os
 from functools import reduce
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -380,6 +381,43 @@ def build_http(config: dict) -> Http:
     )
 
 
+#: Credentials that may come from the environment instead of `config.yaml`, mapped
+#: to the config key each one fills.
+ENV_CREDENTIALS = {
+    "MANUSCRIPT_HARVEST_ELSEVIER_API_KEY": "elsevier_api_key",
+}
+
+
+def _with_env_credentials(fetch_cfg: dict) -> dict:
+    """`fetch_cfg` with any credential the environment supplies filled in.
+
+    **The environment wins over the file, and that direction is the point.**
+    `config.yaml` is tracked in git and ships `elsevier_api_key: null`, so a
+    file-wins rule would let that committed null blank out a real key on every run --
+    and the failure would look like a 401 from Elsevier rather than a config
+    precedence bug.
+
+    Here rather than in `cli.py` so that a library caller of `fetch_publication` gets
+    the same precedence a CLI user does. Not on `Http`, unlike `ncbi_api_key`: that
+    one is injected per-request by `_ncbi_params`, while this one is held by the tier
+    that authenticates with it, and tiers are handed `fetch_cfg` as `self.config`.
+
+    A copy, never a mutation: callers pass a `config` dict they may reuse across
+    DOIs -- `batch` does -- and writing a secret into it would put the key somewhere
+    the caller did not ask for it to be.
+    """
+    supplied = {
+        key: os.environ[name].strip()
+        for name, key in ENV_CREDENTIALS.items()
+        if os.environ.get(name, "").strip()
+    }
+    if not supplied:
+        return fetch_cfg
+    merged = dict(fetch_cfg)
+    merged.update(supplied)
+    return merged
+
+
 def fetch_publication(
     doi: str,
     config: dict,
@@ -392,7 +430,7 @@ def fetch_publication(
     Never raises for an unreachable paper -- a manifest with `status: failed` and
     the attempts that produced it is more useful than a traceback.
     """
-    fetch_cfg = config.get("fetch", {}) or {}
+    fetch_cfg = _with_env_credentials(config.get("fetch", {}) or {})
     corpus_dir = fetch_cfg.get("corpus_dir", "corpus")
     tier_names = list(fetch_cfg.get("tiers", DEFAULT_TIERS))
 

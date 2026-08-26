@@ -231,7 +231,7 @@ class Source:
         result.attempts.append(
             not_text_bearing_note(self.name, skipped, where=where, via=via))
 
-    def _fetch_pdf_url(self, url: str, result) -> None:
+    def _fetch_pdf_url(self, url: str, result, headers: Optional[dict] = None) -> None:
         """GET one URL, validate it as the article PDF, and record the outcome.
 
         Deliberately *not* named `_fetch_pdf`. Three subclasses already define that
@@ -250,9 +250,14 @@ class Source:
 
         A refusal is never written as `fulltext.pdf`: acceptance needs PDF magic
         bytes, a successful parse, and a body that does not read like a purchase page.
+
+        `headers` is for the one caller whose PDF sits behind a credential
+        (`elsevier_tdm`, an accepted author manuscript). It is passed to the request
+        and deliberately not passed to `note()` below, which records only the URL --
+        see `Http.get` for why the key must not reach a manifest.
         """
         try:
-            resp = self.http.get(url, accept="application/pdf")
+            resp = self.http.get(url, accept="application/pdf", headers=headers)
         except HttpError as e:
             result.pdf_status = "download_failed"
             result.note("pdf", url=url, status="download_failed", error=str(e))

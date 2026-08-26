@@ -650,7 +650,8 @@ def test_versioned_doi_falls_back_but_keeps_the_requested_slug(tmp_path):
     versioned = "10.7554/elife.104978.2"
 
     class VersionAware(FakeHttp):
-        def get(self, url, params=None, accept=None, allow_redirects=True):
+        def get(self, url, params=None, accept=None, allow_redirects=True,
+                headers=None):
             if SEARCH in url and "104978.2" in (params or {}).get("query", ""):
                 self.calls.append(url)
                 from manuscript_harvest.fetch.http import Response
