@@ -8,7 +8,7 @@ why `find_supplements` distinguishes "found none" from "could not read the page"
 
 import re
 from typing import List, Optional, Tuple
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 # ScienceDirect article URLs carry the Elsevier PII, from which the PDF URL can be
 # constructed when the page exposes no link. Public because the browser tier reads
@@ -45,7 +45,12 @@ class NatureAdapter(Adapter):
                 'a[data-track-action="download pdf"]', "href", timeout=2000
             )
             if href:
-                return href
+                # `get_attribute` returns the raw HTML attribute, not the
+                # resolved DOM property -- an anchor written as a site-relative
+                # path (e.g. `/articles/s41586-...pdf`) comes back exactly that
+                # way, and a relative path handed straight to a downloader is
+                # not a valid URL.
+                return urljoin(page.url or "", href)
         except Exception:
             pass
         return None
@@ -145,7 +150,14 @@ class ElsevierAdapter(Adapter):
             try:
                 href = page.get_attribute(selector, "href", timeout=1500)
                 if href:
-                    return href
+                    # Same raw-attribute trap as `NatureAdapter`: ScienceDirect
+                    # writes these as a site-relative path
+                    # (`/science/article/pii/.../pdfft?...`), and passing that
+                    # straight to a downloader raised `Invalid URL` rather than
+                    # ever reaching the network. Resolved against `page.url` so
+                    # the proxied hostname is preserved, same as the
+                    # PII-constructed fallback below.
+                    return urljoin(page.url or "", href)
             except Exception:
                 continue
 
