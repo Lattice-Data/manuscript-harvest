@@ -2650,7 +2650,7 @@ def test_an_oversize_attachment_is_refused_without_being_downloaded():
 
 # -- the cap, and the ordering the codebase requires pinned per tier ----------
 
-def test_a_refused_figure_never_spends_a_cap_slot_a_table_needed():
+def test_an_elsevier_refused_figure_never_spends_a_cap_slot_a_table_needed():
     """`keep_text_bearing` before `apply_files_cap`, always. Its docstring asks each
     tier to pin this rather than trust the sentence, and the measurement behind the
     rule is `pmc_s3`'s: eight figures took cap slots from eight supplementary tables.
@@ -2966,3 +2966,107 @@ def test_an_article_holding_only_figures_is_none_listed_and_this_is_the_risk():
     assert result.files == []
     assert result.suppl_status == "none_listed", \
         "the publisher's own list held no multimedia component"
+
+
+# -- the error paths, each of which has to stay distinguishable ---------------
+
+def test_a_transport_failure_on_the_listing_claims_nothing():
+    """A listing that never completed has learned nothing about either artifact, so
+    both statuses stay None and the later tiers keep their turn."""
+    class Exploding:
+        def get(self, url, params=None, accept=None, allow_redirects=True,
+                headers=None):
+            raise HttpError("boom")
+
+    result = ElsevierTdmSource(Exploding(), _els_config()).fetch(
+        _els_ids(), need_pdf=False, need_supplements=True)
+
+    assert result.suppl_status is None and result.pdf_status is None
+    assert [a["status"] for a in result.attempts] == ["request_failed"]
+    assert any("boom" in p for p in result.problems)
+
+
+def test_a_server_error_on_the_listing_is_its_own_status():
+    """5xx is not one of the four client errors and must not borrow one of their
+    words: `auth_failed` would send someone to dev.elsevier.com over an Elsevier
+    outage."""
+    http = _els_http(listing=(500, b"", "text/plain"))
+    result = ElsevierTdmSource(http, _els_config()).fetch(
+        _els_ids(), need_pdf=False, need_supplements=True)
+
+    assert [a["status"] for a in result.attempts] == ["http_error"]
+    assert result.suppl_status is None
+    assert any("HTTP 500" in p for p in result.problems)
+
+
+def test_a_listing_body_that_is_not_json_claims_nothing():
+    http = _els_http(listing=(200, b"<html>not json</html>", "text/html"))
+    result = ElsevierTdmSource(http, _els_config()).fetch(
+        _els_ids(), need_pdf=False, need_supplements=True)
+
+    assert [a["status"] for a in result.attempts] == ["unreadable_payload"]
+    assert result.suppl_status is None
+
+
+@pytest.mark.parametrize("payload,why", [
+    ([], "a JSON list, not an object"),
+    ({"attachment-metadata-response": "text"}, "the envelope is not an object"),
+    ({"attachment-metadata-response": {"coredata": {}}}, "no attachment key"),
+    ({"attachment-metadata-response": {"attachment": "mmc1"}},
+     "attachment is neither a dict nor a list"),
+])
+def test_no_shape_but_the_measured_one_yields_an_attachment_list(payload, why):
+    """`_attachment_entries` returns None for anything it does not recognise, and None
+    is what stops `none_listed` being claimed. Each of these would otherwise be a way
+    to read zero attachments and call it "the publisher says none" -- see
+    `test_a_body_with_no_attachment_list_never_claims_none_listed` for why that
+    distinction is the one that matters."""
+    from manuscript_harvest.fetch.sources.elsevier_tdm import _attachment_entries
+    assert _attachment_entries(payload) is None, why
+
+
+def test_a_transport_failure_on_one_file_loses_only_that_file():
+    entry_ok = _att(ref="mmc1", filename="mmc1.xlsx")
+    entry_bad = _att(ref="mmc2", filename="mmc2.xlsx")
+
+    class OneExplodes(FakeHttp):
+        def get(self, url, params=None, accept=None, allow_redirects=True,
+                headers=None):
+            if "mmc2.xlsx" in url:
+                raise HttpError("connection reset")
+            return super().get(url, params, accept, allow_redirects, headers)
+
+    http = OneExplodes({
+        ELS_LISTING: (200, _els_meta(entry_ok, entry_bad), "application/json"),
+        entry_ok["prism:url"]: (200, b"x" * 64, "application/octet-stream"),
+    })
+    result = ElsevierTdmSource(http, _els_config()).fetch(
+        _els_ids(), need_pdf=False, need_supplements=True)
+
+    assert [f.name for f in result.by_role("supplement")] == ["mmc1.xlsx"]
+    assert result.suppl_status == "partial_failure", \
+        "one file kept and one lost is exactly what partial_failure names"
+    failed = [a for a in result.attempts if a.get("status") == "request_failed"]
+    assert failed and failed[0]["ref"] == "mmc2"
+
+
+def test_the_cap_goes_to_readable_files_before_supplementary_video():
+    """`max_files` is a request budget, and a video cannot be read -- so when the cap
+    binds, the spreadsheets get it and the dropped videos are reported under their own
+    wording rather than `apply_files_cap`'s "supplementary file(s)", whose count
+    would then disagree with its noun.
+
+    Needs the policy off: with it on the videos are refused before the cap is reached.
+    """
+    _http, result = _els_fetch(
+        _att(ref="mmc1", filename="mmc1.xlsx"),
+        _att(ref="mmc2", filename="mmc2.mp4", type="VIDEO"),
+        _att(ref="mmc3", filename="mmc3.mov", type="VIDEO"),
+        config={"max_files": 1, "text_bearing_only": False},
+    )
+    assert [f.name for f in result.by_role("supplement")] == ["mmc1.xlsx"]
+    assert result.by_role("media") == [], "no slots left after the readable file"
+    truncated = [a for a in result.attempts
+                 if a.get("status") == "truncated_media"]
+    assert truncated and truncated[0]["dropped"] == 2
+    assert any("supplementary video(s) not fetched" in p for p in result.problems)
