@@ -41,6 +41,7 @@ and re-running would scrape the same page and get the same answer.
 """
 
 from functools import reduce
+from pathlib import Path
 from typing import Dict, List, Optional
 
 from . import store
@@ -121,6 +122,20 @@ def _no_tier_applied(ids: Identifiers, tier_names: List[str]) -> str:
                 "tier list")
     return (f"no configured tier could try this paper ({known}). Tiers: "
             f"{', '.join(tier_names) or 'none'}{hint}")
+
+
+def _still_on_disk(directory, entry: Optional[dict]) -> bool:
+    """Does the file an existing manifest entry names still exist?
+
+    A re-fetch (typically `--force`) that comes away with nothing must not
+    erase the record of a file that is still sitting right there: the bytes
+    survive a failed refetch (nothing here deletes them), but the manifest
+    used to be rewritten to `{"status": failure, "path": None}` regardless,
+    orphaning a good `fulltext.pdf` or `supplementary/` set from the record
+    that points at it. Every fallback to `existing` below is guarded by this.
+    """
+    path = (entry or {}).get("path")
+    return bool(path) and (Path(directory) / path).exists()
 
 
 def suppl_flag_is_authoritative(ids: Identifiers) -> bool:
@@ -401,19 +416,28 @@ def fetch_publication(
 
     pdf_status = _best_pdf_status(pdf_statuses)
 
+    existing_fulltext = (existing or {}).get("fulltext") or {}
+    existing_pdf_ok = (existing_fulltext.get("status") in store.PDF_USABLE
+                       and _still_on_disk(directory, existing_fulltext))
+
     # A PDF that is not this paper is adopted only once every tier has failed to
-    # produce one that is, and it is adopted under a status that says so. Keeping
-    # it is deliberate: for 10.1126/science.adf1226 the vendor manual was the only
-    # file any tier returned, and it is the evidence for the problem line.
-    if pdf_file is None and unverified_pdf is not None:
+    # produce one that is, and only when nothing already on disk beats it --
+    # otherwise a re-fetch that stumbles onto a wrong document would displace a
+    # verified good file with an unverified bad one. Keeping the wrong-document
+    # fallback itself is still deliberate: for 10.1126/science.adf1226 the vendor
+    # manual was the only file any tier ever returned, and it is the evidence for
+    # the problem line.
+    if pdf_file is None and unverified_pdf is not None and not existing_pdf_ok:
         pdf_file, pdf_tier = unverified_pdf, unverified_tier
         pdf_status = "identity_unverified"
         record["problems"].append(identity_problem("PDF", ids.doi, ids.title or "", unverified_meta))
     # A notice about an article is not the article, whatever its bytes parse as, so
-    # this outranks every other verdict and is applied last. 10.1038/s41586-024-08560-0
-    # is why: the Author Correction produced a valid one-page PDF and valid JATS,
-    # and both carry the *correction's* own DOI and title, so the identity check
-    # above said `verified` about them -- correctly, and uselessly.
+    # this outranks every other verdict -- including a good existing file, since a
+    # freshly-detected notice is evidence the existing file should not have this
+    # status either. 10.1038/s41586-024-08560-0 is why: the Author Correction
+    # produced a valid one-page PDF and valid JATS, and both carry the
+    # *correction's* own DOI and title, so the identity check above said
+    # `verified` about them -- correctly, and uselessly.
     if not_article is not None:
         pdf_status = "not_research_article"
         xml_status = "not_research_article"
@@ -424,9 +448,17 @@ def fetch_publication(
         entry.update({"status": pdf_status, "url": pdf_file.url,
                       "content_type": pdf_file.content_type, "tier": pdf_tier})
         record["fulltext"] = entry
+    elif existing_pdf_ok and not_article is None:
+        record["fulltext"] = existing_fulltext
+        record["problems"].append(
+            f"re-fetch found no usable PDF ({pdf_status}); kept the existing one already on disk"
+        )
     else:
         record["fulltext"] = {"status": pdf_status, "path": None}
 
+    existing_xml = (existing or {}).get("fulltext_xml") or {}
+    existing_xml_ok = (existing_xml.get("status") == "ok"
+                       and _still_on_disk(directory, existing_xml))
     if xml_file is not None:
         entry = store.save_file(directory, store.FULLTEXT_XML, xml_file.content)
         entry.update({"status": xml_status, "url": xml_file.url,
@@ -434,21 +466,58 @@ def fetch_publication(
         record["fulltext_xml"] = entry
         if xml_status == "identity_unverified":
             record["problems"].append(identity_problem("JATS XML", ids.doi, ids.title or "", xml_identity))
+    elif existing_xml_ok and not_article is None:
+        record["fulltext_xml"] = existing_xml
 
+    existing_landing = (existing or {}).get("landing_html") or {}
     if landing_file is not None:
         entry = store.save_file(directory, store.LANDING_HTML, landing_file.content)
         entry.update({"url": landing_file.url})
         record["landing_html"] = entry
+    elif _still_on_disk(directory, existing_landing):
+        record["landing_html"] = existing_landing
 
-    record["supplementary"] = _write_group(
-        directory, store.SUPPLEMENT_DIR, supplements
+    existing_supplementary = (existing or {}).get("supplementary") or []
+    existing_media = (existing or {}).get("media") or []
+    existing_supplementary_ok = bool(existing_supplementary) and all(
+        _still_on_disk(directory, entry) for entry in existing_supplementary
     )
-    if media:
-        record["media"] = _write_group(directory, store.MEDIA_DIR, media)
+    existing_media_ok = bool(existing_media) and all(
+        _still_on_disk(directory, entry) for entry in existing_media
+    )
 
-    record["supplementary_status"] = _supplement_status(
-        ids, want_supplements, len(supplements), suppl_statuses
-    )
+    new_supplementary = _write_group(directory, store.SUPPLEMENT_DIR, supplements)
+    if new_supplementary:
+        record["supplementary"] = new_supplementary
+    elif existing_supplementary_ok:
+        record["supplementary"] = existing_supplementary
+        record["problems"].append(
+            "re-fetch found no supplementary files; kept the existing set already on disk"
+        )
+    else:
+        record["supplementary"] = new_supplementary  # []
+
+    new_media = _write_group(directory, store.MEDIA_DIR, media)
+    if new_media:
+        record["media"] = new_media
+    elif existing_media_ok:
+        record["media"] = existing_media
+
+    if new_supplementary:
+        record["supplementary_status"] = _supplement_status(
+            ids, want_supplements, len(supplements), suppl_statuses
+        )
+    elif existing_supplementary_ok:
+        # The old verdict is still the honest one: nothing this run learned
+        # replaces it, so recomputing from an empty `supplements` would claim
+        # less than what is actually on disk (e.g. `expected_but_missing` over
+        # a set that was in fact retrieved earlier).
+        record["supplementary_status"] = (existing or {}).get("supplementary_status") \
+            or _supplement_status(ids, want_supplements, 0, suppl_statuses)
+    else:
+        record["supplementary_status"] = _supplement_status(
+            ids, want_supplements, len(supplements), suppl_statuses
+        )
     # Advice outlives its obstacle unless something retires it. A tier that hit
     # PMC's bot check says "re-run with --headed"; if a later tier then collected
     # the supplements from the publisher, that sentence sends the user to spend a
