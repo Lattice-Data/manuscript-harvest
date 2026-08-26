@@ -14,6 +14,7 @@ import pytest
 from manuscript_harvest.fetch import fetcher, store
 from manuscript_harvest.fetch.fetcher import _best_pdf_status, _supplement_status, suppl_flag_is_authoritative
 from manuscript_harvest.fetch.identifiers import Identifiers
+from manuscript_harvest.fetch.sources import OA_TIERS
 from tests.fakes import (
     DOI,
     EUROPEPMC_EMPTY,
@@ -27,6 +28,7 @@ from tests.fakes import (
     make_pdf,
     make_scanned_pdf,
     make_zip,
+    s3_http,
 )
 
 SEARCH = "/webservices/rest/search"
@@ -250,9 +252,11 @@ def test_a_run_where_no_tier_applied_still_explains_itself(tmp_path):
     here. This explanation has to survive every tier list, because it is the case
     where no tier ran to produce any other.
     """
+    # Read from `OA_TIERS` rather than listed here: the claim is about every tier
+    # list, and a hand-written copy stops covering the set the day one is added --
+    # this one had already missed `pmc_s3`.
     record = fetcher.fetch_publication(
-        DOI, fetch_config(tmp_path, ["europepmc", "pmc_supplements", "pmc_oa", "biorxiv"]),
-        http=_unreachable_http())
+        DOI, fetch_config(tmp_path, OA_TIERS), http=_unreachable_http())
 
     assert record["tiers_tried"] == []
     assert len(record["problems"]) == 1
@@ -653,3 +657,137 @@ def test_no_budget_means_no_eviction(tmp_path):
                                "fulltext": {"path": "fulltext.pdf"}, "supplementary": []})
     fetcher.fetch_publication(DOI, config, http=_http(hasSuppl="N"))
     assert (old / "fulltext.pdf").exists()
+
+
+# -- the S3 tier, through the orchestrator -----------------------------------
+#
+# Everything above about `pmc_s3` is asserted against the tier in
+# `test_open_access_tiers.py`. These two are here because three of its effects are
+# not the tier's to produce: it is the first tier ever to emit `ROLE_MEDIA`, so
+# `_write_group(directory, store.MEDIA_DIR, ...)` and `record["media"]` only became
+# live code when it landed; its `suppl_status` decides whether the record settles,
+# and an unsettled record re-lists and re-downloads the whole deposit on every future
+# run; and its own cap decides which files exist to settle. None of that is visible
+# from `PmcS3Source.fetch`.
+
+def _s3_pipeline_http(deposit, routes=None):
+    """Europe PMC answering with the PDF and no archive, over an S3 bucket.
+
+    `supplementaryFiles` 404s because that is what the corpus records for the
+    articles these deposits come from -- a ReadTimeout for one, HTTP 500 for the
+    others -- and it is the only case in which `pmc_s3` is reached for supplements at
+    all. The PDF still arrives from Europe PMC, as it does today, so the S3 tier is
+    asked for the payload alone.
+    """
+    base = {SEARCH: (200, europepmc_search_json(), "application/json"),
+            PDF_URL: (200, make_pdf(), "application/pdf"),
+            XML: (404, b"", ""),
+            SUPPL: (404, b"", "")}
+    base.update(routes or {})
+    return s3_http(deposit=deposit, routes=base)
+
+
+def test_the_s3_tier_writes_article_media_and_settles_the_article(tmp_path):
+    """PMC8941949's deposit shape, which is where the tier's measured facts come
+    from: two supplements and one of the article's own figures, told apart by name
+    alone. Nothing had ever written a file under `media/` before this tier, and the
+    article has to finish settled -- `complete`, cached on the next run -- or every
+    batch re-lists the bucket and re-downloads all of it."""
+    version = f"{PMCID}.1"
+    deposit = [
+        (f"{version}/{version}.pdf", 100), (f"{version}/{version}.xml", 100),
+        (f"{version}/{version}.txt", 100), (f"{version}/{version}.json", 100),
+        (f"{version}/NIHMS1758707-supplement-1.jpg", 100),
+        (f"{version}/NIHMS1758707-supplement-10.xlsx", 100),
+        (f"{version}/nihms-1758707-f0001.jpg", 100),
+    ]
+    http = _s3_pipeline_http(deposit)
+    config = fetch_config(tmp_path, ["europepmc", "pmc_s3"])
+    record = fetcher.fetch_publication(DOI, config, http=http)
+
+    assert record["status"] == "complete"
+    assert record["supplementary_status"] == "fetched"
+    assert [e["original_name"] for e in record["supplementary"]] == [
+        "NIHMS1758707-supplement-1.jpg", "NIHMS1758707-supplement-10.xlsx"]
+    assert [e["original_name"] for e in record["media"]] == ["nihms-1758707-f0001.jpg"]
+    assert [e["tier"] for e in record["media"]] == ["pmc_s3"]
+    directory = tmp_path / "10.1038_s41586-021-03852-1"
+    assert (directory / "media" / "01_nihms-1758707-f0001.jpg").exists()
+    assert not (directory / "supplementary" / "03_nihms-1758707-f0001.jpg").exists(), \
+        "a figure in supplementary/ is what the split exists to prevent"
+
+    calls = len(http.calls)
+    again = fetcher.fetch_publication(DOI, config, http=http)
+    assert again.get("cached") is True
+    assert len(http.calls) == calls, "a settled article must not re-list the bucket"
+
+
+def test_article_figures_do_not_spend_the_cap_a_supplementary_table_needed(tmp_path):
+    """PMC8494637's real deposit (10.1038/s41586-021-03604-1, in this corpus), whose
+    57 payload objects are 29 `MOESM*` files and 28 `Fig*` JPEGs -- of which the 23
+    named `_ESM` are supplementary figures and only the 5 `_HTML` are the article's
+    own. Its recorded manifest shows `europepmc` timing out on the archive, which is
+    exactly when this tier answers.
+
+    S3 lists keys in binary order, so `Fig*` precedes `MOESM*`, and capping the raw
+    payload kept 28 figures and 22 tables: MOESM3 (14 MB), MOESM4, MOESM5 (a 22 MB
+    zip) and MOESM6-9 were dropped, the article went from `complete` to `partial`,
+    and every later run re-downloaded 50 objects to drop them again. Charging the
+    supplements first keeps 50 of the 52 supplement-classified objects -- two really
+    are past the cap, which is the cap doing its job -- and spends nothing on files
+    `extract/` never reads.
+    """
+    version = f"{PMCID}.1"
+    stem = "41586_2021_3604"
+    deposit = [(f"{version}/{version}.{ext}", 100)
+               for ext in ("pdf", "xml", "txt", "json")]
+    deposit += [(f"{version}/{stem}_MOESM{n}_ESM.xlsx", 100) for n in range(1, 30)]
+    deposit += [(f"{version}/{stem}_Fig{n}_ESM.jpg", 100) for n in range(1, 24)]
+    deposit += [(f"{version}/{stem}_Fig{n}_HTML.jpg", 100) for n in range(1, 6)]
+    # The order the bucket serves, not the order they were written above.
+    deposit.sort()
+
+    http = _s3_pipeline_http(deposit)
+    config = fetch_config(tmp_path, ["europepmc", "pmc_s3", "pmc_supplements"])
+    record = fetcher.fetch_publication(DOI, config, http=http)
+
+    names = [entry["original_name"] for entry in record["supplementary"]]
+    assert len(names) == 50, "the whole cap went to supplementary files"
+    assert not any("_HTML.jpg" in name for name in names), \
+        "no article figure took a slot from a table"
+    assert {f"{stem}_MOESM{n}_ESM.xlsx" for n in range(3, 8)} <= set(names), \
+        "MOESM3-7 are the files raw key order dropped"
+    assert record.get("media", []) == [], \
+        "the figures are what the cap dropped instead -- no media key, none written"
+    assert any("5 article figure(s) not fetched" in p for p in record["problems"])
+    assert any("2 supplementary file(s) not fetched" in p for p in record["problems"]), \
+        "MOESM8 and MOESM9 really are past the cap; that is the cap, not displacement"
+
+    assert record["supplementary_status"] == "fetched_unverified"
+    assert record["status"] == "complete", "a cap truncation must not read as a failure"
+    assert http.called_matching("/articles/PMC") == 0, \
+        "and PMC's proof-of-work page was never needed"
+
+    calls = len(http.calls)
+    again = fetcher.fetch_publication(DOI, config, http=http)
+    assert again.get("cached") is True
+    assert len(http.calls) == calls, "or every batch re-downloads the whole deposit"
+
+
+def test_a_pdf_refused_on_size_keeps_that_word_in_the_manifest(tmp_path):
+    """The end of the same path, through the orchestrator, because that is where the
+    word was being lost. `pmc_s3` reads the size out of the listing and refuses the
+    PDF before transferring it; `pmc_oa` then runs -- both tiers apply to any PMCID
+    and this is the shipped order -- finds no `oa.fcgi` record here and answers
+    `not_in_oa_subset`. Until `too_large` was ranked in `validate.PDF_DIAGNOSES` the
+    generic miss won, and the manifest claimed the article is outside the Open Access
+    subset over a listing from that very bucket."""
+    version = f"{PMCID}.1"
+    http = _s3_pipeline_http([(f"{version}/{version}.pdf", 500 * 1024 ** 2)])
+    record = fetcher.fetch_publication(
+        DOI, fetch_config(tmp_path, ["pmc_s3", "pmc_oa"]), http=http)
+
+    assert record["fulltext"]["status"] == "too_large"
+    assert record["fulltext"]["path"] is None
+    assert any("500.0 MB exceeds the 200 MB cap" in p for p in record["problems"])
+    assert [a["status"] for a in record["attempts"] if a["action"] == "pdf"] == ["too_large"]

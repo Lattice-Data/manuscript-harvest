@@ -6,7 +6,8 @@ visible and auditable rather than buried in a client library's abstractions.
 Two behaviours the sources rely on:
 
 - A minimum interval between requests to the *same host*, so a batch of DOIs
-  never bursts against Europe PMC or NCBI.
+  never bursts against Europe PMC or NCBI. One interval covers every host, with
+  named exceptions -- see `_wait_for_host`.
 - A self-identifying User-Agent with a contact address. This is the documented
   convention for Crossref, NCBI and Europe PMC, and it is what keeps a polite
   client out of the rate-limited pool. (The browser tier deliberately does NOT
@@ -59,6 +60,7 @@ class Http:
         max_retries: int = 2,
         ncbi_api_key: Optional[str] = None,
         max_bytes: Optional[int] = None,
+        min_interval_overrides: Optional[Dict[str, float]] = None,
     ):
         if max_retries < 0:
             # `get` relies on its retry loop running at least once: the final
@@ -68,6 +70,10 @@ class Http:
             raise ValueError(f"max_retries must be >= 0, got {max_retries}")
         self.contact_email = contact_email
         self.min_interval = float(min_interval_seconds)
+        self.min_interval_overrides = {
+            host.lower(): float(seconds)
+            for host, seconds in (min_interval_overrides or {}).items()
+        }
         self.timeout = timeout_seconds
         self.max_retries = max_retries
         self.ncbi_api_key = ncbi_api_key
@@ -83,10 +89,27 @@ class Http:
     # -- politeness ---------------------------------------------------------
 
     def _wait_for_host(self, url: str) -> None:
+        """Sleep until this host may be asked again.
+
+        One interval for everything, with per-host exceptions from
+        `fetch.min_interval_overrides`. The default is a courtesy NCBI's E-utilities
+        documents and asks for; some hosts ask for nothing and are built for volume,
+        and a single number cannot say both. `pmc_s3` is the case that forced the
+        distinction: it fetches one object per request, so a 14-supplement article
+        spends ~45 s asleep and one at the 50-file cap ~150 s, against an AWS bulk
+        object store that publishes no such request.
+
+        Matched on the exact netloc, not a suffix. A suffix rule for
+        `s3.amazonaws.com` would quietly cover every bucket on it, including hosts
+        this tool has never measured, which is the opposite of what an override is
+        for. Anything unlisted keeps the default, so an empty mapping -- the default
+        -- is byte-for-byte the old behaviour.
+        """
         host = urlparse(url).netloc
+        interval = self.min_interval_overrides.get(host.lower(), self.min_interval)
         previous = self._last_request.get(host)
         if previous is not None:
-            remaining = self.min_interval - (time.monotonic() - previous)
+            remaining = interval - (time.monotonic() - previous)
             if remaining > 0:
                 time.sleep(remaining)
         self._last_request[host] = time.monotonic()

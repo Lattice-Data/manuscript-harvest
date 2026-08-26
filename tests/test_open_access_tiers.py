@@ -1,6 +1,6 @@
 """The open-access tiers, at the level of the whole tier rather than its helpers.
 
-Two of the four reach a file list by pattern-matching rendered HTML rather than by
+Two of the five reach a file list by pattern-matching rendered HTML rather than by
 reading an enumeration, and those two had almost no offline coverage -- 14% and 17%
 -- which is the worst place for it. A markup change on either page shrinks the list
 silently, and the whole point of the status taxonomy is that a shrunk list must not
@@ -11,18 +11,25 @@ So what these tests defend is mostly the *naming* of outcomes:
 - `none_listed` when the page is authoritative and empty,
 - `page_not_parsed` when it is not,
 - `fetched_unverified` when a regex over HTML is all the evidence there is,
-- and plain `fetched` only for the OA package, where unpacking a deposit really
-  does bound the set.
+- and plain `fetched` only where something really does bound the set: the OA
+  package, whose tarball is the deposit, and `pmc_s3`'s object listing, which is
+  the deposit's index. Both of those have tests for every way the bound can come
+  off, because that is what turns the strongest word in the taxonomy into a lie.
 
 `test_units.py` covers the pure helpers these tiers call (`_classify`,
 `_unpack_tgz`, `ftp_to_https`); this file covers what the tier decides.
 """
 
-import pytest
+from pathlib import Path
 
+import pytest
+import yaml
+
+from manuscript_harvest.fetch import store
 from manuscript_harvest.fetch.fetcher import _best_pdf_status
 from manuscript_harvest.fetch.http import HttpError, Response
 from manuscript_harvest.fetch.identifiers import Identifiers
+from manuscript_harvest.fetch.sources import DEFAULT_TIERS, OA_TIERS
 from manuscript_harvest.fetch.sources.biorxiv import (
     BiorxivSource,
     _media_links,
@@ -30,6 +37,7 @@ from manuscript_harvest.fetch.sources.biorxiv import (
 )
 from manuscript_harvest.fetch.sources.europepmc import RENDER_PDF, EuropePmcSource
 from manuscript_harvest.fetch.sources.pmc_oa import PmcOaSource
+from manuscript_harvest.fetch.sources.pmc_s3 import PmcS3Source
 from manuscript_harvest.fetch.sources.pmc_supplements import (
     PmcSupplementsSource,
     _springer_url,
@@ -40,11 +48,16 @@ from tests.fakes import (
     PAYWALL_HTML,
     PMCID,
     POW_HTML,
+    S3_HOST,
+    S3_NS,
     FakeHttp,
+    FakeS3Http,
     biorxiv_details_json,
     make_pdf,
     make_tgz,
     make_zip,
+    s3_http,
+    s3_listing,
 )
 
 PREPRINT = "10.1101/2024.01.23.576878"
@@ -977,6 +990,687 @@ def test_the_package_is_skipped_entirely_when_the_pdf_link_answered():
     assert _statuses(result, "package") == []
 
 
+# -- PMC S3: the Open Access bucket ------------------------------------------
+#
+# The only supplement route in this file whose file list is neither an archive nor a
+# regex over a page. What these tests defend is that the enumeration is read whole --
+# every version, every page -- because `fetched` is claimed on the strength of it.
+
+V1 = f"{PMCID}.1"
+V2 = f"{PMCID}.2"
+
+#: PMC8941949's deposit, which is where every measured fact about the layout in
+#: `pmc_s3`'s docstring comes from, with its PMCID swapped for this file's. The two
+#: JPEGs are the point of the fixture: one is supplementary material and one is an
+#: article figure, and only the name says so.
+DEPOSIT = [
+    (f"{V1}/{V1}.pdf", 6368896),
+    (f"{V1}/{V1}.xml", 120000),
+    (f"{V1}/{V1}.txt", 90000),
+    (f"{V1}/{V1}.json", 4000),
+    (f"{V1}/NIHMS1758707-supplement-1.jpg", 200000),
+    (f"{V1}/NIHMS1758707-supplement-10.xlsx", 26835),
+    (f"{V1}/nihms-1758707-f0001.jpg", 300000),
+]
+
+
+def _s3_http(*, deposit=None, pages=None, routes=None) -> FakeS3Http:
+    """`fakes.s3_http` with this file's deposit as the default listing.
+
+    The bucket fake itself lives in `tests.fakes` because `test_pipeline` drives the
+    same listing through `fetch_publication`, and one `ListObjectsV2` fixture with
+    two copies is one fixture that will stop matching the service.
+    """
+    return s3_http(pages=pages, routes=routes,
+                   deposit=DEPOSIT if deposit is None else deposit)
+
+
+def test_pmc_s3_needs_a_pmcid():
+    """The prefix *is* the PMCID; there is nothing else to list by."""
+    source = PmcS3Source(FakeHttp())
+    assert source.applies(_pmc_ids()) is True
+    assert source.applies(Identifiers(doi=DOI, doi_raw=DOI)) is False
+
+
+def test_the_listing_asks_for_the_prefix_with_its_trailing_dot():
+    """Without the dot, `prefix=PMC1002` also matches `PMC10020035.2/...` and another
+    article's deposit arrives as this one's supplements."""
+    http = _s3_http()
+    PmcS3Source(http).fetch(_pmc_ids(), need_pdf=False, need_supplements=True)
+
+    assert http.calls[0] == f"https://{S3_HOST}/"
+    assert http.params[0]["prefix"] == f"{PMCID}."
+    assert http.params[0]["list-type"] == "2"
+
+
+def test_the_highest_version_wins_and_says_which_it_took():
+    """Both versions really are in the bucket -- 95 keys of a `PMC1002*` sample sit
+    under a non-1 version -- and taking v1 of a revised article would file superseded
+    text and a superseded supplement set under a DOI that now means something else."""
+    deposit = [
+        (f"{V1}/{V1}.pdf", 100), (f"{V1}/old-supplement-1.xlsx", 100),
+        (f"{V2}/{V2}.pdf", 200), (f"{V2}/new-supplement-1.xlsx", 200),
+    ]
+    http = _s3_http(deposit=deposit)
+    result = PmcS3Source(http).fetch(_pmc_ids(), need_pdf=True, need_supplements=True)
+
+    note = next(a for a in result.attempts if a["action"] == "version")
+    assert (note["chosen"], note["available"]) == (2, [1, 2])
+    assert [f.name for f in result.by_role("supplement")] == ["new-supplement-1.xlsx"]
+    assert f"{V2}/{V2}.pdf" in result.pdf.url
+    assert all(f"/{V1}/" not in url for url in http.calls), "v1 must not be requested"
+
+
+def test_a_version_holding_only_metadata_sidecars_is_passed_over():
+    """`max(version)` is not the rule, because a version directory is not always a
+    deposit. Measured live on PMC8494648 and PMC8828466, both in the local corpus:
+    `.1` is the publisher's version of record -- 29 and 21 objects, a CC BY article
+    PDF, 25 and 17 payload files -- while `.2` holds exactly `<prefix>.json`, `.txt`
+    and `.xml`, the NIHMS author-manuscript record with no PDF and no payload at all,
+    unchanged in the bucket for two months.
+
+    Taking `.2` reported `not_found` for a PDF named in the same response and "none
+    listed" over 25 files, for two DOIs whose own manifests show `europepmc`
+    answering 500 and the PDF arriving only through a headed browser on an
+    institutional proxy -- the case this tier exists to remove.
+    """
+    deposit = [
+        (f"{V1}/{V1}.pdf", 21305885), (f"{V1}/{V1}.xml", 100),
+        (f"{V1}/{V1}.txt", 100), (f"{V1}/{V1}.json", 100),
+        (f"{V1}/supplement-1.xlsx", 100),
+        (f"{V2}/{V2}.json", 100), (f"{V2}/{V2}.txt", 100), (f"{V2}/{V2}.xml", 100),
+    ]
+    http = _s3_http(deposit=deposit)
+    result = PmcS3Source(http).fetch(_pmc_ids(), need_pdf=True, need_supplements=True)
+
+    assert result.pdf_status == "ok" and f"{V1}/{V1}.pdf" in result.pdf.url
+    assert [f.name for f in result.by_role("supplement")] == ["supplement-1.xlsx"]
+    note = next(a for a in result.attempts if a["action"] == "version")
+    assert (note["chosen"], note["available"], note["passed_over"]) == (1, [1, 2], [2])
+    assert "sidecars only" in note["passed_over_reason"], "say why, or it reads as the bug"
+
+
+def test_a_version_that_merely_holds_fewer_files_is_still_the_current_one():
+    """The rule is narrow on purpose. PMC10901738's highest version holds 29 payload
+    objects against v1's 31, and that is a revision withdrawing supplements, not
+    damage -- reading it as damage is how versions would get merged by the back
+    door."""
+    deposit = [
+        (f"{V1}/{V1}.pdf", 100), (f"{V1}/old-supplement-1.xlsx", 100),
+        (f"{V1}/old-supplement-2.xlsx", 100),
+        (f"{V2}/{V2}.pdf", 100), (f"{V2}/new-supplement-1.xlsx", 100),
+    ]
+    result = PmcS3Source(_s3_http(deposit=deposit)).fetch(
+        _pmc_ids(), need_pdf=True, need_supplements=True)
+
+    assert [f.name for f in result.by_role("supplement")] == ["new-supplement-1.xlsx"]
+    note = next(a for a in result.attempts if a["action"] == "version")
+    assert (note["chosen"], "passed_over" in note) == (2, False)
+
+
+def test_the_deposit_is_split_by_name_not_by_file_type():
+    """PMC8941949 deposits `NIHMS1758707-supplement-1.jpg` beside
+    `nihms-1758707-f0001.jpg`. Same file type; only the name says one is
+    supplementary material and the other is one of the article's own figures, which
+    is why `pmc_oa.supplement_or_media` tests the markers before the extension."""
+    http = _s3_http()
+    result = PmcS3Source(http).fetch(_pmc_ids(), need_pdf=True, need_supplements=True)
+
+    assert [f.name for f in result.by_role("supplement")] == [
+        "NIHMS1758707-supplement-1.jpg", "NIHMS1758707-supplement-10.xlsx"]
+    assert [f.name for f in result.by_role("media")] == ["nihms-1758707-f0001.jpg"]
+    assert result.pdf_status == "ok" and result.pdf.name == "fulltext.pdf"
+    assert [f.name for f in result.by_role("fulltext_xml")] == ["fulltext.nxml"]
+
+
+def test_the_text_and_metadata_sidecars_are_skipped_and_recorded():
+    """`<prefix>.txt` and `<prefix>.json` are derived from the PDF and JATS this tier
+    already stores. Silently dropping them would leave a manifest in which they look
+    like files that were missed."""
+    http = _s3_http()
+    result = PmcS3Source(http).fetch(_pmc_ids(), need_pdf=True, need_supplements=True)
+
+    note = next(a for a in result.attempts if a["action"] == "deposit")
+    assert note["skipped"] == [f"{V1}.txt", f"{V1}.json"]
+    assert http.called_matching(".txt") == 0 and http.called_matching(".json") == 0
+
+
+def test_an_oversize_supplement_is_refused_from_the_listing_alone():
+    """The one thing only this tier can do: `<Size>` arrives *with* the key, so the
+    cap is enforced before a byte moves. The assertion that matters is the request
+    that never happened -- every other tier has to ask, or download, to find out."""
+    deposit = [(f"{V1}/{V1}.pdf", 100),
+               (f"{V1}/huge-supplement-1.zip", 900 * 1024 ** 2)]
+    http = _s3_http(deposit=deposit)
+    result = PmcS3Source(http, {"max_file_mb": 200}).fetch(
+        _pmc_ids(), need_pdf=False, need_supplements=True)
+
+    assert http.called_matching("huge-supplement-1.zip") == 0
+    assert result.by_role("supplement") == []
+    assert _statuses(result, "supplement_file") == ["too_large"]
+    assert any("900.0 MB exceeds the 200 MB cap" in p for p in result.problems)
+    assert result.suppl_status == "partial_failure"
+
+
+def test_an_oversize_article_pdf_is_refused_the_same_way():
+    http = _s3_http(deposit=[(f"{V1}/{V1}.pdf", 500 * 1024 ** 2)])
+    result = PmcS3Source(http, {"max_file_mb": 200}).fetch(
+        _pmc_ids(), need_pdf=True, need_supplements=False)
+
+    assert result.pdf_status == "too_large" and result.pdf is None
+    assert http.called_matching(f"{V1}.pdf") == 0
+
+
+def test_an_unparseable_size_falls_back_to_checking_what_arrived():
+    """None means unknown, not zero. Reading a malformed `<Size>` as 0 would wave an
+    oversize object straight through the cap, so the pre-check is skipped and the
+    body is measured instead."""
+    http = _s3_http(
+        deposit=[(f"{V1}/supplement-1.bin", "not-a-number")],
+        routes={"supplement-1.bin": (200, b"x" * 5000, "application/octet-stream")})
+    result = PmcS3Source(http, {"max_file_mb": 0}).fetch(
+        _pmc_ids(), need_pdf=False, need_supplements=True)
+
+    assert http.called_matching("supplement-1.bin") == 1, "it had to be fetched to be judged"
+    assert result.by_role("supplement") == []
+    note = next(a for a in result.attempts if a["action"] == "supplement_file")
+    assert note["status"] == "too_large" and "no usable <Size>" in note["detail"]
+
+
+def test_the_listing_follows_the_continuation_token():
+    """A page holds 1000 keys and a big deposit runs past that. Reading only the
+    first page would report a truncated set as the whole deposit -- and then claim
+    `fetched` over it, which is the one thing this tier's status must never do."""
+    pages = {
+        None: s3_listing((f"{V1}/{V1}.pdf", 100), (f"{V1}/supplement-1.xlsx", 100),
+                          token="1/opaque+token="),
+        "1/opaque+token=": s3_listing((f"{V1}/supplement-2.xlsx", 100)),
+    }
+    http = _s3_http(pages=pages)
+    result = PmcS3Source(http).fetch(_pmc_ids(), need_pdf=False, need_supplements=True)
+
+    assert "continuation-token" not in http.params[0]
+    assert http.params[1]["continuation-token"] == "1/opaque+token="
+    assert [f.name for f in result.by_role("supplement")] == ["supplement-1.xlsx",
+                                                             "supplement-2.xlsx"]
+    assert result.suppl_status == "fetched"
+    note = next(a for a in result.attempts if a["action"] == "listing")
+    assert (note["status"], note["pages"], note["keys"]) == ("ok", 2, 3)
+
+
+def test_a_complete_listing_that_all_arrives_earns_plain_fetched():
+    """The strongest word the taxonomy has, and an object listing is what licenses
+    it. `pmc_supplements` regexes PMC's HTML for these same files and has to settle
+    for `fetched_unverified`; here the store that holds the bytes enumerated them,
+    and there is no markup that could change and shrink the list silently."""
+    result = PmcS3Source(_s3_http()).fetch(_pmc_ids(), need_pdf=False,
+                                           need_supplements=True)
+    assert result.suppl_status == "fetched"
+    assert _statuses(result, "supplements") == ["fetched"]
+
+
+def test_the_cap_truncating_the_deposit_costs_the_fetched_claim():
+    """`fetched` means "they exist and we have them". Over a set the cap shortened,
+    that is exactly the lie `fetched_unverified` was introduced to stop.
+
+    But it costs `fetched` without costing the article its *settlement*. A count cap
+    is deterministic -- the bucket's key order does not change between runs -- so
+    `partial_failure` here would keep the article out of `store.SUPPL_SETTLED` and
+    make every batch from now on re-list and re-download the whole deposit to drop
+    the identical tail again. `europepmc._unpack_zip` stops at the same cap and its
+    caller still reports plain `fetched`, and `proxy_browser._download_all` says in
+    as many words that this must not masquerade as a partial failure;
+    `fetched_unverified` is the word that agrees with both without claiming the set
+    is whole.
+    """
+    deposit = [(f"{V1}/supplement-{n}.xlsx", 100) for n in range(1, 6)]
+    http = _s3_http(deposit=deposit)
+    result = PmcS3Source(http, {"max_files": 3}).fetch(
+        _pmc_ids(), need_pdf=False, need_supplements=True)
+
+    assert len(result.by_role("supplement")) == 3
+    assert result.suppl_status == "fetched_unverified"
+    assert result.suppl_status in store.SUPPL_SETTLED, "a cap must not churn forever"
+    assert _statuses(result, "cap") == ["truncated"]
+    assert any("2 supplementary file(s) not fetched" in p for p in result.problems), \
+        "'file(s)', not 'link(s)': S3 listed these, so a dropped one is a known file"
+
+
+def test_a_size_refusal_stays_on_the_failure_side_of_that_line():
+    """The counterpart, and the reason the two caps are not one rule. `max_file_mb`
+    refuses one named file over a size the listing states: that is a fact about that
+    file rather than a budget decision about the article, the reader can act on it by
+    raising the cap, and it is what every other tier does with an oversize member --
+    `europepmc._unpack_zip` raises and costs the whole archive its status."""
+    deposit = [(f"{V1}/supplement-1.xlsx", 100),
+               (f"{V1}/huge-supplement-2.zip", 900 * 1024 ** 2)]
+    result = PmcS3Source(_s3_http(deposit=deposit), {"max_file_mb": 200}).fetch(
+        _pmc_ids(), need_pdf=False, need_supplements=True)
+
+    assert [f.name for f in result.by_role("supplement")] == ["supplement-1.xlsx"]
+    assert result.suppl_status == "partial_failure"
+    assert result.suppl_status not in store.SUPPL_SETTLED
+
+
+def test_the_cap_is_spent_on_supplements_before_article_figures():
+    """The measured regression: `max_files` bounds the whole payload, and S3 lists
+    keys in binary order, so `Fig1_HTML.jpg` arrives before `MOESM3_ESM.pdf` and the
+    figures took the slots.
+
+    This key list is PMC10232368's shape (10.1038/s41590-023-01504-2, in the local
+    corpus): Springer Nature interleaves the article's own `Fig<n>_HTML.jpg` with the
+    supplementary `MOESM<n>_ESM.*`, so the figures sit *inside* the cap rather than
+    after it. At the shipped cap that article lost 8 supplementary tables -- MOESM3
+    to MOESM9 and MOESM40, two of them over 9 MB -- to 8 JPEGs of its own figures,
+    while holding exactly as many supplements as the cap allows. Nothing downstream
+    reads `media/` at all (`extract/extractor.py` iterates `record["supplementary"]`),
+    so every figure kept at the cap was a strict trade down.
+    """
+    stem = "41590_2023_1504"
+    figures = [(f"{V1}/{stem}_Fig{n}_HTML.jpg", 100) for n in range(1, 5)]
+    tables = [(f"{V1}/{stem}_MOESM{n}_ESM.xlsx", 100) for n in range(3, 7)]
+    # The bucket's own order: 'F' sorts before 'M'.
+    http = _s3_http(deposit=figures + tables)
+    result = PmcS3Source(http, {"max_files": 4}).fetch(
+        _pmc_ids(), need_pdf=False, need_supplements=True)
+
+    assert [f.name for f in result.by_role("supplement")] == \
+        [f"{stem}_MOESM{n}_ESM.xlsx" for n in range(3, 7)], "every table, none dropped"
+    assert result.by_role("media") == [], "the figures are what the cap dropped"
+    assert result.suppl_status == "fetched", "the supplement set really is whole"
+    assert len(http.calls) == 1 + 4, "and the request budget is still max_files"
+    assert any("4 article figure(s) not fetched" in p for p in result.problems), \
+        "'article figure(s)': the count and the noun have to agree"
+    assert _statuses(result, "cap") == ["truncated_media"]
+
+
+def test_a_lost_article_figure_does_not_demote_the_supplement_verdict():
+    """`suppl_status` is a sentence about supplementary material. Counting a lost
+    figure against it reported `partial_failure` over a supplement set that arrived
+    whole -- and then, because that word is not settled, re-downloaded every object
+    in the deposit on every future run. The role is decided by the same
+    `supplement_or_media` policy that decides which directory the file lands in."""
+    deposit = [(f"{V1}/NIHMS1758707-supplement-1.xlsx", 100),
+               (f"{V1}/nihms-1758707-f0001.jpg", 100)]
+    http = _s3_http(deposit=deposit, routes={"f0001.jpg": (500, b"", "")})
+    result = PmcS3Source(http).fetch(_pmc_ids(), need_pdf=False, need_supplements=True)
+
+    assert [f.name for f in result.by_role("supplement")] == \
+        ["NIHMS1758707-supplement-1.xlsx"]
+    assert result.suppl_status == "fetched"
+    assert any("1 of 2 file(s) listed in the PMC S3 deposit" in p for p in result.problems), \
+        "the loss is still reported; it just answers a different question"
+
+
+def test_an_oversize_article_figure_costs_the_verdict_nothing_either():
+    """The other refusal path, and the reason both are role-aware: a 900 MB TIFF of
+    one of the article's own panels is refused from the listing alone, and a
+    supplement set that arrived whole still says so. Where a *supplement* is refused
+    on size the verdict does move -- `test_a_size_refusal_stays_on_the_failure_side_
+    of_that_line` is that case."""
+    deposit = [(f"{V1}/NIHMS1758707-supplement-1.xlsx", 100),
+               (f"{V1}/nihms-1758707-f0001.tif", 900 * 1024 ** 2)]
+    http = _s3_http(deposit=deposit)
+    result = PmcS3Source(http, {"max_file_mb": 200}).fetch(
+        _pmc_ids(), need_pdf=False, need_supplements=True)
+
+    assert http.called_matching("f0001.tif") == 0
+    assert result.suppl_status == "fetched"
+    assert any("900.0 MB exceeds the 200 MB cap" in p for p in result.problems)
+
+
+def test_a_listing_that_stops_half_way_cannot_earn_fetched():
+    """Same rule from the other direction: the files that did arrive are kept, but an
+    unread page could have held anything, so nothing bounds the set.
+
+    And it says so out loud. A non-200 mid-walk was the one early exit in
+    `_list_objects` that recorded an attempt and no problem line -- its `HttpError`,
+    `ParseError` and page-guard siblings all add one -- so the run's summary showed
+    nothing at all for the page that decides both the version and the bound.
+    """
+    pages = {None: s3_listing((f"{V1}/supplement-1.xlsx", 100), token="tok"),
+             "tok": (503, b"", "")}
+    http = _s3_http(pages=pages)
+    result = PmcS3Source(http).fetch(_pmc_ids(), need_pdf=False, need_supplements=True)
+
+    assert [f.name for f in result.by_role("supplement")] == ["supplement-1.xlsx"]
+    assert result.suppl_status == "partial_failure"
+    assert any("page 2 returned HTTP 503" in p for p in result.problems)
+
+
+def test_a_listing_that_stops_half_way_hands_over_no_article_files_either():
+    """The same rule, on the half of the record that could not express it.
+
+    Keys sort lexicographically, so `PMC....1/...` is served before `PMC....2/...`
+    and a walk that dies on page 2 holds *systematically* the oldest version. Taking
+    the PDF off it stored v1 as `fulltext.pdf` with `pdf_status: ok` and noted
+    `available: [1]` -- a positive claim about a bucket the same object knew it had
+    not finished reading. The fetcher stops asking for a PDF once one arrives, so with
+    the supplements settled anywhere else the record reaches `complete` and is never
+    revisited: superseded text frozen under a DOI that now means something else. The
+    identity check cannot catch it either, since v1 and v2 carry the same DOI and
+    title.
+    """
+    pages = {None: s3_listing((f"{V1}/{V1}.pdf", 100), (f"{V1}/{V1}.xml", 100),
+                              (f"{V1}/old-supplement-1.xlsx", 100), token="tok"),
+             "tok": (503, b"", "")}
+    http = _s3_http(pages=pages)
+    result = PmcS3Source(http).fetch(_pmc_ids(), need_pdf=True, need_supplements=True)
+
+    assert result.pdf_status is None, "the question stays open for a re-run"
+    assert result.pdf is None and result.by_role("fulltext_xml") == []
+    assert http.called_matching(f"{V1}.pdf") == 0
+    assert _statuses(result, "pdf") == ["listing_incomplete"]
+    assert any("did not complete" in p for p in result.problems)
+    note = next(a for a in result.attempts if a["action"] == "version")
+    assert note["complete_listing"] is False, "and the version note says so"
+    assert [f.name for f in result.by_role("supplement")] == ["old-supplement-1.xlsx"], \
+        "the payload is still taken: there the status can say it is unsettled"
+
+
+def test_a_listing_that_stops_half_way_cannot_call_the_pdf_absent():
+    """The mirror image, and the more reachable half: `<prefix>.pdf` sorts *after*
+    `NIHMS1758707-supplement-1.jpg`, so a truncation inside one version's own keys
+    leaves the article's PDF on the page that never arrived.
+
+    `not_found` there -- "we read the enumeration and it names none" -- is a false
+    absence over an enumeration nobody read to the end, and it is the one claim the
+    `not_in_oa_subset` branch is careful to gate on the same flag.
+    """
+    pages = {None: s3_listing((f"{V1}/NIHMS1758707-supplement-1.xlsx", 100), token="tok"),
+             "tok": (503, b"", "")}
+    result = PmcS3Source(_s3_http(pages=pages)).fetch(
+        _pmc_ids(), need_pdf=True, need_supplements=True)
+
+    assert result.pdf_status is None, "not `not_found`, which claims the bucket names none"
+    note = next(a for a in result.attempts if a["action"] == "pdf")
+    assert (note["status"], note["listed_pdf"]) == ("listing_incomplete", False)
+
+
+def test_one_lost_object_is_partial_failure_not_fetched():
+    deposit = [(f"{V1}/supplement-1.xlsx", 100), (f"{V1}/supplement-2.xlsx", 100)]
+    http = _s3_http(deposit=deposit, routes={"supplement-2.xlsx": (403, b"", "")})
+    result = PmcS3Source(http).fetch(_pmc_ids(), need_pdf=False, need_supplements=True)
+
+    assert [f.name for f in result.by_role("supplement")] == ["supplement-1.xlsx"]
+    assert result.suppl_status == "partial_failure"
+    assert any("1 of 2 file(s) listed in the PMC S3 deposit" in p for p in result.problems)
+
+
+def test_a_transport_failure_on_one_object_does_not_sink_the_rest():
+    deposit = [(f"{V1}/supplement-1.xlsx", 100), (f"{V1}/supplement-2.xlsx", 100)]
+
+    class Exploding(FakeS3Http):
+        def get(self, url, params=None, accept=None, allow_redirects=True):
+            if "supplement-1.xlsx" in url:
+                raise HttpError("connection reset")
+            return super().get(url, params, accept, allow_redirects)
+
+    http = _s3_http(deposit=deposit)
+    result = PmcS3Source(Exploding(http.pages, http.routes)).fetch(
+        _pmc_ids(), need_pdf=False, need_supplements=True)
+
+    assert [f.name for f in result.by_role("supplement")] == ["supplement-2.xlsx"]
+    assert result.suppl_status == "partial_failure"
+    assert _statuses(result, "supplement_file") == ["request_failed", "ok"]
+
+
+def test_a_deposit_of_nothing_but_figures_claims_no_supplements():
+    """Same judgement as `pmc_oa`'s `if supplements:`. The listing does bound the
+    set, but "no key looked like a supplement" is a filename policy, not a statement
+    about what the publisher deposited -- the fetcher weighs the silence against
+    `hasSuppl` instead."""
+    deposit = [(f"{V1}/f0001.jpg", 100), (f"{V1}/f0002.png", 100)]
+    result = PmcS3Source(_s3_http(deposit=deposit)).fetch(
+        _pmc_ids(), need_pdf=False, need_supplements=True)
+
+    assert result.suppl_status is None
+    assert [f.role for f in result.files] == ["media", "media"]
+
+
+def test_a_key_the_layout_did_not_predict_never_sinks_the_tier():
+    """One unreadable key must not cost the article its other twenty, and must not
+    cost it `fetched` either: an S3 prefix can carry a zero-byte directory marker
+    (`PMC....1/`), and demoting on that would mark every article partial forever."""
+    deposit = [("index.html", 10), (f"{PMCID}.x/weird.bin", 10), (f"{V1}/", 0),
+               (f"{V1}/supplement-1.xlsx", 100)]
+    http = _s3_http(deposit=deposit)
+    result = PmcS3Source(http).fetch(_pmc_ids(), need_pdf=False, need_supplements=True)
+
+    assert [f.name for f in result.by_role("supplement")] == ["supplement-1.xlsx"]
+    assert result.suppl_status == "fetched"
+    note = next(a for a in result.attempts if a["action"] == "key_shape")
+    assert note["count"] == 3
+
+
+def test_keys_that_are_all_unreadable_are_a_missing_pdf_not_a_missing_article():
+    """The bucket answered for this prefix, so `not_in_oa_subset` -- "it is not in
+    there" -- would be false. `not_found` is what the enumeration actually supports:
+    we read it and it names no PDF."""
+    http = _s3_http(deposit=[(f"{PMCID}.x/weird.bin", 10)])
+    result = PmcS3Source(http).fetch(_pmc_ids(), need_pdf=True, need_supplements=True)
+
+    assert result.pdf_status == "not_found"
+    assert result.suppl_status is None and result.files == []
+
+
+def test_another_articles_keys_are_never_adopted():
+    """Belt and braces behind the trailing dot in the prefix: even if the bucket
+    answered with a key for a different article, it is not this article's deposit."""
+    deposit = [(f"{V1}/supplement-1.xlsx", 100),
+               ("PMC9999999.1/supplement-2.xlsx", 100)]
+    result = PmcS3Source(_s3_http(deposit=deposit)).fetch(
+        _pmc_ids(), need_pdf=False, need_supplements=True)
+
+    assert [f.name for f in result.by_role("supplement")] == ["supplement-1.xlsx"]
+
+
+def test_an_empty_listing_is_an_authoritative_absence():
+    """The bucket *is* the Open Access subset -- 322 of this corpus's 393 articles
+    are in it -- so a complete listing with no keys is the same routing fact `oa.fcgi`
+    reports with an `<error>`, and the fetcher should move on rather than read a
+    broken download."""
+    http = _s3_http(deposit=[])
+    result = PmcS3Source(http).fetch(_pmc_ids(), need_pdf=True, need_supplements=True)
+
+    assert result.pdf_status == "not_in_oa_subset"
+    assert result.suppl_status is None, "the publisher may still hold supplements"
+    assert len(http.calls) == 1, "an empty deposit must not trigger a download"
+
+
+def test_a_deposit_without_a_pdf_reports_not_found():
+    """An enumeration that names no PDF is a real absence, not a pattern that failed
+    to match one."""
+    http = _s3_http(deposit=[(f"{V1}/{V1}.xml", 100)])
+    result = PmcS3Source(http).fetch(_pmc_ids(), need_pdf=True, need_supplements=True)
+
+    assert result.pdf_status == "not_found"
+    assert _statuses(result, "pdf") == ["not_listed"]
+
+
+@pytest.mark.parametrize("page,status", [
+    ((503, b"", ""), "http_error"),
+    ((404, b"<Error><Code>NoSuchBucket</Code></Error>", "application/xml"), "http_error"),
+    ((200, b"<ListBucketResult", "application/xml"), "unparseable_xml"),
+])
+def test_an_unreadable_listing_claims_nothing(page, status):
+    """Deliberately unlike `pmc_oa`, which answers its own broken lookup with
+    `not_in_oa_subset`: there the routing signal is the only thing the service
+    produces, whereas a listing we could not read leaves what the bucket holds
+    genuinely open, and a re-run or a later tier can still answer it."""
+    http = _s3_http(pages={None: page})
+    result = PmcS3Source(http).fetch(_pmc_ids(), need_pdf=True, need_supplements=True)
+
+    assert result.pdf_status is None and result.suppl_status is None
+    assert _statuses(result, "listing") == [status]
+    assert result.files == []
+
+
+def test_a_transport_failure_on_the_listing_is_a_recorded_problem():
+    class Exploding(FakeHttp):
+        def get(self, url, params=None, accept=None, allow_redirects=True):
+            raise HttpError("connection reset")
+
+    result = PmcS3Source(Exploding()).fetch(_pmc_ids(), need_pdf=True,
+                                            need_supplements=True)
+    assert result.pdf_status is None and result.suppl_status is None
+    assert any("pmc s3 listing failed" in p for p in result.problems)
+
+
+def test_need_pdf_false_leaves_the_articles_own_files_alone():
+    """The fetcher only asks for what is still missing, so a supplements-only pass
+    must not spend a 6.3 MB transfer on a PDF another tier already delivered."""
+    http = _s3_http()
+    result = PmcS3Source(http).fetch(_pmc_ids(), need_pdf=False, need_supplements=True)
+
+    assert result.pdf_status is None and result.by_role("fulltext_xml") == []
+    assert http.called_matching(f"{V1}.pdf") == 0
+    assert http.called_matching(f"{V1}.xml") == 0
+
+
+def test_need_supplements_false_fetches_nothing_from_the_payload():
+    http = _s3_http()
+    result = PmcS3Source(http).fetch(_pmc_ids(), need_pdf=True, need_supplements=False)
+
+    assert result.suppl_status is None
+    assert [f.role for f in result.files] == ["fulltext_pdf", "fulltext_xml"]
+    assert http.called_matching("supplement-1") == 0
+    assert _statuses(result, "cap") == [], "a cap cannot drop files nobody asked for"
+
+
+def test_contents_without_a_size_is_unknown_not_zero():
+    """`<Size>` is not guaranteed by anything but observation, and an absent one must
+    not read as 0 -- that is the value that walks an oversize object past the cap."""
+    body = (f'<ListBucketResult xmlns="{S3_NS}"><IsTruncated>false</IsTruncated>'
+            f"<Contents><Key>{V1}/supplement-1.xlsx</Key></Contents>"
+            f"</ListBucketResult>").encode()
+    result = PmcS3Source(_s3_http(pages={None: body})).fetch(
+        _pmc_ids(), need_pdf=False, need_supplements=True)
+
+    assert [f.name for f in result.by_role("supplement")] == ["supplement-1.xlsx"]
+    assert result.suppl_status == "fetched"
+
+
+def test_a_listing_that_never_stops_paginating_is_cut_off_and_said_so():
+    """The page guard. 10 pages is 10,000 objects for one article, far past anything
+    measured, so reaching it means the token never resolves -- and a recorded
+    incomplete listing, which costs this tier its `fetched`, beats a loop."""
+
+    class _EndlessPages(dict):
+        """A bucket whose every page names one more file and one more token."""
+
+        served = 0
+
+        def __getitem__(self, token):
+            self.served += 1
+            return s3_listing((f"{V1}/supplement-{self.served}.xlsx", 100),
+                               token=f"page-{self.served}")
+
+    pages = _EndlessPages()
+    result = PmcS3Source(_s3_http(pages=pages)).fetch(
+        _pmc_ids(), need_pdf=False, need_supplements=True)
+
+    assert pages.served == 10, "the walk is bounded"
+    assert len(result.by_role("supplement")) == 10, "and keeps what it did read"
+    assert _statuses(result, "listing") == ["still_truncated"]
+    assert any("still truncated after 10 pages" in p for p in result.problems)
+    assert result.suppl_status == "partial_failure"
+
+
+def test_an_oversize_jats_is_refused_without_costing_the_pdf():
+    http = _s3_http(deposit=[(f"{V1}/{V1}.pdf", 100), (f"{V1}/{V1}.xml", 900 * 1024 ** 2)])
+    result = PmcS3Source(http, {"max_file_mb": 200}).fetch(
+        _pmc_ids(), need_pdf=True, need_supplements=False)
+
+    assert result.pdf_status == "ok"
+    assert result.by_role("fulltext_xml") == []
+    assert http.called_matching(f"{V1}.xml") == 0
+    assert _statuses(result, "xml") == ["too_large"]
+
+
+def test_a_transport_failure_on_the_s3_xml_is_recorded():
+    class Exploding(FakeS3Http):
+        def get(self, url, params=None, accept=None, allow_redirects=True):
+            if f"{V1}.xml" in url:
+                raise HttpError("read timeout")
+            return super().get(url, params, accept, allow_redirects)
+
+    http = _s3_http()
+    result = PmcS3Source(Exploding(http.pages, http.routes)).fetch(
+        _pmc_ids(), need_pdf=True, need_supplements=False)
+
+    assert result.pdf_status == "ok"
+    assert _statuses(result, "xml") == ["request_failed"]
+
+
+def test_a_failed_xml_never_costs_the_pdf():
+    http = _s3_http(routes={f"{V1}.xml": (500, b"", "")})
+    result = PmcS3Source(http).fetch(_pmc_ids(), need_pdf=True, need_supplements=False)
+
+    assert result.pdf_status == "ok"
+    assert _statuses(result, "xml") == ["http_error"]
+
+
+def test_the_cap_can_never_spend_the_articles_own_pdf():
+    """What `_split_deposit`'s hold-out is for, in the key order the bucket really
+    serves: `NIHMS...` sorts before `PMC....pdf` (N < P), so on the measured
+    14-supplement deposit the supplements genuinely do precede the article's PDF.
+    Capping the version's whole key list and splitting afterwards passes every other
+    test in this file and loses the full text."""
+    deposit = [(f"{V1}/NIHMS1758707-supplement-{n}.xlsx", 100) for n in range(1, 6)]
+    deposit.append((f"{V1}/{V1}.pdf", 100))
+    http = _s3_http(deposit=deposit)
+    result = PmcS3Source(http, {"max_files": 1}).fetch(
+        _pmc_ids(), need_pdf=True, need_supplements=True)
+
+    assert result.pdf_status == "ok" and http.called_matching(f"{V1}.pdf") == 1
+    assert len(result.by_role("supplement")) == 1, "the cap still bounds the payload"
+
+
+def test_a_publisher_filename_goes_out_percent_encoded():
+    """A deposited filename is publisher-supplied and a space or a `#` is a legal S3
+    key character: sent raw, one truncates the request at the fragment and the other
+    is not a valid URL at all. `safe="/"` keeps the version directory a path
+    separator and encodes the rest."""
+    http = _s3_http(deposit=[(f"{V1}/supplement 1 final#2.xlsx", 100)])
+    result = PmcS3Source(http).fetch(_pmc_ids(), need_pdf=False, need_supplements=True)
+
+    requested = [url for url in http.calls if "supplement" in url]
+    assert requested == [f"https://{S3_HOST}/{V1}/supplement%201%20final%232.xlsx"]
+    assert [f.name for f in result.by_role("supplement")] == ["supplement 1 final#2.xlsx"], \
+        "the name on disk is the publisher's, only the request is encoded"
+
+
+def test_no_key_the_bucket_serves_can_name_a_file_outside_the_article():
+    """What `_KEY_RX` claims at the tier level. `fetcher._write_group` routes every
+    name through `store.sanitize_filename` as well, so this is defence in depth
+    rather than the only guard -- but the claim is made here, so it is pinned here."""
+    http = _s3_http(deposit=[(f"{V1}/../../evil-supplement-1.sh", 100)])
+    result = PmcS3Source(http).fetch(_pmc_ids(), need_pdf=False, need_supplements=True)
+
+    assert [f.name for f in result.by_role("supplement")] == ["evil-supplement-1.sh"]
+
+
+def test_pmc_s3_is_tried_after_europepmc_and_before_pmc_supplements():
+    """The one placement in `OA_TIERS` that `sources/__init__` argues for rather than
+    inherits, and it is load-bearing twice over: behind `europepmc`, whose single ZIP
+    is still the cheapest whole answer, and ahead of `pmc_supplements`, which is the
+    tier that walks into PMC's proof-of-work page and then 403s.
+
+    Moving it to the end of the list leaves the whole suite green otherwise, and the
+    shipped `config.yaml` -- the list a real run actually uses -- is checked against
+    the same order, because nothing else compares the two and they can drift apart
+    without a single test noticing.
+    """
+    assert OA_TIERS.index("europepmc") < OA_TIERS.index("pmc_s3") < \
+        OA_TIERS.index("pmc_supplements")
+
+    shipped = yaml.safe_load(
+        (Path(__file__).resolve().parent.parent / "config.yaml").read_text())
+    assert shipped["fetch"]["tiers"] == list(DEFAULT_TIERS), \
+        "config.yaml and OA_TIERS have to name the same order"
+
+
 # -- Europe PMC: the cheapest complete answer -------------------------------
 
 EPMC_XML = "/fullTextXML"
@@ -1316,6 +2010,30 @@ def test_which_pdf_failure_is_kept(current, incoming, expected):
 
 # -- the tier and the orchestrator must not rank failures differently --------
 
+def test_a_size_refusal_outranks_a_later_tiers_generic_miss():
+    """`pmc_s3` is the first tier to report `too_large` as a `pdf_status`, and it was
+    not in `PDF_DIAGNOSES`, so the ranking could not keep it.
+
+    Both tiers key on nothing but `ids.pmcid` and `pmc_oa` comes next in the shipped
+    order, so whenever the size cap refuses a PDF, `pmc_oa` always runs and always
+    assigns a status: `not_in_oa_subset` for any `oa.fcgi` error, `not_found`
+    otherwise. Folding two unranked words keeps the later one, so the manifest read
+    `not_in_oa_subset` for an article whose S3 listing had just proved it *is* in the
+    subset -- one tier's answer overwritten with another tier's contradiction, which
+    is the thing this shared table exists to prevent. It also made the fifteenth
+    `fulltext.status` the README documents unreachable in every shipped tier list.
+    """
+    assert _best_pdf_status(["too_large", "not_in_oa_subset"]) == "too_large"
+    assert _best_pdf_status(["too_large", "not_found"]) == "too_large"
+    assert better_pdf_failure("not_a_pdf", "too_large") == "too_large"
+    assert _best_pdf_status(["too_large", "ok"]) == "ok", \
+        "a cap is not a verdict: a tier that got the file still wins"
+
+
+#: Every word a tier can report for a failed PDF. The diagnoses are read from
+#: `PDF_DIAGNOSES` rather than restated, so a new one is cross-ranked by the test
+#: below on the day it is added -- `too_large` was added without one and the
+#: exhaustive test never saw it.
 _FAILURE_VOCABULARY = list(PDF_DIAGNOSES) + [
     "not_a_pdf", "download_failed", "not_in_oa_subset", "not_found",
 ]

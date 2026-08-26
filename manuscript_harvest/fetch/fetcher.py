@@ -8,8 +8,9 @@ result look identical downstream unless something names them apart, and the trap
 here is an empty `supplementary/` directory:
 
     none_listed          the publisher says this article has no supplements
-    fetched              an archive that IS the deposit was unpacked whole
-    fetched_unverified   every file we identified arrived, but nothing bounds the set
+    fetched              the deposit itself was enumerated and all of it arrived
+    fetched_unverified   every file we identified arrived, but nothing bounds the
+                         set -- or `max_files` stopped us short of one that does
     partial_failure      we got some; at least one download or archive failed
     expected_but_missing hasSuppl=Y, and we came away with nothing  <-- the bug case
     none_retrieved       a tier tried and every file it went after was lost
@@ -29,7 +30,9 @@ evidence, because a regex over page anchors cannot know what it failed to match.
 So the two are split by *what bounded the set*, which is the only thing the code
 can actually know. Europe PMC's supplementary ZIP and the PMC OA tarball are
 self-delimiting -- unpacking the archive yields the deposit, and a member list is
-not a guess. Every other route pattern-matches a rendered page: `pmc_supplements`
+not a guess -- and `pmc_s3`'s object listing is the same kind of evidence one step
+earlier: it is the deposit's index, served by the store that holds the bytes.
+Every other route pattern-matches a rendered page: `pmc_supplements`
 regexes PMC's HTML for `/bin/` paths, the browser tier scrapes anchors, bioRxiv
 regexes its supplement page. Those get `fetched_unverified` even when they are in
 fact complete -- as most of the eight ground-truth papers are. That is not an alarm.
@@ -38,6 +41,18 @@ and only the first licenses "they exist and we have them".
 
 Both are settled: see `store.SUPPL_SETTLED`. An unbounded set is not a failed one,
 and re-running would scrape the same page and get the same answer.
+
+`max_files` lands in `fetched_unverified` for that second reason rather than in
+`partial_failure`, and every tier that can hit it agrees: `europepmc._unpack_zip`
+truncates and its caller still says `fetched`, `proxy_browser._download_all`
+measures success against what it attempted so the cap cannot masquerade as a
+failure, and `pmc_s3` demotes one notch to `fetched_unverified` because there the
+listing did say how much was left. A count cap is this tool declining to spend more
+requests on one article, not a file that would not come; it is deterministic, so
+calling it a failure leaves the article unsettled and makes every later batch
+re-download the whole deposit to drop the identical tail again. A file refused over
+`max_file_mb` is a failure, because that is one named file and raising the cap gets
+it.
 """
 
 from functools import reduce
@@ -246,6 +261,10 @@ def build_http(config: dict) -> Http:
     return Http(
         contact_email=fetch_cfg.get("contact_email"),
         min_interval_seconds=fetch_cfg.get("min_interval_seconds", 3.0),
+        # Per-host exceptions to that interval. Absent means an empty mapping, which
+        # is the single global interval this had before -- so a config that does not
+        # mention the key behaves exactly as it did.
+        min_interval_overrides=fetch_cfg.get("min_interval_overrides"),
         timeout_seconds=fetch_cfg.get("timeout_seconds", 60),
         ncbi_api_key=fetch_cfg.get("ncbi_api_key"),
         max_bytes=int(response_mb * 1024 ** 2) if response_mb else None,

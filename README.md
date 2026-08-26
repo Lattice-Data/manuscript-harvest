@@ -163,12 +163,13 @@ the run. Repeats are collapsed after normalization, so `10.1038/X` and
 `get` prints the article directory on **stdout** and everything else on stderr, so
 `DIR=$(manuscript-fetch get 10.1038/...)` gives you the path.
 
-Sources are tried in order. The first four need no credentials and no browser;
+Sources are tried in order. The first five need no credentials and no browser;
 `--oa-only` guarantees nothing ever opens one:
 
 | Tier | What it gives |
 |---|---|
 | `europepmc` | PDF via `fullTextUrlList`, JATS XML, supplements ZIP — the ZIP is not universal |
+| `pmc_s3` | PMC's Open Access bucket on S3: lists the whole deposit anonymously, then fetches each object — PDF, JATS, supplements, figures. Not challenged, unlike PMC's own `/bin/` URLs, and it knows each file's size before downloading it |
 | `pmc_supplements` | PMC lists the files; the publisher's open-access host serves the bytes |
 | `pmc_oa` | `oa.fcgi`: mainly an "is this in the OA subset" signal (see Known limitations) |
 | `biorxiv` | 10.1101 and 10.64898 (openRxiv) preprints: PDF, JATS, supplements |
@@ -188,7 +189,7 @@ and `--json`/`--report` for the manifest. `usage` takes `--by-size` and `--limit
 The point of this vocabulary is that "no supplements" and "we failed to get the
 supplements" must never look alike.
 
-`fulltext.status`, fourteen values: `ok` · `scanned_pdf_suspected` (saved, but has no
+`fulltext.status`, fifteen values: `ok` · `scanned_pdf_suspected` (saved, but has no
 extractable text — needs OCR) · `not_research_article` (the DOI resolves to a
 correction, retraction or editorial notice — a real publication, but not the paper) ·
 `identity_unverified` (a document arrived and does not appear to be this paper; the
@@ -197,8 +198,9 @@ bytes are kept, because they are the evidence) · `paywalled` · `not_in_oa_subs
 the file is public behind a proof-of-work page, so route through the browser tier) ·
 `publisher_stub_page` (a plausible 200-OK shell served to automation instead of the
 article) · `link_resolver_error` (a resolver answered "no such article here", so
-this is not a page we failed to parse) · `not_a_pdf` · `download_failed` ·
-`not_found`
+this is not a page we failed to parse) · `too_large` (the deposit declares a size
+over `fetch.max_file_mb`, so it was refused before the transfer) · `not_a_pdf` ·
+`download_failed` · `not_found`
 
 Only the first two mean the article is on disk. The two new ones exist because a
 document can be perfectly valid and still not be the paper that was asked for, and
@@ -232,8 +234,8 @@ never called wrong: "cannot tell" is not "mismatch".
 | Status | Meaning |
 |---|---|
 | `none_listed` | the publisher says there are none (`hasSuppl: N`) |
-| `fetched` | an archive that *is* the deposit was unpacked whole — they exist and we have them |
-| `fetched_unverified` | every file we identified arrived, but nothing bounds the set |
+| `fetched` | the deposit itself was enumerated and every file in it arrived — they exist and we have them |
+| `fetched_unverified` | every file we identified arrived, but nothing bounds the set — or the set was enumerated and the `max_files` cap stopped the walk short of it |
 | `partial_failure` | some arrived; at least one failed |
 | `expected_but_missing` | `hasSuppl: Y` and we came away with nothing — **the bug case** |
 | `none_retrieved` | a tier tried and every file it went after was lost |
@@ -246,10 +248,18 @@ never called wrong: "cannot tell" is not "mismatch".
 and lost everything, the second that no tier ever tried.
 
 **Why `fetched` splits in two.** The two are separated by what *bounded* the set —
-a ZIP or tarball member list is not a guess, while a regex over page anchors cannot
-know what it failed to match. Both count as settled, so an article still finishes
+a ZIP or tarball member list is not a guess, nor is an S3 object listing, while a
+regex over page anchors cannot know what it failed to match. Both count as settled, so an article still finishes
 `complete` and is never re-fetched; an unbounded set is not a failed one. The
 measured case that forced the split is in `fetch/fetcher.py`.
+
+A `max_files` truncation lands in `fetched_unverified` for the same reason rather
+than in `partial_failure`: it is this tool declining to spend more requests on one
+article, not a file that would not come, and it is deterministic — calling it a
+failure would leave the article unsettled and make every later batch re-download the
+whole deposit to drop the identical tail again. What was dropped is always in
+`problems`. A file refused over `max_file_mb` *is* a failure: that is one named file,
+and raising the cap gets it.
 
 A refusal is never written to disk as `fulltext.pdf`: acceptance requires PDF magic
 bytes (not the `Content-Type` header, which lies), a successful parse, a body that

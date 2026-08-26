@@ -979,6 +979,75 @@ def test_per_host_interval_is_enforced(monkeypatch):
     assert len(slept) == 1
 
 
+@pytest.fixture
+def frozen_clock(monkeypatch):
+    """Collects what `_wait_for_host` slept, with time standing still.
+
+    A stopped clock makes each sleep exactly the interval that applied, so the
+    assertions read as the intervals themselves rather than as arithmetic.
+    """
+    slept = []
+    monkeypatch.setattr("manuscript_harvest.fetch.http.time.sleep", lambda s: slept.append(s))
+    monkeypatch.setattr("manuscript_harvest.fetch.http.time.monotonic", lambda: 100.0)
+    return slept
+
+
+def test_a_named_host_can_have_its_own_interval(frozen_clock):
+    """One number cannot be both the courtesy NCBI documents and a sane rate for an
+    AWS bulk store. `pmc_s3` fetches one object per request, so at 3.0 s a
+    14-supplement article spends ~45 s asleep and one at the cap ~150 s."""
+    http = Http(min_interval_seconds=3.0,
+                min_interval_overrides={"pmc-oa-opendata.s3.amazonaws.com": 0.2})
+    http._wait_for_host("https://pmc-oa-opendata.s3.amazonaws.com/PMC1.1/a.xlsx")
+    http._wait_for_host("https://pmc-oa-opendata.s3.amazonaws.com/PMC1.1/b.xlsx")
+    http._wait_for_host("https://www.ncbi.nlm.nih.gov/1")
+    http._wait_for_host("https://www.ncbi.nlm.nih.gov/2")
+
+    assert frozen_clock == [pytest.approx(0.2), pytest.approx(3.0)], \
+        "the override applies to its host and to nothing else"
+
+
+def test_an_override_is_matched_on_the_whole_host_not_a_suffix(frozen_clock):
+    """A rule for `s3.amazonaws.com` would quietly cover every bucket on it,
+    including hosts nobody here has measured. The match is case-insensitive, because
+    a hostname is."""
+    http = Http(min_interval_seconds=3.0,
+                min_interval_overrides={"PMC-OA-OPENDATA.s3.amazonaws.com": 0.2})
+    http._wait_for_host("https://someone-elses-bucket.s3.amazonaws.com/1")
+    http._wait_for_host("https://someone-elses-bucket.s3.amazonaws.com/2")
+    http._wait_for_host("https://pmc-oa-opendata.s3.amazonaws.com/1")
+    http._wait_for_host("https://pmc-oa-opendata.s3.amazonaws.com/2")
+
+    assert frozen_clock == [pytest.approx(3.0), pytest.approx(0.2)]
+
+
+def test_no_overrides_is_the_single_interval_it_always_was(frozen_clock):
+    """The default has to be byte-for-byte the old behaviour: this key is new, and
+    every config that does not mention it must throttle exactly as before."""
+    http = Http(min_interval_seconds=3.0)
+    assert http.min_interval_overrides == {}
+    http._wait_for_host("https://a.example/1")
+    http._wait_for_host("https://a.example/2")
+    assert frozen_clock == [pytest.approx(3.0)]
+
+
+def test_the_interval_overrides_are_reachable_from_the_config():
+    """`max_bytes` was a cap the config could not set for a while; this one is wired
+    from the start, and `pmc_s3` is unusable at the default interval without it.
+
+    `build_http` passes through exactly what it is given and invents nothing, which
+    is why the empty cases below stay empty. Where the S3 entry a real run needs
+    comes from is `cli.DEFAULT_FETCH_CONFIG` -- see
+    `test_fetch_cli.test_a_run_with_no_config_file_can_still_reach_the_s3_bucket_at_speed`,
+    because a default that exists only in the repo's `config.yaml` is not a default.
+    """
+    from manuscript_harvest.fetch.fetcher import build_http
+    built = build_http({"fetch": {"min_interval_overrides": {"x.example": 0.5}}})
+    assert built.min_interval_overrides == {"x.example": 0.5}
+    assert build_http({"fetch": {}}).min_interval_overrides == {}
+    assert build_http({}).min_interval_overrides == {}
+
+
 # -- HTTP transport: retries and caps ----------------------------------------
 #
 # Everything below drives a real `Http` over a fake `requests.Session`, because the

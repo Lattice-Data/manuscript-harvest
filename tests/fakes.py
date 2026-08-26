@@ -669,6 +669,88 @@ class FakeHttp:
         return sum(1 for url in self.calls if fragment in url)
 
 
+# -- PMC's Open Access S3 bucket ---------------------------------------------
+#
+# Shaped from a live `ListObjectsV2` response. Here rather than in one test module
+# because two need it: `test_open_access_tiers` drives `PmcS3Source` directly, and
+# `test_pipeline` drives the same listing through `fetch_publication` -- the tier is
+# the first to write `media/`, and its cap and its status decide whether the
+# orchestrator asks a later tier at all. A second copy of this XML in the other file
+# is exactly how a fixture and the service it stands for drift apart.
+
+S3_HOST = "pmc-oa-opendata.s3.amazonaws.com"
+S3_NS = "http://s3.amazonaws.com/doc/2006-03-01/"
+
+
+def s3_listing(*keys, token: str = "") -> bytes:
+    """One `ListObjectsV2` page, `keys` being `(key, size)` pairs.
+
+    The `xmlns` is the load-bearing part of the fixture, not decoration: a parse
+    that ignores the default namespace finds no `<Contents>` at all and reports
+    every article in the bucket as an empty deposit.
+    """
+    contents = "".join(
+        f"<Contents><Key>{key}</Key>"
+        f"<LastModified>2024-01-01T00:00:00.000Z</LastModified>"
+        f'<ETag>&quot;d41d8&quot;</ETag><Size>{size}</Size>'
+        f"<StorageClass>INTELLIGENT_TIERING</StorageClass></Contents>"
+        for key, size in keys
+    )
+    more = f"<NextContinuationToken>{token}</NextContinuationToken>" if token else ""
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f'<ListBucketResult xmlns="{S3_NS}"><Name>pmc-oa-opendata</Name>'
+        f"<KeyCount>{len(keys)}</KeyCount><MaxKeys>1000</MaxKeys>"
+        f"<IsTruncated>{'true' if token else 'false'}</IsTruncated>"
+        f"{more}{contents}</ListBucketResult>"
+    ).encode()
+
+
+class FakeS3Http(FakeHttp):
+    """`FakeHttp` plus the one thing S3 needs: listing pages keyed by token.
+
+    `FakeHttp` routes on the URL, and every listing request shares the *same* URL --
+    the bucket root -- because the prefix and the continuation token travel as query
+    parameters. So a listing is served from `pages` under the token it asked with
+    (`None` for the first page) and everything else falls through to the ordinary
+    route table. A page may be a body or a `(status, body, content_type)` triple,
+    which is how a walk that dies half way is set up.
+    """
+
+    def __init__(self, pages, routes=None):
+        super().__init__(routes)
+        self.pages = pages
+
+    def get(self, url, params=None, accept=None, allow_redirects=True) -> Response:
+        params = dict(params or {})
+        if not params.get("list-type"):
+            return super().get(url, params, accept, allow_redirects)
+        self.calls.append(url)
+        self.params.append(params)
+        page = self.pages[params.get("continuation-token")]
+        if isinstance(page, tuple):
+            status, body, content_type = page
+        else:
+            status, body, content_type = 200, page, "application/xml"
+        return Response(url=url, status=status, content=body, content_type=content_type)
+
+
+def s3_http(pages=None, routes=None, deposit=()) -> FakeS3Http:
+    """A bucket serving `deposit` (or explicit `pages`), plus object bytes.
+
+    Routes come first on purpose: `FakeHttp` returns the first fragment that
+    matches, and the catch-all host below matches every object URL in the bucket, so
+    a per-file override appended after it would never be reached.
+    """
+    base = dict(routes or {})
+    base.setdefault(".pdf", (200, make_pdf(), "application/pdf"))
+    base.setdefault(".xml", (200, b"<article><body/></article>", "application/xml"))
+    base.setdefault(S3_HOST, (200, b"object payload", "application/octet-stream"))
+    if pages is None:
+        pages = {None: s3_listing(*deposit)}
+    return FakeS3Http(pages, base)
+
+
 # -- fake requests.Session ---------------------------------------------------
 #
 # `FakeHttp` above replaces `Http` wholesale, which is what the sources want. These

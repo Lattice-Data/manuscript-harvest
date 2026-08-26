@@ -34,6 +34,21 @@ DEFAULT_FETCH_CONFIG = {
     "contact_email": None,
     "ncbi_api_key": None,
     "min_interval_seconds": 3.0,
+    # Belongs with the defaults rather than only in `config.yaml`, because
+    # `pmc_s3` is in `DEFAULT_TIERS` and is the one tier that spends a request per
+    # *file*: at the 3.0 s default a 14-supplement article sleeps ~45 s and one at
+    # the `max_files` cap ~150 s, against a bulk object store that asks for no
+    # interval at all. A run that does not find a config file -- `manuscript-fetch`
+    # from a subdirectory, or from an install, since `config.yaml` sits outside the
+    # package -- lands on these defaults and is otherwise 15x slower per request
+    # than designed, silently: `warn_if_config_missing` prints to stderr and the
+    # files and statuses are all correct. Every other knob this tier needs
+    # (`max_files`, `max_file_mb`) was already here.
+    #
+    # `merge_config` recurses into dicts, so a user's own map is merged onto this
+    # one rather than replacing it: adding hosts works, and *removing* this entry
+    # takes editing it to a slower number rather than deleting the line.
+    "min_interval_overrides": {"pmc-oa-opendata.s3.amazonaws.com": 0.2},
     "timeout_seconds": 60,
     "max_file_mb": 200,
     "max_files": 50,
