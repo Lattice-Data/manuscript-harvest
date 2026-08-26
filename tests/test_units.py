@@ -39,6 +39,7 @@ from manuscript_harvest.fetch.identifiers import (
     normalize_doi,
     unversioned_doi,
 )
+from manuscript_harvest.fetch.sources.europepmc import _unpack_zip
 from manuscript_harvest.fetch.sources.pmc_oa import _classify, _unpack_tgz, ftp_to_https
 from manuscript_harvest.fetch.validate import (
     classify_denial,
@@ -73,6 +74,7 @@ from tests.fakes import (
     make_pdf,
     make_scanned_pdf,
     make_tgz,
+    make_zip,
 )
 
 
@@ -535,9 +537,118 @@ def test_package_members_split_by_kind():
 
 
 def test_tar_cannot_escape_the_corpus_directory():
-    unpacked = _unpack_tgz(make_tgz([("../../evil.txt", b"x"), ("/abs/evil2.txt", b"y")]),
-                           max_files=10, max_file_bytes=1024)
+    # Two lists back since `fetch.text_bearing_only` landed: the members kept, and
+    # the ones no text can be extracted from. Neither of these is the second kind.
+    unpacked, skipped = _unpack_tgz(
+        make_tgz([("../../evil.txt", b"x"), ("/abs/evil2.txt", b"y")]),
+        max_files=10, max_file_bytes=1024)
     assert [n for n, _ in unpacked] == ["evil.txt", "evil2.txt"]
+    assert skipped == []
+
+
+def test_tar_members_no_text_can_come_out_of_are_refused_on_the_basename():
+    """The archive arrives as one blob, so the transfer is already paid -- what the
+    filter saves here is the disk write, the manifest entry and the extraction record
+    whose only content would be the word `image_no_text`. Judged on the basename,
+    which is the name `extract/extractor.py` would have dispatched on.
+
+    *Which* names are refused, and nothing about when: that a refused member is never
+    decompressed and never spends a `max_files` slot is
+    `test_a_refused_tar_member_is_never_read_and_never_spends_a_cap_slot` below, and
+    neither claim is visible in a return value at this cap.
+    """
+    package = make_tgz([("PMC1/table_s1.xlsx", b"xlsx"), ("PMC1/f1.jpg", b"\xff\xd8"),
+                        ("PMC1/movie1.mp4", b"\x00\x00\x00 ftyp")])
+
+    kept, skipped = _unpack_tgz(package, max_files=10, max_file_bytes=1024)
+
+    assert [n for n, _ in kept] == ["table_s1.xlsx"]
+    assert skipped == [("f1.jpg", "image"), ("movie1.mp4", "audio_video")]
+    # And with the policy off, exactly what it did before.
+    kept, skipped = _unpack_tgz(package, max_files=10, max_file_bytes=1024,
+                                text_bearing_only=False)
+    assert len(kept) == 3 and skipped == []
+
+
+def test_a_refused_tar_member_is_never_read_and_never_spends_a_cap_slot(monkeypatch):
+    """"Never decompressed" and "ahead of `max_files`" are the two claims
+    `_unpack_tgz`'s docstring makes and the only two a return value cannot show.
+
+    Both are load-bearing rather than tidy. A tarball member is read whole into
+    memory, and supplements this size are real -- 10.1126/science.aax6234 ships a
+    487.8 MB one -- so a movie among them is a whole-file allocation bought for
+    nothing. And a figure that spends a cap slot is a supplementary table that does
+    not arrive: moving the refusal after the count leaves `[]` here where the table
+    arrives today, which is silent data loss and was invisible to every other test in
+    this file because they all run at a cap no small fixture reaches.
+    """
+    import tarfile
+
+    read = []
+    original = tarfile.TarFile.extractfile
+
+    def watched(self, member):
+        read.append(getattr(member, "name", member))
+        return original(self, member)
+
+    monkeypatch.setattr(tarfile.TarFile, "extractfile", watched)
+    package = make_tgz([("PMC1/f1.jpg", b"\xff\xd8"), ("PMC1/movie1.mp4", b"ftyp"),
+                        ("PMC1/f2.jpg", b"\xff\xd8"), ("PMC1/table_s1.xlsx", b"xlsx")])
+
+    kept, skipped = _unpack_tgz(package, max_files=2, max_file_bytes=1024)
+
+    assert [n for n, _ in kept] == ["table_s1.xlsx"], \
+        "the cap's slots go to members something downstream will parse"
+    assert len(skipped) == 3
+    assert read == ["PMC1/table_s1.xlsx"], \
+        "and the three refused members were never decompressed"
+
+
+def test_a_refused_zip_member_is_never_read_and_never_spends_a_cap_slot(monkeypatch):
+    """`europepmc._unpack_zip`, the same two claims and the same reasons.
+
+    Written as its own test rather than folded into the tier's, because the tier test
+    can only see the returned names: whether `archive.read(info)` ran, and whether the
+    refusal happened before or after `len(out) >= max_files`, are invisible from
+    there. This is also the archive whose size argument is measured -- the docstring
+    cites a 487.8 MB member -- so the ordering claim is one a future editor would
+    reasonably assume is enforced.
+    """
+    import zipfile
+
+    read = []
+    original = zipfile.ZipFile.read
+
+    def watched(self, name, pwd=None):
+        read.append(getattr(name, "filename", name))
+        return original(self, name, pwd)
+
+    monkeypatch.setattr(zipfile.ZipFile, "read", watched)
+    archive = make_zip([("f1.jpg", b"\xff\xd8"), ("movie1.mp4", b"ftyp"),
+                        ("f2.png", b"\x89PNG"), ("table_s1.xlsx", b"xlsx")])
+
+    kept, skipped = _unpack_zip(archive, max_files=2, max_file_bytes=1024)
+
+    assert [n for n, _ in kept] == ["table_s1.xlsx"]
+    assert [n for n, _ in skipped] == ["f1.jpg", "movie1.mp4", "f2.png"]
+    assert read == ["table_s1.xlsx"], "and nothing refused was decompressed"
+
+
+def test_a_zip_member_no_text_can_come_out_of_is_refused_before_the_size_cap():
+    """Ahead of the size check as well, and that ordering is a judgement rather than
+    an accident: an oversize member raises and costs the whole archive its status,
+    which is right for a supplementary table a bigger cap would get and pointless for
+    a video no cap makes readable. So an oversize `.mov` is refused on its name and
+    the tables beside it still arrive."""
+    archive = make_zip([("movie1.mov", b"x" * 5000), ("table_s1.xlsx", b"xlsx")])
+
+    kept, skipped = _unpack_zip(archive, max_files=10, max_file_bytes=100)
+
+    assert [n for n, _ in kept] == ["table_s1.xlsx"]
+    assert skipped == [("movie1.mov", "audio_video")]
+    with pytest.raises(ValueError, match="over the"):
+        _unpack_zip(archive, max_files=10, max_file_bytes=100,
+                    text_bearing_only=False)
 
 
 def test_tar_member_over_cap_raises():

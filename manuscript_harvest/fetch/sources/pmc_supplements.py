@@ -72,8 +72,24 @@ class PmcSupplementsSource(Source):
             result.note("listing", status="no_files_listed", count=0)
             return result
 
+        # PMC's page names every file, so the ones no text can be extracted from are
+        # refused before the request. Worth more here than anywhere else: every
+        # `/bin/` URL this tier falls back to costs a proof-of-work page it will not
+        # clear, so an article of figures spent a wall of requests to earn a wall of
+        # 403s. Ahead of the cap, so its slots go to files something can read.
+        wanted = self.keep_text_bearing(
+            listing, result, name_of=lambda pair: pair[1])
+        if not wanted:
+            # Deliberately not `none_listed`: PMC listed files and we declined them.
+            # The status stays unset so `fetcher._supplement_status` can name this
+            # `none_text_bearing` from the skip count, which is the one place that
+            # sees every tier's refusals at once.
+            result.note("supplements", status="none_text_bearing",
+                        listed=len(listing), attempted=0)
+            return result
+
         # "file", not "link": PMC listed these, so a dropped one is a known file.
-        attempted = self.apply_files_cap(listing, result, noun="file")
+        attempted = self.apply_files_cap(wanted, result, noun="file")
 
         fetched, challenged, failed = 0, 0, 0
         for bin_path, filename in attempted:
@@ -110,6 +126,7 @@ class PmcSupplementsSource(Source):
 
         result.note("supplements", status=result.suppl_status or "none",
                     listed=len(listing), attempted=len(attempted), fetched=fetched,
+                    not_text_bearing=len(result.skipped_not_text_bearing),
                     javascript_challenge=challenged, failed=failed)
         return result
 

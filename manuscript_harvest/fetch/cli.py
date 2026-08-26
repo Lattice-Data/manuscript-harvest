@@ -5,6 +5,7 @@
     manuscript-fetch usage --by-size     # what is taking the space
     manuscript-fetch revalidate          # is each stored full text the right paper?
     manuscript-fetch prune --dry-run     # what a budget sweep would evict
+    manuscript-fetch drop-media          # stored files no text can come out of
     manuscript-fetch login          # one-time Stanford SSO, headed
     manuscript-fetch check          # is the browser session alive?
 
@@ -53,6 +54,14 @@ DEFAULT_FETCH_CONFIG = {
     "max_file_mb": 200,
     "max_files": 50,
     "max_corpus_gb": None,
+    # Fetch only supplementary files text can be extracted from -- see
+    # `manuscript_harvest/text_bearing.py` for the sets and the measurement. Here as
+    # well as in `config.yaml` for the reason `min_interval_overrides` is: a run that
+    # finds no config file lands on these defaults, and this one changes which files
+    # a corpus holds, so the two must not disagree. `text_bearing.policy_is_on` has
+    # the same default again, because a `fetch` mapping can also arrive from
+    # somewhere that never passed through here (`tests/fakes.fetch_config` does).
+    "text_bearing_only": True,
     "proxy": {
         "enabled": True,
         "prefix": "https://stanford.idm.oclc.org/login?url=",
@@ -355,6 +364,80 @@ def cmd_revalidate(args) -> int:
     return 0
 
 
+def cmd_drop_media(args) -> int:
+    """Delete stored files no text can be extracted from; keep their record.
+
+    Report-only unless `--apply`, like `revalidate` and for the same reason: it
+    deletes bytes, and that should be a decision rather than a side effect of
+    looking. Not folded into `prune`, which is the size-budget sweep -- that one
+    evicts whole articles to stay under `fetch.max_corpus_gb` and this one removes
+    figures from every article, so one flag set could not describe both.
+
+    **Unlike `revalidate`, this one can fail, so it reports failures and exits 1.**
+    `revalidate` writes verdicts and nothing it does can be refused by the
+    filesystem; an `unlink` can, and `drop_media_article` rewrites `files` to what it
+    actually deleted -- so an article where *every* deletion raised comes back with
+    `files == []` and looks, to a loop keyed on that list, exactly like an article
+    with nothing to sweep. Measured with one article's `supplementary/` at mode 0500,
+    which is the read-only-mount and other-owner case: `drop-media --apply` printed
+    `1 article(s) checked, 0 with files no text can be extracted from: 0 file(s), 0B`
+    and exited 0 with the JPEG still on disk -- byte-identical to a clean corpus, and
+    an unwritable directory fails every candidate inside it, so the whole sweep can go
+    silent. So the per-file errors `drop_media` takes care to collect are printed
+    outside that guard, and the exit code says the corpus is not in the state the
+    closing line describes. `prune`'s "nothing to do" is 2; 1 here, because the sweep
+    ran and did not finish.
+    """
+    from .drop_media import drop_media_corpus, human_reasons, summarize
+
+    config = _apply_cli_overrides(load_config(args.config), args)
+    corpus_dir = config["fetch"]["corpus_dir"]
+    reports = drop_media_corpus(corpus_dir, apply=args.apply, slugs=args.slug or None)
+    if not reports:
+        print(f"{corpus_dir}: no articles", file=sys.stderr)
+        return 0
+
+    verb = "removed" if args.apply else "would remove"
+    stuck = 0
+    for report in reports:
+        if report["files"]:
+            print(f"  {verb} {report['slug']}: {len(report['files'])} file(s), "
+                  f"{store.human_bytes(report['bytes'])}")
+        # Outside the guard above, and naming the file rather than repeating
+        # `report["note"]`'s count: the error string is the actionable half (`Errno 13`
+        # against `Errno 30` is a different fix) and nothing else in this tool would
+        # ever print it. The `no manifest` and `evicted` notes stay unprinted, as
+        # `revalidate` leaves its own notes -- an `evicted` line for every evicted
+        # article on every pass is noise, and neither is a failure.
+        for item in report.get("failed") or ():
+            stuck += 1
+            print(f"  ! {report['slug']}: {item['path']} not deleted: {item['error']}",
+                  file=sys.stderr)
+
+    totals = summarize(reports)
+    reasons = human_reasons(totals["by_reason"])
+    breakdown = f" ({reasons})" if reasons else ""
+    print(f"\n{totals['articles']} article(s) checked, {totals['affected']} with files "
+          f"no text can be extracted from: {totals['files']} file(s), "
+          f"{store.human_bytes(totals['bytes'])}{breakdown}", file=sys.stderr)
+    if stuck:
+        # Said again after the totals, because the totals line is the one that would
+        # otherwise be read as a description of the corpus. The manifests are the
+        # reassuring half: a file that survived kept its `path`, so nothing claims it
+        # is gone and the next pass will offer it again.
+        print(f"{stuck} file(s) could not be deleted and are still on disk; their "
+              f"manifest entries were left untouched, so re-running after fixing the "
+              f"permissions will offer them again", file=sys.stderr)
+        return 1
+    if totals["files"] and not args.apply:
+        print("re-run with --apply to delete them and record the removals in the "
+              "manifests", file=sys.stderr)
+    elif totals["files"]:
+        print("Manifests keep each file's name, size and sha256; the path is dropped "
+              "so the next batch does not re-fetch them.", file=sys.stderr)
+    return 0
+
+
 def cmd_login(args) -> int:
     from .sources.proxy_browser import interactive_login
 
@@ -436,6 +519,19 @@ def build_parser() -> argparse.ArgumentParser:
                                    help="write the verdicts into the manifests "
                                         "(default: report only)")
     revalidate_parser.set_defaults(func=cmd_revalidate)
+
+    drop_media_parser = subparsers.add_parser(
+        "drop-media",
+        help="delete stored supplementary images, audio and video that no text can "
+             "be extracted from (keeps each file's record)",
+    )
+    drop_media_parser.add_argument("slug", nargs="*",
+                                   help="corpus directory names; default: all")
+    drop_media_parser.add_argument("--corpus-dir", default=None)
+    drop_media_parser.add_argument("--apply", action="store_true",
+                                   help="delete the files and record the removals "
+                                        "(default: report only)")
+    drop_media_parser.set_defaults(func=cmd_drop_media)
 
     login_parser = subparsers.add_parser(
         "login", help="open a headed browser to complete Stanford SSO once"

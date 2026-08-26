@@ -66,6 +66,15 @@ same bucket (`PMC10020035.2/mmc1.pdf`) and land as supplements, correctly: the
 article PDF was already claimed by name, so the shortest-name tie-break
 `pmc_oa._classify` needs inside a tarball has nothing to decide here.
 
+**And with `fetch.text_bearing_only` on -- the default -- `media/` goes quiet
+again.** Every extension `pmc_oa.supplement_or_media` routes to `ROLE_MEDIA` is an
+image extension, so the figures below are refused from the listing before a byte
+moves. That is the intended effect and not a side effect: the cap, the requests and
+the manifest entries all go to files something downstream can read. The paragraphs
+below describe what this tier does with `text_bearing_only: false`, and remain the
+reason the role split exists at all -- the split is what makes the refusal
+per-role, so a skipped figure cannot be mistaken for a missing supplement.
+
 **This is the first tier whose files actually land in `media/`.**
 `pmc_oa._classify` has sorted article figures out of `supplementary/` since it was
 written, but its package route is off by default and `europepmc` calls every ZIP
@@ -640,6 +649,18 @@ class PmcS3Source(Source):
         already decides whether a curator can find the file at all, and a heuristic
         trusted with that can be trusted to say which question a loss belongs to.
 
+        **A file the text-bearing policy refused is not a loss either, and does not
+        demote `fetched`.** After this change `suppl_status` is a claim about the
+        supplementary files text can be extracted from, which is what the whole
+        pipeline downstream of it consumes; the refused names are in the
+        `text_bearing_filter` note, so the claim stays checkable. Demoting to
+        `fetched_unverified` instead was the obvious alternative and is worse in a
+        specific way: that status is what `extract/extractor.py` turns into the
+        `supplement_set_unverified` caveat, so it would raise "no tier could confirm
+        the set is complete" on every illustrated article in the corpus -- borrowing a
+        signal that means something else, which is the same defect as letting a
+        policy removal raise `manifest_entry_without_a_path`.
+
         A deposit of nothing but article figures leaves the status None rather than
         claiming anything, exactly as `pmc_oa`'s `if supplements:` guard does. The
         listing does bound the set, so "no key looked like a supplement" is a fact;
@@ -657,6 +678,17 @@ class PmcS3Source(Source):
         listed: Dict[str, List[_Object]] = {ROLE_SUPPLEMENT: [], ROLE_MEDIA: []}
         for item in payload:
             listed[supplement_or_media(item.filename)].append(item)
+
+        # The pre-download refusal this tier is uniquely able to make, now for a
+        # second reason: `<Size>` already lets it refuse a file that is too big, and
+        # the listing's *names* let it refuse a file nothing can read. Per role,
+        # because `suppl_status` below is a sentence about supplementary material and
+        # the fetcher counts these the same way -- a skipped `f0001.jpg` is an
+        # article figure and says nothing about the supplements, while a skipped
+        # `NIHMS1758707-supplement-1.jpg` is one of them.
+        for role in (ROLE_SUPPLEMENT, ROLE_MEDIA):
+            listed[role] = self.keep_text_bearing(
+                listed[role], result, name_of=lambda item: item.filename, role=role)
 
         # "file", not "link": S3 enumerated these, so a dropped one is a known file
         # rather than an anchor that may not have been distinct. Listing order is
@@ -721,7 +753,47 @@ class PmcS3Source(Source):
             # Nothing on disk to make a claim about. Silence unless supplements were
             # listed and missed -- a figures-only deposit leaves the question to the
             # fetcher, which has `hasSuppl` to weigh it against.
-            if lost_supplements or dropped_supplements:
+            #
+            # **`or not complete` is in here as well as in the branch below, and the
+            # filter is what made it load-bearing.** `complete` is what licenses this
+            # tier's `fetched` (see `_list_objects`), and an enumeration that stopped
+            # half way has named no deposit -- so this branch may not be silent about
+            # it either. Silence used to be safe here because `kept == 0` was only
+            # reachable for a payload with no supplement-classified key at all, and
+            # every word the fetcher then reached was unsettled. With
+            # `text_bearing_only` on, `kept == 0` is reachable for a deposit that
+            # *did* name supplements and were all refused, and the fetcher's answer
+            # there is `none_text_bearing`, which is settled -- so a truncated
+            # listing whose seen page happened to hold only figures would freeze
+            # `complete` over an unread continuation page and no later batch would
+            # ever re-list it. Measured: page 1 naming the PDF and one
+            # `supplement-1.jpg` with a continuation token, page 2 answering 503, gave
+            # `none_text_bearing` / `complete` / `cached` with 0 further requests --
+            # while the same manifest carried "the enumeration is incomplete".
+            #
+            # It has to be fixed here. Nothing on a `SourceResult` carries `complete`,
+            # so `fetcher._supplement_status` cannot know: it sees `reported == []`
+            # and a refusal count, and returns the settled word. `partial_failure` is
+            # the sibling branch's word for the same fact and keeps the article
+            # unsettled, which is all this needs.
+            #
+            # Keys sort lexicographically, so this is not a remote shape:
+            # `supplement-1.jpg` precedes `supplement-10.xlsx`, which puts the
+            # refusable names on the page that was read and the readable ones on the
+            # page that was not.
+            #
+            # It is not gated on anything having been refused, although only a
+            # refusal can reach the settled word, because "the listing stopped half
+            # way" is true whatever emptied the payload. Measured consequence with
+            # `text_bearing_only: false`, the one place this is not a no-op: a
+            # truncated listing whose seen page classifies no key as a supplement now
+            # ends `none_retrieved` where it ended `unknown_none_found`, and
+            # `expected_but_missing` -- the one that matters -- either way. Both of
+            # those are outside `store.SUPPL_SETTLED`, so the article is re-fetched
+            # next batch exactly as it was before; what changes is which unsettled
+            # word the manifest carries, and "a tier tried and came away with
+            # nothing" is the truer of the two over a listing that failed mid-walk.
+            if lost_supplements or dropped_supplements or not complete:
                 result.suppl_status = "partial_failure"
         elif lost_supplements or not complete:
             result.suppl_status = "partial_failure"
@@ -735,7 +807,13 @@ class PmcS3Source(Source):
                     supplements=kept, media=len(result.by_role(ROLE_MEDIA)),
                     refused=refused, failed=failed,
                     dropped_supplements=dropped_supplements,
-                    dropped_media=dropped_media, complete_listing=complete)
+                    dropped_media=dropped_media,
+                    # `listed` counts the deposit and `attempted` counts what was
+                    # fetched from it, so without this the gap between them for an
+                    # illustrated article looks like a loss. The names are in the
+                    # `text_bearing_filter` note.
+                    not_text_bearing=len(result.skipped_not_text_bearing),
+                    complete_listing=complete)
 
     # -- one object ---------------------------------------------------------
 

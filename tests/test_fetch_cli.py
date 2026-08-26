@@ -367,6 +367,36 @@ def test_a_run_with_no_config_file_can_still_reach_the_s3_bucket_at_speed(tmp_pa
         {"pmc-oa-opendata.s3.amazonaws.com": 0.2}, "and it reaches the client"
 
 
+def test_a_run_with_no_config_file_still_fetches_only_what_text_comes_out_of(tmp_path):
+    """This key decides which files a corpus holds, so the shipped `config.yaml` and
+    the built-in defaults must not disagree -- and nothing else compares the two.
+
+    Three places state the default and all three are pinned here: `config.yaml` for a
+    run that finds it, `DEFAULT_FETCH_CONFIG` for a run that does not (`--config`
+    resolves against the working directory, and `pyproject.toml` packages only
+    `manuscript_harvest*`, so an installed `manuscript-fetch` finds none), and
+    `text_bearing.policy_is_on` for a `fetch` mapping that never passed through
+    either.
+    """
+    from pathlib import Path
+
+    import yaml
+
+    from manuscript_harvest import text_bearing
+
+    assert cli.DEFAULT_FETCH_CONFIG["text_bearing_only"] is True
+    assert cli.load_config(tmp_path / "nonexistent.yaml")["fetch"][
+        "text_bearing_only"] is True
+    shipped = yaml.safe_load(
+        (Path(__file__).resolve().parent.parent / "config.yaml").read_text())
+    assert shipped["fetch"]["text_bearing_only"] is True
+    assert text_bearing.policy_is_on({}) is True
+
+    # And one key turns it off, all the way through to the tier.
+    off = cli.load_config(_config_file(tmp_path, text_bearing_only=False))["fetch"]
+    assert text_bearing.policy_is_on(off) is False
+
+
 def test_a_users_own_overrides_are_added_to_the_default_not_swapped_for_it(tmp_path):
     """`merge_config` recurses into dicts, which is what makes naming one more host
     a one-line change; the same recursion means the shipped entry cannot be removed

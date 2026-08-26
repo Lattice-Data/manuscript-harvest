@@ -30,6 +30,17 @@ The check that justifies the whole exercise is `supplementary_status`. No
 synthetic fixture can catch a *silent* false negative -- an article that really
 has supplements, that fetch comes away from with none, reported as `none_listed`
 rather than `expected_but_missing`. Only ground truth knows the difference.
+
+`manual_fetch.yaml` records what a *publisher* offers, which since
+`fetch.text_bearing_only` is no longer the same set as what a fetch takes: a figure
+or a movie saved by hand is refused by policy, reported here rather than failed (see
+`compare`), and an `expect.supplementary_status` for a deposit whose supplements are
+all media is now `none_text_bearing`. Neither claim in the spec file changes --
+the human really did find those files -- and that is the point of keeping it.
+
+As it happens no expectation here moves: of the 47 supplements the eight papers
+record, `text_bearing.skip_reason` refuses none. So the policy costs this harness no
+strictness today, and the allowance above is for the ground truth it gains next.
 """
 
 import argparse
@@ -44,6 +55,7 @@ from typing import Dict, List, Optional, Tuple
 
 import yaml
 
+from .. import text_bearing
 from . import store
 from .identifiers import doi_slug, normalize_doi
 
@@ -493,11 +505,28 @@ def compare(article: dict, record: dict, directory, root=None) -> List[dict]:
     spec_supplements = article.get("supplements") or []
     universe = hash_universe(fetched_supplement_paths(directory))
 
-    missing = [entry for entry in spec_supplements if not _found(entry, universe)]
+    absent = [entry for entry in spec_supplements if not _found(entry, universe)]
+    # A hand-fetched file the fetch stage was never going to take is not a miss. With
+    # `fetch.text_bearing_only` on -- the default -- a figure or a movie the human
+    # saved is refused by policy, and the manifest names it in a `text_bearing_filter`
+    # attempt. Failing on those would make this harness red for every illustrated
+    # paper in the ground truth and say nothing about the fetcher.
+    #
+    # Judged on the manual filename, using the same predicate the fetch stage used,
+    # rather than by matching names against the skip notes: browsers rename downloads
+    # and a tier records the name it saw (an S3 key, a zip member, an href), so the
+    # two lists do not line up -- which is why every other comparison here is by hash.
+    # The cost is that a genuinely lost figure now reports rather than fails even on a
+    # `text_bearing_only: false` run. That is the one file type this pipeline has
+    # decided it does not read.
+    refused = [e for e in absent if text_bearing.skip_reason(e["file"]) is not None]
+    missing = [e for e in absent if e not in refused]
     checks.append(_check(
         "supplements_matched", not missing,
-        f"{len(spec_supplements) - len(missing)}/{len(spec_supplements)} manual files accounted for"
-        + (f"; missing {', '.join(e['file'] for e in missing)}" if missing else ""),
+        f"{len(spec_supplements) - len(absent)}/{len(spec_supplements)} manual files accounted for"
+        + (f"; missing {', '.join(e['file'] for e in missing)}" if missing else "")
+        + (f"; {len(refused)} refused by fetch.text_bearing_only "
+           f"({', '.join(e['file'] for e in refused[:6])})" if refused else ""),
     ))
 
     # Extra files are reported, never failed. Fetch legitimately collects things a

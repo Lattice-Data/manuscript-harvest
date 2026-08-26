@@ -36,9 +36,11 @@ import tarfile
 from typing import List, Optional, Tuple
 from xml.etree import ElementTree
 
+from ... import text_bearing
 from ..http import HttpError
 from ..validate import validate_pdf
 from .base import (
+    ON_UNPACK,
     ROLE_MEDIA,
     ROLE_PDF,
     ROLE_SUPPLEMENT,
@@ -202,11 +204,23 @@ class PmcOaSource(Source):
             return
 
         try:
-            members = _unpack_tgz(resp.content, self.max_files, self.max_file_bytes)
+            members, skipped = _unpack_tgz(resp.content, self.max_files,
+                                           self.max_file_bytes,
+                                           text_bearing_only=self.text_bearing_only)
         except (tarfile.TarError, ValueError, EOFError) as e:
             result.problems.append(f"pmc oa package unreadable: {e}")
             result.note("package", url=url, status="unreadable_archive", error=str(e))
             return
+
+        # `on_unpack`: the tarball arrives as one blob, so the transfer is already
+        # paid. Each refused name is put through `supplement_or_media` -- the same
+        # policy that would have decided its directory -- so that a refused article
+        # figure is recorded as one and cannot be counted against the supplements by
+        # `fetcher._supplement_status`.
+        self.record_not_text_bearing(
+            result,
+            [(name, supplement_or_media(name), reason) for name, reason in skipped],
+            where=ON_UNPACK)
 
         supplements, media, xml_member, pdf_member = _classify(members)
 
@@ -248,21 +262,44 @@ class PmcOaSource(Source):
             status="unpacked",
             supplements=len(supplements),
             media=len(media),
+            not_text_bearing=len(skipped),
             has_xml=xml_member is not None,
         )
 
 
-def _unpack_tgz(content: bytes, max_files: int, max_file_bytes: int) -> List[Tuple[str, bytes]]:
-    """Return [(basename, bytes)] for regular files in a .tar.gz.
+def _unpack_tgz(content: bytes, max_files: int, max_file_bytes: int,
+                text_bearing_only: bool = True):
+    """Return `([(basename, bytes)], [(basename, reason)])` for a .tar.gz's files.
 
     Only regular files are read, and only their basenames are kept, so neither an
     absolute path, a `..` traversal, nor a symlink member can write outside the
     corpus directory.
+
+    The second list is what `text_bearing_only` refused, decided on the basename --
+    the name the rest of the pipeline would have seen -- and before
+    `handle.read()`, so a figure is never decompressed. A package holds the
+    article's own figure images as well as its supplements, which is why this is
+    the archive where the filter drops the most: `_classify` below has sorted them
+    into `media/` since it was written, and with the policy on there is nothing
+    left to sort.
     """
     out: List[Tuple[str, bytes]] = []
+    skipped: List[Tuple[str, str]] = []
     with tarfile.open(fileobj=io.BytesIO(content), mode="r:gz") as archive:
         for member in archive:
             if not member.isfile():
+                continue
+            name = member.name.replace("\\", "/").rsplit("/", 1)[-1]
+            if not name:
+                continue
+            # Ahead of the size check, as in `europepmc._unpack_zip`: an oversize
+            # member raises and costs the whole package, which is worth doing for a
+            # table a bigger cap would get and not for a video that will never be
+            # read. The basename check moved up with it, since the name is what both
+            # tests read.
+            reason = text_bearing.skip_reason(name) if text_bearing_only else None
+            if reason is not None:
+                skipped.append((name, reason))
                 continue
             if member.size > max_file_bytes:
                 raise ValueError(
@@ -272,13 +309,10 @@ def _unpack_tgz(content: bytes, max_files: int, max_file_bytes: int) -> List[Tup
             handle = archive.extractfile(member)
             if handle is None:
                 continue
-            name = member.name.replace("\\", "/").rsplit("/", 1)[-1]
-            if not name:
-                continue
             out.append((name, handle.read()))
             if len(out) >= max_files:
                 break
-    return out
+    return out, skipped
 
 
 def _classify(members: List[Tuple[str, bytes]]):

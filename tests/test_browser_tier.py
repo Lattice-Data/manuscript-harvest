@@ -401,6 +401,70 @@ def test_cookies_are_never_cleared():
     assert context.cleared_domains == []
 
 
+def test_a_figure_anchor_costs_neither_a_request_nor_a_cap_slot():
+    """`fetch.text_bearing_only`, applied to the only name available before the
+    request: the anchor's href. This tier pays twice for a file it fetches -- a HEAD
+    for the Content-Length pre-flight and the body itself -- and a JavaScript
+    challenge can cost a page load on top, so refusing the figure early is worth more
+    here than in any tier that reads a listing.
+
+    Ahead of `apply_files_cap` as well, so the cap's slots go to files something
+    downstream can read.
+    """
+    source = _source(max_files=2)
+    result = SourceResult(tier="proxy_browser")
+    context = FakeContext(request=FakeRequest({
+        "mmc": FakeResponse(200, b"bytes", {"content-type": "application/pdf"})}))
+    links = [{"url": "https://x/fig1.jpg", "label": "Figure 1"},
+             {"url": "https://x/movie-s1.mp4", "label": None},
+             {"url": "https://x/mmc1.pdf", "label": None}]
+
+    fetched, attempted = source._download_all(context, links, "https://x", result, "test")
+
+    assert (fetched, attempted) == (1, 1), "only the PDF was ever attempted"
+    assert context.request.gets == ["https://x/mmc1.pdf"]
+    assert context.request.heads == ["https://x/mmc1.pdf"]
+    assert not result.problems, "a refusal is not a loss, and the cap was never reached"
+    note = next(a for a in result.attempts if a["action"] == "text_bearing_filter")
+    assert note["files"] == ["https://x/fig1.jpg", "https://x/movie-s1.mp4"]
+    assert note["reasons"] == {"image": 1, "audio_video": 1}
+    assert note["via"] == "test" and note["where"] == "before_download"
+
+
+def test_an_extensionless_href_is_still_attempted():
+    """The predicate's default, and it is load-bearing for this tier specifically:
+    ClinicalKey serves all twelve supplements of 10.1016/j.xgen.2026.101304 from
+    `/ui/service/content/url`, so judging the href would refuse every one of them.
+    The real name arrives in `Content-Disposition`, and
+    `fetcher.fetch_publication` re-asks the question then."""
+    source = _source()
+    result = SourceResult(tier="proxy_browser")
+    context = FakeContext(request=FakeRequest({
+        "url": FakeResponse(200, b"%PDF bytes", {"content-type": "application/pdf"})}))
+    links = [{"url": "https://ck.example/ui/service/content/url?path=%2Fmmc1.pdf",
+              "label": None}]
+
+    fetched, attempted = source._download_all(context, links, "https://x", result, "test")
+
+    assert (fetched, attempted) == (1, 1)
+    assert not [a for a in result.attempts if a["action"] == "text_bearing_filter"]
+
+
+def test_fetching_everything_attempts_the_figure_again():
+    """`text_bearing_only: false` is this tier's behaviour before the key existed."""
+    source = _source(text_bearing_only=False)
+    result = SourceResult(tier="proxy_browser")
+    context = FakeContext(request=FakeRequest({
+        "fig1": FakeResponse(200, b"\xff\xd8fig", {"content-type": "image/jpeg"})}))
+
+    fetched, attempted = source._download_all(
+        context, [{"url": "https://x/fig1.jpg", "label": None}], "https://x", result,
+        "test")
+
+    assert (fetched, attempted) == (1, 1)
+    assert context.request.gets == ["https://x/fig1.jpg"]
+
+
 def test_max_files_cap_is_recorded_not_silent():
     source = _source(max_files=2)
     result = SourceResult(tier="proxy_browser")

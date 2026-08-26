@@ -16,6 +16,13 @@ So what these tests defend is mostly the *naming* of outcomes:
   the deposit's index. Both of those have tests for every way the bound can come
   off, because that is what turns the strongest word in the taxonomy into a lie.
 
+Since `fetch.text_bearing_only` landed, a tier's default is to refuse the files no
+text can be extracted from before spending the request. Tests whose subject is that
+refusal use the default; tests whose subject is an article *figure* -- the role
+split, the cap ordering, the role-aware verdict -- pass `EVERYTHING` below, because
+a figure is only fetched at all with the policy off. Both directions are the point:
+the second group is what makes `text_bearing_only: false` a promise.
+
 `test_units.py` covers the pure helpers these tiers call (`_classify`,
 `_unpack_tgz`, `ftp_to_https`); this file covers what the tier decides.
 """
@@ -43,6 +50,17 @@ from manuscript_harvest.fetch.sources.pmc_supplements import (
     _springer_url,
 )
 from manuscript_harvest.fetch.validate import PDF_DIAGNOSES, better_pdf_failure
+
+#: `fetch.text_bearing_only` is on by default, and it refuses every extension
+#: `pmc_oa.supplement_or_media` routes to `media/` -- they are all image extensions.
+#: So the tests below that assert on article figures at all have to say which run
+#: they are describing, and this is that run: the one that fetches everything, which
+#: is what this tool did before the policy existed. They keep their value twice over.
+#: The role split they pin is what makes the *filter* per-role -- a refused figure
+#: must not read as a missing supplement -- and pinning them here is what makes
+#: `text_bearing_only: false` a promise rather than a claim.
+EVERYTHING = {"text_bearing_only": False}
+
 from tests.fakes import (
     DOI,
     PAYWALL_HTML,
@@ -885,7 +903,7 @@ def test_unpacking_the_deposit_earns_plain_fetched():
     the deposit, so unpacking it bounds the set. Every scraping tier has to settle
     for `fetched_unverified`."""
     http = _oa_http({OA_TGZ: (200, _package(*PACKAGE_MEMBERS), "application/gzip")})
-    result = PmcOaSource(http, {"try_oa_package": True}).fetch(
+    result = PmcOaSource(http, {**EVERYTHING, "try_oa_package": True}).fetch(
         _pmc_ids(), need_pdf=False, need_supplements=True)
 
     assert result.suppl_status == "fetched"
@@ -971,7 +989,7 @@ def test_a_package_holding_only_figures_claims_no_supplements():
     http = _oa_http({OA_TGZ: (200, _package((f"{PMCID}/f1.jpg", b"\xff\xd8one"),
                                             (f"{PMCID}/f2.png", b"\x89PNGtwo")),
                               "application/gzip")})
-    result = PmcOaSource(http, {"try_oa_package": True}).fetch(
+    result = PmcOaSource(http, {**EVERYTHING, "try_oa_package": True}).fetch(
         _pmc_ids(), need_pdf=False, need_supplements=True)
 
     assert result.suppl_status is None
@@ -1114,7 +1132,8 @@ def test_the_deposit_is_split_by_name_not_by_file_type():
     supplementary material and the other is one of the article's own figures, which
     is why `pmc_oa.supplement_or_media` tests the markers before the extension."""
     http = _s3_http()
-    result = PmcS3Source(http).fetch(_pmc_ids(), need_pdf=True, need_supplements=True)
+    result = PmcS3Source(http, EVERYTHING).fetch(
+        _pmc_ids(), need_pdf=True, need_supplements=True)
 
     assert [f.name for f in result.by_role("supplement")] == [
         "NIHMS1758707-supplement-1.jpg", "NIHMS1758707-supplement-10.xlsx"]
@@ -1271,7 +1290,7 @@ def test_the_cap_is_spent_on_supplements_before_article_figures():
     tables = [(f"{V1}/{stem}_MOESM{n}_ESM.xlsx", 100) for n in range(3, 7)]
     # The bucket's own order: 'F' sorts before 'M'.
     http = _s3_http(deposit=figures + tables)
-    result = PmcS3Source(http, {"max_files": 4}).fetch(
+    result = PmcS3Source(http, {**EVERYTHING, "max_files": 4}).fetch(
         _pmc_ids(), need_pdf=False, need_supplements=True)
 
     assert [f.name for f in result.by_role("supplement")] == \
@@ -1284,6 +1303,42 @@ def test_the_cap_is_spent_on_supplements_before_article_figures():
     assert _statuses(result, "cap") == ["truncated_media"]
 
 
+def test_a_refused_figure_never_spends_a_cap_slot_a_table_needed():
+    """`keep_text_bearing` runs *before* `apply_files_cap`, always -- and this is the
+    tier where that ordering was measured.
+
+    The displacement above is the same one, one policy earlier: PMC10232368 lost 8
+    supplementary tables, two of them over 9 MB, to 8 JPEGs of its own figures. The
+    cap is a *request* budget, so spending a slot on a file that is then refused is
+    the same trade down with an extra step, and `_ESM.jpg` names make it worse than
+    the `media/` case -- `supplement_or_media` classifies those as supplements, so a
+    figure refused after the cap has taken a slot from a table *and* leaves
+    `dropped_supplements` set, which lands the article on `partial_failure`. That is
+    outside `store.SUPPL_SETTLED`, so every later batch re-lists the deposit and
+    re-loses the same tables.
+
+    A cap this small is what makes the ordering visible at all: every other
+    text-bearing test here runs at the shipped `max_files: 50` over four files, where
+    both orders give the same answer.
+    """
+    stem = "41590_2023_1504"
+    figures = [(f"{V1}/{stem}_Fig{n}_ESM.jpg", 100) for n in range(1, 3)]
+    tables = [(f"{V1}/{stem}_MOESM{n}_ESM.xlsx", 100) for n in range(3, 5)]
+    http = _s3_http(deposit=figures + tables)
+    result = PmcS3Source(http, {"max_files": 2}).fetch(
+        _pmc_ids(), need_pdf=False, need_supplements=True)
+
+    assert [f.name for f in result.by_role("supplement")] == \
+        [f"{stem}_MOESM{n}_ESM.xlsx" for n in range(3, 5)], \
+        "the cap's slots went to the files something downstream can read"
+    assert result.suppl_status == "fetched"
+    assert result.suppl_status in store.SUPPL_SETTLED, "or every batch re-lists it"
+    assert not any("not fetched" in p for p in result.problems), \
+        "nothing was dropped by the cap: the JPEGs never entered it"
+    assert _statuses(result, "cap") == [], "and no cap note either"
+    assert len(http.calls) == 1 + 2
+
+
 def test_a_lost_article_figure_does_not_demote_the_supplement_verdict():
     """`suppl_status` is a sentence about supplementary material. Counting a lost
     figure against it reported `partial_failure` over a supplement set that arrived
@@ -1293,7 +1348,8 @@ def test_a_lost_article_figure_does_not_demote_the_supplement_verdict():
     deposit = [(f"{V1}/NIHMS1758707-supplement-1.xlsx", 100),
                (f"{V1}/nihms-1758707-f0001.jpg", 100)]
     http = _s3_http(deposit=deposit, routes={"f0001.jpg": (500, b"", "")})
-    result = PmcS3Source(http).fetch(_pmc_ids(), need_pdf=False, need_supplements=True)
+    result = PmcS3Source(http, EVERYTHING).fetch(
+        _pmc_ids(), need_pdf=False, need_supplements=True)
 
     assert [f.name for f in result.by_role("supplement")] == \
         ["NIHMS1758707-supplement-1.xlsx"]
@@ -1311,7 +1367,7 @@ def test_an_oversize_article_figure_costs_the_verdict_nothing_either():
     deposit = [(f"{V1}/NIHMS1758707-supplement-1.xlsx", 100),
                (f"{V1}/nihms-1758707-f0001.tif", 900 * 1024 ** 2)]
     http = _s3_http(deposit=deposit)
-    result = PmcS3Source(http, {"max_file_mb": 200}).fetch(
+    result = PmcS3Source(http, {**EVERYTHING, "max_file_mb": 200}).fetch(
         _pmc_ids(), need_pdf=False, need_supplements=True)
 
     assert http.called_matching("f0001.tif") == 0
@@ -1336,6 +1392,35 @@ def test_a_listing_that_stops_half_way_cannot_earn_fetched():
     assert [f.name for f in result.by_role("supplement")] == ["supplement-1.xlsx"]
     assert result.suppl_status == "partial_failure"
     assert any("page 2 returned HTTP 503" in p for p in result.problems)
+
+
+def test_a_listing_that_stops_half_way_says_so_even_with_nothing_kept():
+    """The same rule where the text-bearing filter emptied the payload instead.
+
+    `complete` is what licenses this tier's `fetched`, and the `if not kept` branch
+    used to be the one place that never asked: silence there was safe while `kept == 0`
+    meant "no key in the deposit looked like a supplement at all", because every word
+    the fetcher then reached was unsettled and the article came back next batch. With
+    the filter on, `kept == 0` is also what a deposit of figures produces -- and the
+    fetcher's word for that is `none_text_bearing`, which is settled. So a truncated
+    listing whose read page happened to hold only figures would freeze `complete` over
+    a continuation page nobody read, and `partial_failure` is what stops it. The
+    fetcher cannot: no field on a `SourceResult` carries `complete`.
+    """
+    pages = {None: s3_listing((f"{V1}/{V1}.pdf", 100),
+                              (f"{V1}/NIHMS1758707-supplement-1.jpg", 100),
+                              token="tok"),
+             "tok": (503, b"", "")}
+    http = _s3_http(pages=pages)
+    result = PmcS3Source(http).fetch(_pmc_ids(), need_pdf=False, need_supplements=True)
+
+    assert result.by_role("supplement") == [], "the JPEG was refused, as it should be"
+    assert http.called_matching("supplement-1.jpg") == 0
+    assert result.suppl_status == "partial_failure"
+    assert any("page 2 returned HTTP 503" in p for p in result.problems)
+    note = next(a for a in result.attempts if a["action"] == "supplements")
+    assert (note["not_text_bearing"], note["complete_listing"]) == (1, False), \
+        "both halves of the reason are in the record"
 
 
 def test_a_listing_that_stops_half_way_hands_over_no_article_files_either():
@@ -1421,7 +1506,7 @@ def test_a_deposit_of_nothing_but_figures_claims_no_supplements():
     about what the publisher deposited -- the fetcher weighs the silence against
     `hasSuppl` instead."""
     deposit = [(f"{V1}/f0001.jpg", 100), (f"{V1}/f0002.png", 100)]
-    result = PmcS3Source(_s3_http(deposit=deposit)).fetch(
+    result = PmcS3Source(_s3_http(deposit=deposit), EVERYTHING).fetch(
         _pmc_ids(), need_pdf=False, need_supplements=True)
 
     assert result.suppl_status is None
@@ -2139,3 +2224,195 @@ def test_a_request_that_did_not_move_records_no_final_url():
 
     attempt = [a for a in result.attempts if a["action"] == "pdf"][0]
     assert "final_url" not in attempt
+
+
+# -- refusing what no text can come out of, tier by tier ---------------------
+#
+# `fetch.text_bearing_only` is applied twice on purpose: centrally in
+# `fetcher.fetch_publication` as the guarantee, and again in each tier that knows a
+# filename before it spends the request. These are the second half -- and the
+# assertion that carries them is `called_matching(...) == 0`, because a refusal that
+# still costs the request saves only disk, and disk is not what this is for. The
+# archive tiers cannot do that (one blob, one transfer) and are tested for the other
+# saving: the member is never decompressed, written or recorded as a file. "Never
+# decompressed" is the one claim a tier test cannot make -- it is not in the return
+# value -- so it is pinned against `_unpack_zip` and `_unpack_tgz` directly in
+# `tests/test_units.py`, together with the ordering that keeps a refused member out
+# of the `max_files` count.
+
+
+def test_pmc_s3_refuses_a_figure_from_the_listing_alone():
+    """The tier that pays most for this. It spends one request per object, and the
+    listing names every one of them, so an illustrated article's figures cost nothing
+    at all -- not a request, not a cap slot, not a manifest entry."""
+    deposit = [(f"{V1}/NIHMS1758707-supplement-1.xlsx", 100),
+               (f"{V1}/NIHMS1758707-supplement-2.jpg", 100),
+               (f"{V1}/nihms-1758707-f0001.jpg", 100)]
+    http = _s3_http(deposit=deposit)
+
+    result = PmcS3Source(http).fetch(_pmc_ids(), need_pdf=False, need_supplements=True)
+
+    assert [f.name for f in result.by_role("supplement")] == \
+        ["NIHMS1758707-supplement-1.xlsx"]
+    assert result.by_role("media") == []
+    assert http.called_matching("supplement-2.jpg") == 0
+    assert http.called_matching("f0001.jpg") == 0
+    assert len(http.calls) == 1 + 1, "the listing, then the one file worth fetching"
+    assert result.suppl_status == "fetched", \
+        "the deposit was enumerated and every readable file in it arrived"
+    assert [(s["name"], s["role"], s["reason"]) for s in result.skipped_not_text_bearing] \
+        == [("NIHMS1758707-supplement-2.jpg", "supplement", "image"),
+            ("nihms-1758707-f0001.jpg", "media", "image")]
+
+
+def test_pmc_s3_leaves_an_all_figure_deposit_for_the_fetcher_to_name():
+    """No status at all, which is the same silence a figures-only deposit already
+    produced. Naming it here would be this tier claiming something about supplementary
+    material; `fetcher._supplement_status` is the one place that sees every tier's
+    refusals at once, and it calls this `none_text_bearing`."""
+    deposit = [(f"{V1}/NIHMS1758707-supplement-{n}.jpg", 100) for n in (1, 2)]
+    http = _s3_http(deposit=deposit)
+
+    result = PmcS3Source(http).fetch(_pmc_ids(), need_pdf=False, need_supplements=True)
+
+    assert result.suppl_status is None and result.files == []
+    assert len(result.skipped_not_text_bearing) == 2
+    note = next(a for a in result.attempts if a["action"] == "supplements")
+    assert note["status"] == "none"
+
+
+def test_pmc_supplements_never_asks_for_a_figure():
+    """Worth more here than anywhere else: every `/bin/` URL this tier falls back to
+    costs a proof-of-work page it cannot clear, so an article of figures spent a wall
+    of requests to earn a wall of 403s."""
+    http = _pmc_http(None, MOESM1, "41586_2021_3852_Fig1_HTML.jpg")
+
+    result = PmcSupplementsSource(http).fetch(
+        _pmc_ids(), need_pdf=False, need_supplements=True)
+
+    assert [f.name for f in result.files] == [MOESM1]
+    assert http.called_matching("Fig1_HTML.jpg") == 0
+    assert result.suppl_status == "fetched_unverified"
+    note = next(a for a in result.attempts if a["action"] == "text_bearing_filter")
+    assert note["files"] == ["41586_2021_3852_Fig1_HTML.jpg"]
+    assert note["where"] == "before_download"
+
+
+def test_a_pmc_page_listing_only_figures_is_not_none_listed():
+    """PMC listed files and we declined them, which is not the same statement as the
+    publisher having none. `none_listed` there would be a false absence over a page
+    that told us exactly what it holds."""
+    http = _pmc_http(None, "fig1.jpg", "fig2.tif")
+
+    result = PmcSupplementsSource(http).fetch(
+        _pmc_ids(), need_pdf=False, need_supplements=True)
+
+    assert result.suppl_status is None and result.files == []
+    assert http.called_matching("/bin/") == 0
+    note = next(a for a in result.attempts if a["action"] == "supplements")
+    assert note["status"] == "none_text_bearing" and note["listed"] == 2
+
+
+def test_biorxiv_refuses_a_movie_from_the_anchor():
+    """`media-<n>` names the embed slot, not the file type: 10.1101/2025.07.21.666016
+    serves `media-1.pdf` and `media-2.zip` through it. So the extension decides, and
+    a `.mp4` in the same slot is never requested."""
+    http = _biorxiv_http({SUPPL_PAGE: (200, _supplement_page("media-1.pdf",
+                                                            "media-2.mp4"), "text/html")})
+
+    result = BiorxivSource(http).fetch(
+        _preprint_ids(), need_pdf=False, need_supplements=True)
+
+    assert [f.url.endswith("media-1.pdf") for f in result.files] == [True]
+    assert http.called_matching("media-2.mp4") == 0
+    assert result.suppl_status == "fetched_unverified"
+
+
+def test_a_biorxiv_page_of_nothing_but_movies_is_not_page_not_parsed():
+    """Two false words are available here and both had to be refused. The page parsed
+    perfectly, so `page_not_parsed` is wrong; bioRxiv is the authority on its own
+    preprint's supplements and it listed two, so the `none_listed` branch above the
+    filter is wrong too -- which is why the filter runs after it."""
+    http = _biorxiv_http({SUPPL_PAGE: (200, _supplement_page("media-1.mp4",
+                                                            "media-2.mov"), "text/html")})
+
+    result = BiorxivSource(http).fetch(
+        _preprint_ids(), need_pdf=False, need_supplements=True)
+
+    assert result.suppl_status is None and result.files == []
+    assert http.called_matching("/embed/media-") == 0
+    note = [a for a in result.attempts if a["action"] == "supplements"][-1]
+    assert note["status"] == "none_text_bearing" and note["found"] == 2
+
+
+def test_the_europepmc_zip_is_filtered_on_unpack_not_on_the_wire():
+    """One request, one ZIP: the transfer is paid before any member has a name, so
+    there is no request to save. What the filter saves is the disk write, the manifest
+    entry and an extraction record whose only content would be `image_no_text` -- and
+    the member is never decompressed, which matters for the 487.8 MB supplement this
+    corpus holds. That last part is invisible from here and is pinned in
+    `tests/test_units.py::test_a_refused_zip_member_is_never_read_and_never_spends_a_cap_slot`."""
+    http = _epmc_http({EPMC_SUPPL: (200, make_zip([("a_MOESM1_ESM.xlsx", b"xlsx"),
+                                                   ("a_MOESM2_ESM.jpg", b"\xff\xd8fig"),
+                                                   ("movie1.mp4", b"\x00\x00\x00 ftyp")]),
+                                    "application/zip")})
+
+    result = EuropePmcSource(http).fetch(
+        _epmc_ids(), need_pdf=False, need_supplements=True)
+
+    assert [f.name for f in result.files] == ["a_MOESM1_ESM.xlsx"]
+    assert result.suppl_status == "fetched", "the member list still bounded the set"
+    note = next(a for a in result.attempts if a["action"] == "text_bearing_filter")
+    assert note["where"] == "on_unpack"
+    assert note["files"] == ["a_MOESM2_ESM.jpg", "movie1.mp4"]
+    assert note["roles"] == {"supplement": 2}, \
+        "every ZIP member is a supplement here; `_unpack_zip` makes no media split"
+
+
+def test_an_archive_of_nothing_but_figures_is_not_an_empty_zip():
+    """`empty_zip` says the deposit is empty. This deposit has three files in it."""
+    http = _epmc_http({EPMC_SUPPL: (200, make_zip([("f1.jpg", b"\xff\xd8"),
+                                                   ("f2.png", b"\x89PNG"),
+                                                   ("f3.tif", b"II*\x00")]),
+                                    "application/zip")})
+
+    result = EuropePmcSource(http).fetch(
+        _epmc_ids(), need_pdf=False, need_supplements=True)
+
+    assert result.suppl_status is None and result.files == []
+    note = [a for a in result.attempts if a["action"] == "supplements"][-1]
+    assert note["status"] == "none_text_bearing" and note["not_text_bearing"] == 3
+
+
+def test_the_oa_package_figures_never_reach_disk_or_the_record():
+    """The archive where the filter drops the most: a package carries the article's
+    own figure images beside its supplements, so with the policy on `_classify` has
+    nothing left to sort into `media/`. Each refused name is still put through the
+    same `supplement_or_media` policy, so a figure is recorded as one."""
+    http = _oa_http({OA_TGZ: (200, _package(*PACKAGE_MEMBERS), "application/gzip")})
+
+    result = PmcOaSource(http, {"try_oa_package": True}).fetch(
+        _pmc_ids(), need_pdf=False, need_supplements=True)
+
+    assert [f.name for f in result.by_role("supplement")] == ["gkr715_supp_table_s1.xlsx"]
+    assert result.by_role("media") == []
+    assert result.suppl_status == "fetched"
+    note = next(a for a in result.attempts if a["action"] == "text_bearing_filter")
+    assert note["where"] == "on_unpack" and note["files"] == ["gkr715f1.jpg"]
+    assert note["roles"] == {"media": 1}, "an article figure, recorded as one"
+
+
+def test_fetching_everything_leaves_no_filter_and_no_note():
+    """`text_bearing_only: false` has to be this tool's behaviour before the key
+    existed -- not merely the same files, but the same requests and no note at all."""
+    deposit = [(f"{V1}/NIHMS1758707-supplement-1.jpg", 100)]
+    http = _s3_http(deposit=deposit)
+
+    result = PmcS3Source(http, EVERYTHING).fetch(
+        _pmc_ids(), need_pdf=False, need_supplements=True)
+
+    assert [f.name for f in result.by_role("supplement")] == \
+        ["NIHMS1758707-supplement-1.jpg"]
+    assert http.called_matching("supplement-1.jpg") == 1
+    assert result.skipped_not_text_bearing == []
+    assert not [a for a in result.attempts if a["action"] == "text_bearing_filter"]

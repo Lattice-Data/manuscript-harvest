@@ -30,6 +30,7 @@ from typing import Dict, List, Optional, Tuple
 
 from ..fetch import store
 from ..fetch.validate import IDENTITY_FAILURES
+from ..text_bearing import AUDIO_VIDEO_EXTENSIONS, IMAGE_EXTENSIONS
 from . import __version__, archive, docxfile, htmlfile, jats, pdf, spreadsheet
 from . import review, source_fingerprint
 from .blocks import (
@@ -111,6 +112,14 @@ CAVEATS = {
 #: Fetch verdicts that mean files were lost, not merely uncounted. `none_retrieved`
 #: belongs here: the README defines it as "a tier tried and every file it went
 #: after was lost".
+#:
+#: `none_text_bearing` deliberately belongs to neither this set nor the
+#: `fetched_unverified` branch below. Nothing was lost -- the fetch stage read the
+#: deposit, named every file and refused each one because no text can be extracted
+#: from it -- and nothing is unbounded either, so an empty `supplementary: []` under
+#: that status is the complete and correct extraction of this article. Adding it here
+#: would raise `supplements_expected_but_missing`, which blocks `complete`, over
+#: articles whose supplements are four figure JPEGs.
 _FETCH_SUPPLEMENTS_LOST = {"expected_but_missing", "partial_failure", "none_retrieved"}
 
 #: Caveats that stop an article being `complete`. `SUPPLEMENTS_UNVERIFIED` is
@@ -125,10 +134,14 @@ DELIMITED_EXTENSIONS = {".csv", ".tsv"}
 PLAIN_TEXT_EXTENSIONS = {".txt", ".md"}
 XML_EXTENSIONS = {".xml", ".nxml"}
 HTML_EXTENSIONS = {".html", ".htm"}
-IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".tif", ".tiff", ".bmp", ".eps",
-                    ".ps", ".svg", ".webp", ".ai"}
-MEDIA_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".wmv", ".mpg", ".mpeg", ".m4v",
-                    ".mp3", ".wav", ".flv"}
+# `IMAGE_EXTENSIONS` and `AUDIO_VIDEO_EXTENSIONS` are imported rather than listed
+# here, and the second is renamed on the way: those two sets are now the fetch
+# stage's refusal policy as well as this module's dispatch, so a second copy would
+# mean a file the fetcher declined to download and this module called readable.
+# `manuscript_harvest/text_bearing.py` carries the measurement and the argument. The
+# rename is because "media" was already two things -- audio and video here, the
+# article's own figures in `fetch/store.py`'s `media/` -- and that module is where
+# the two meet.
 DATA_EXTENSIONS = {".h5", ".h5ad", ".hdf5", ".loom", ".mtx", ".rds", ".rdata", ".npz",
                    ".npy", ".mat", ".sav", ".dta", ".bam", ".bai", ".cram", ".fastq",
                    ".fq", ".fa", ".fasta", ".bed", ".vcf", ".gtf", ".gff", ".bw",
@@ -144,8 +157,8 @@ TEXT_BEARING_EXTENSIONS = (
 
 #: Every extension the dispatcher recognises, for deciding when to sniff instead.
 KNOWN_EXTENSIONS = (
-    TEXT_BEARING_EXTENSIONS | IMAGE_EXTENSIONS | MEDIA_EXTENSIONS | DATA_EXTENSIONS
-    | COMPRESSED_EXTENSIONS | LEGACY_DOC_EXTENSIONS | {".zip"}
+    TEXT_BEARING_EXTENSIONS | IMAGE_EXTENSIONS | AUDIO_VIDEO_EXTENSIONS
+    | DATA_EXTENSIONS | COMPRESSED_EXTENSIONS | LEGACY_DOC_EXTENSIONS | {".zip"}
 )
 
 #: Content-Type is only consulted after the magic bytes have nothing to say.
@@ -392,7 +405,7 @@ def extract_bytes(
         if extension in IMAGE_EXTENSIONS:
             return result(IMAGE_NO_TEXT, note="figure image; no extractable text "
                                               "(a vision pass would be needed)")
-        if extension in MEDIA_EXTENSIONS:
+        if extension in AUDIO_VIDEO_EXTENSIONS:
             return result(MEDIA_NO_TEXT, note="audio or video")
         if extension in DATA_EXTENSIONS:
             return result(DATA_SKIPPED, note="binary or columnar data file, not prose")
@@ -471,7 +484,7 @@ def _extract_zip(data: bytes, relative_path: str, limits: Limits, role: str,
         blocks.extend(inner.blocks)
 
     census = meta.get("member_extensions") or {}
-    imagey = {e for e in census if e in IMAGE_EXTENSIONS | MEDIA_EXTENSIONS}
+    imagey = {e for e in census if e in IMAGE_EXTENSIONS | AUDIO_VIDEO_EXTENSIONS}
     note = meta.get("reason")
 
     if OK in statuses:
@@ -923,11 +936,27 @@ def extract_article(article_dir, limits: Optional[Limits] = None, force: bool = 
     results: List[FileResult] = [main_result]
 
     entries_without_path = 0
+    policy_removed: List[str] = []
     shared_labels = _shared_manifest_labels(record)
     shared_jats = _shared_jats_labels(record, labels)
     for entry in record.get("supplementary") or []:
         path = entry.get("path")
         if not path:
+            # Two different facts arrive here as the same shape, and only the marker
+            # tells them apart. `manuscript-fetch drop-media` deletes a stored figure
+            # and rewrites its entry to `name`/`bytes`/`sha256` plus a removal
+            # marker, deliberately without a `path`
+            # (`store.mark_entry_removed` explains why -- a path over a deleted file
+            # makes the article incomplete forever). Counting those into
+            # `entries_without_path` would raise MANIFEST_ENTRY_WITHOUT_PATH, whose
+            # text is "a supplementary entry in the manifest has no file on disk to
+            # read", on the 138 articles in this corpus that are correct: a caveat
+            # meaning "this manifest is malformed" would come to mean "this manifest
+            # is either malformed or perfectly fine", and stop being worth reading.
+            if store.entry_removed_by_policy(entry):
+                policy_removed.append(entry.get("name") or entry.get("original_name")
+                                      or "?")
+                continue
             entries_without_path += 1
             continue
         matched = next((labels[name] for name in _supplement_key(entry) if name in labels),
@@ -1015,6 +1044,16 @@ def extract_article(article_dir, limits: Optional[Limits] = None, force: bool = 
         caveats.append(MAIN_TEXT_NOT_THE_ARTICLE)
     if entries_without_path:
         caveats.append(MANIFEST_ENTRY_WITHOUT_PATH)
+    # And no caveat of its own for `policy_removed`, which was the other option.
+    # A caveat is for something true about an *extraction* that its statuses do not
+    # already say, and a policy removal is true about nothing here: every file
+    # `drop-media` takes is one this module would have dispatched to
+    # `image_no_text` or `media_no_text` -- the same two extension sets, imported
+    # from `text_bearing` precisely so that cannot drift -- both of which are in
+    # `_BENIGN` and produce no block, no table and no character. Extract the article
+    # before and after the sweep and `blocks.jsonl` is byte-identical. So the count
+    # goes in the record below, where a reader can see the files are gone and why,
+    # and the caveat vocabulary keeps meaning "read this extraction with care".
 
     if main_usable and not blocking \
             and not _BLOCKING_CAVEATS & set(caveats):
@@ -1049,6 +1088,12 @@ def extract_article(article_dir, limits: Optional[Limits] = None, force: bool = 
             "sections": sorted({b.section for b in all_blocks if b.section}),
         },
         "unextracted_text_files": text_bearing_failures,
+        # Files the fetch stage stored and `drop-media` later deleted under
+        # `fetch.text_bearing_only`. Listed, not merely counted: it is the one place
+        # an extraction says out loud that the article's supplement set on disk is
+        # smaller than the set the manifest describes, and every name here is a file
+        # this run would have reported as `image_no_text` or `media_no_text`.
+        "removed_not_text_bearing": policy_removed,
         "unreachable_content": unreachable_content,
         "cleared_by_review": cleared_by_review,
         "supplement_label_rejected": sorted(shared_labels | shared_jats),
