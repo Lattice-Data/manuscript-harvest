@@ -529,8 +529,11 @@ def test_the_non_zip_archives_still_read():
     real name in the gzip header.
 
     `too_large` is a pass, not a failure: 68, 128 and 329 MB of decompressed TSV
-    against a 50 MB `max_member_mb`. What must not happen is `unsupported_format`,
-    which is what all six said before and which claims there is no parser.
+    against `max_member_mb`, which is 200 MB now and was 50 MB when this was
+    written -- so two of those three are read today and the numbers are kept
+    because they are what the shapes are, not what the verdicts are. What must not
+    happen is `unsupported_format`, which is what all six said before and which
+    claims there is no parser.
     """
     paths = [p for p in sorted(CORPUS.rglob("*"))
              if p.is_file() and p.suffix.lower() in extractor.COMPRESSED_EXTENSIONS]

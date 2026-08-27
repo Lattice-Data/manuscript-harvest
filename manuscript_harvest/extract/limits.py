@@ -63,9 +63,24 @@ class Limits:
     max_archive_members: int = 25
     """Files read out of one zip. A supplementary archive holding more than this is
     a dataset rather than a set of tables, and the overflow is recorded."""
-    max_member_mb: int = 50
+    max_member_mb: int = 200
     """Per file inside a zip, separate from `max_file_mb` for the archive itself:
-    one 500 MB member should not be read because its container was small."""
+    one 500 MB member should not be read because its container was small.
+
+    The guard is about a member *disproportionate* to its archive, and at 50 MB it
+    had started catching proportionate ones. Measured over this corpus, nine
+    archive members over 50 MB are text-bearing and every one is a labelled
+    supplementary table -- `Supplementary Table 2 - Metatable of nuclei.tsv` at
+    133 MB, `Figure 1 - Source Data 2.csv` at 159 MB -- for 2.64 GB across six
+    articles, read as `no_text` with `members_read: 0`. 200 MB reads six of the
+    nine, which is every member under half a gigabyte.
+
+    It is not raised further because this is a *memory* cap, not an I/O one:
+    `archive.py` collects members as `List[Tuple[str, bytes]]`, so the value is the
+    peak bytes held for one member. The three still refused are 408 MB, 595 MB and
+    1.09 GB, which is the disproportion the cap was written for, and each stays in
+    the record by name, label and caption. Reaching those wants streaming rather
+    than a bigger number."""
     max_archive_depth: int = 2
     """Three of this corpus's zips contain only more zips, so one level of
     nesting has to be followed or those supplements read as empty."""
