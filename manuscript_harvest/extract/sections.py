@@ -198,7 +198,21 @@ def _leading_patterns() -> List[Tuple[str, re.Pattern]]:
         # Wucherpfennig...` on page 83 of 10.1126/science.aat5031's supplement
         # could only split as heading `REFERENCES` and rest `AND NOTES 1. K. W.`,
         # leaving 19,265 characters of bibliography glued to the first citation.
-        out.append((name, re.compile(rf"^\s*(?i:{body})\b\s*[:.]?\s+(?=[A-Z0-9])")))
+        #
+        # `_HEADING_PREFIX` is here for the same reason it is in `_compiled()`, and
+        # its absence was a gap between the two: a heading that is *both* numbered
+        # and glued matched neither path. `_compiled()` needs the whole line, so
+        # `2. Materials and Methods 2.1. Study Population` fails its `$`; this
+        # function needed the alias at offset zero, so the leading `2. ` failed it
+        # too. Measured on 10.3390/genes15030298, an MDPI PDF that glues each
+        # section heading to its first subheading: `2. Materials and Methods ...`
+        # and `3. Results ...` both fell through, so every block from 2.1 to 3.4 --
+        # the entire Methods and Results, two thirds of the paper -- carried the
+        # `introduction` label from the heading before them. Coverage read 96%
+        # because the labels were all there and all wrong, which is the failure
+        # mode a coverage number cannot see.
+        out.append((name, re.compile(
+            rf"^\s*{_HEADING_PREFIX}(?i:{body})\b\s*[:.]?\s+(?=[A-Z0-9])")))
     return out
 
 
@@ -206,6 +220,48 @@ _LEADING = _leading_patterns()
 
 _MIN_GLUED_REMAINDER = 40
 """Below this the block is a heading with a stray word, not a glued paragraph."""
+
+
+_TRAILING_LINE_NUMBER = re.compile(r"\s+\d{1,4}\s*$")
+
+
+def strip_line_number(text: str) -> str:
+    """Drop the line number a line-numbered manuscript PDF puts on every line.
+
+    A manuscript submitted for review carries its own line numbering, and PyMuPDF
+    reads that number as the last word of the line: 10.21203/rs.3.rs-7535904_v2
+    yields `Discussion 361` and `Methods 606`, 10.1101/2022.05.18.492547 the same
+    shape. Both fell through every matcher here -- `normalize` anchors on `$` so
+    the trailing number breaks a full-line match, and `split_leading_heading` sees
+    a 3-character remainder and reads it as a stray word -- which is why those two
+    articles came out with 12% and 0% of their characters labelled and no `methods`
+    label anywhere.
+
+    Only ever applied to a *probe* copy of the text, and only for a document
+    `pdf._line_numbered` has already identified, never to the text that is stored.
+    That guard is the whole safety of it: the same regex over an ordinary PDF would
+    eat the `1` off `Extended Data Fig. 1` and the year off a citation. See the
+    threshold measurement on `pdf._line_numbered`.
+    """
+    return _TRAILING_LINE_NUMBER.sub("", text)
+
+
+#: `_CITATION` below, minus its numbered-entry rule: a parenthesised year, an
+#: `et al.`, a DOI. Kept separate rather than reusing `_CITATION` because the two
+#: questions differ by exactly that rule -- `SectionTracker.carry` wants to know
+#: whether a block is a reference, and a bare `12. Foo` is; `split_leading_heading`
+#: wants to know whether a *numbered* line is a reference rather than a heading, and
+#: there the numbering is the thing both shapes have in common.
+_CITATION_BESIDES_NUMBERING = re.compile(
+    r"\(\d{4}[a-z]?\)"
+    r"|\bet\s+al\b"
+    r"|\bdoi\s*:|doi\.org/",
+    re.IGNORECASE,
+)
+
+#: Does the heading that just matched owe the match to `_HEADING_PREFIX`? Only those
+#: are newly reachable, so only those need the citation guard above.
+_NUMBERED_HEADING = re.compile(r"^\s*(?:\d+(?:\.\d+)*|[IVXLC]+)\s*[.)]?\s")
 
 
 def split_leading_heading(text: str) -> Optional[Tuple[str, str, str]]:
@@ -227,7 +283,34 @@ def split_leading_heading(text: str) -> Optional[Tuple[str, str, str]]:
             continue
         heading = text[: match.end()].strip(" :.")
         rest = text[match.end():].strip()
-        if len(rest) < _MIN_GLUED_REMAINDER:
+        # Allowing `_HEADING_PREFIX` above widened this function onto reference-list
+        # entries, which begin with a number too: `3. Discussion Of Sampling Bias In
+        # Cohort Studies, Am J Epidemiol (2021).` would otherwise split as the
+        # heading `3. Discussion` and open that section over the bibliography, and a
+        # heading's section carries forward. `looks_like_citation` is not usable on
+        # its own here -- its numbered-entry rule matches the real MDPI headings
+        # this change exists for -- so the test is the *other* citation signals: a
+        # parenthesised year, an `et al.`, a DOI.
+        #
+        # Applied only where the numbering is what let the match through, and only
+        # off the reference list. Both halves are load-bearing. Restricting it to
+        # numbered headings leaves every split that worked before this change
+        # working exactly as it did; exempting `references` is what keeps
+        # `REFERENCES AND NOTES 1. K. W. Wucherpfennig, ... (2001).` splitting,
+        # where a citation after the heading is evidence *for* the split rather
+        # than against it, and where refusing costs 19,265 characters.
+        if (name != REFERENCES and _NUMBERED_HEADING.match(heading)
+                and _CITATION_BESIDES_NUMBERING.search(text)):
+            return None
+        # A short remainder is normally a heading with a stray word on the end, and
+        # splitting there would invent a paragraph out of nothing. The exception is
+        # a remainder that is itself a heading: MDPI glues a section heading to its
+        # first *subheading*, so 10.3390/genes15030298 carries
+        # `2. Materials and Methods 2.1. Study Population` -- 21 characters of
+        # remainder, under the bound, and every one of them a heading rather than a
+        # stray word. Refusing that split is what left the paper's Methods labelled
+        # `introduction`.
+        if len(rest) < _MIN_GLUED_REMAINDER and not looks_like_heading(rest):
             return None
         return name, heading, rest
     return None

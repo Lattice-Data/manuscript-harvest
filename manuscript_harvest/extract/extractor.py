@@ -202,6 +202,33 @@ KNOWN_EXTENSIONS = (
     | DATA_EXTENSIONS | COMPRESSED_EXTENSIONS | LEGACY_DOC_EXTENSIONS | {".zip"}
 )
 
+#: Extensions whose parsers decode the bytes as text, and so cannot survive being
+#: handed a binary container.
+#:
+#: These are the only extensions a *contradicting* magic number is allowed to
+#: override, and the narrowness is the point. Sniffing every known extension would
+#: be worse than sniffing none: an OLE2 container is legacy Excel and legacy Word at
+#: the same 8 bytes, so `sniff_extension` answers `.doc` for a real `.xls` whenever
+#: no Content-Type says otherwise, and a blanket override would route all 56 of this
+#: corpus's `.xls` files to `unsupported_format`. A text parser has no such
+#: ambiguity to lose: `PK\x03\x04` is not a CSV under any reading.
+#:
+#: Measured on two files, both from Nature and both named `.csv`:
+#: 10.1038/s41467-024-55440-2's MOESM10 is an `.xlsx` workbook -- two sheets and
+#: 45 KB of shared strings -- and 10.1038/s41467-020-19737-2's MOESM18 is a zip
+#: holding a 3.45 GB CSV. Both came out `unreadable` with
+#: "new-line character seen in unquoted field", which describes the csv reader's
+#: experience of a zip and tells a reader nothing about either file.
+SNIFF_OVERRIDES_EXTENSION = DELIMITED_EXTENSIONS | PLAIN_TEXT_EXTENSIONS
+
+#: Magic numbers that mean "container", i.e. the sniff is confident enough to
+#: contradict a name. Deliberately not every answer `sniff_extension` can give: it
+#: also guesses from Content-Type and from a leading `<`, and a publisher's
+#: Content-Type is exactly the thing `sniff_extension`'s own docstring says not to
+#: trust over the bytes.
+SNIFFED_CONTAINERS = frozenset({".zip", ".xlsx", ".xlsm", ".docx", ".pptx", ".xls",
+                                ".doc", ".pdf", ".gz", ".bz2", ".xz", ".tar"})
+
 #: Content-Type is only consulted after the magic bytes have nothing to say.
 _CONTENT_TYPES = {
     "application/pdf": ".pdf",
@@ -340,6 +367,11 @@ class FileResult:
                     "running_lines_dropped", "running_lines",
                     "tables_skipped", "tables_capped", "reopens_refused",
                     "label_source", "reference_list_dropped", "sniffed_as",
+                    # `mupdf_warnings` is what the C library had to say about the
+                    # file; it used to be printed on stdout and read by nobody.
+                    # `line_numbered` is why an article's section labels changed.
+                    "mupdf_warnings", "mupdf_warnings_total",
+                    "line_numbered", "named_extension",
                     "sections_from_review"):
             if key in self.meta:
                 record[key] = self.meta[key]
@@ -432,10 +464,18 @@ def extract_bytes(
     """
     extension = Path(relative_path).suffix.lower()
     sniffed = ""
+    contradicted = ""
     if extension not in KNOWN_EXTENSIONS:
         sniffed = sniff_extension(data, content_type)
         if sniffed:
             extension = sniffed
+    elif extension in SNIFF_OVERRIDES_EXTENSION:
+        # The name is one this dispatcher knows, and the bytes say it is wrong. Only
+        # asked for text extensions, and only believed for a container: see
+        # `SNIFF_OVERRIDES_EXTENSION` for why both halves of that are load-bearing.
+        guess = sniff_extension(data, content_type)
+        if guess in SNIFFED_CONTAINERS and guess != extension:
+            contradicted, extension = extension, guess
 
     def result(status: str, blocks=None, origin: str = "", meta=None, note=None) -> FileResult:
         for block in blocks or []:
@@ -453,6 +493,10 @@ def extract_bytes(
                    (f"; {note}" if note else "")
             meta = dict(meta or {})
             meta["sniffed_as"] = sniffed
+        # A *contradicted* name is not handled here on purpose. `_stamp_read_as`
+        # covers every path out of `dispatch`, including the two archive branches
+        # that never reach this helper, so saying it in both places would be one
+        # statement with two implementations.
         return FileResult(relative_path, role, status, blocks, origin_prefix + origin,
                           meta, label, caption, note)
 
@@ -525,7 +569,7 @@ def extract_bytes(
                       note=f"no parser for {extension or 'files without an extension'}")
 
     try:
-        return dispatch()
+        return _stamp_read_as(dispatch(), sniffed, contradicted, extension)
     except Exception as e:
         # The backstop. Each parser guards itself, but a run of sixty articles
         # must not end because one supplement found a shape nobody anticipated:
@@ -659,6 +703,33 @@ def _extract_compressed(data: bytes, relative_path: str, limits: Limits, role: s
         note = f"{note}; {inner.note}"
     return FileResult(relative_path, role, inner.status, inner.blocks,
                       meta["compression"], {**inner.meta, **meta}, label, caption, note)
+
+
+def _stamp_read_as(outcome: FileResult, sniffed: str, contradicted: str,
+                   extension: str) -> FileResult:
+    """Record that a file was read as something its name did not say.
+
+    Applied to whatever `dispatch` returned rather than inside `extract_bytes`'s
+    own `result` helper, because the two archive branches -- `.zip` through
+    `_extract_archive` and the tar and stream-compressed families through
+    `_extract_compressed` -- build their own `FileResult` and never reach that
+    helper. Before this, an extensionless supplement sniffed as `.zip` came back
+    with no `sniffed_as` at all, and 10.1038/s41467-020-19737-2's MOESM18 -- a zip
+    named `.csv` -- reported `no_text` with nothing anywhere saying it had not been
+    read as a CSV.
+    """
+    if not sniffed and not contradicted:
+        return outcome
+    if contradicted:
+        prefix = (f"named {contradicted}, but the magic bytes say {extension}; "
+                  f"read as {extension}")
+        outcome.meta.setdefault("named_extension", contradicted)
+    else:
+        prefix = f"name carries no usable extension; read as {sniffed}"
+    outcome.meta.setdefault("sniffed_as", extension)
+    if not (outcome.note or "").startswith(("named ", "name carries")):
+        outcome.note = prefix + (f"; {outcome.note}" if outcome.note else "")
+    return outcome
 
 
 def extract_path(path, relative_path: str, limits: Limits, role: str = SUPPLEMENT,

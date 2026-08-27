@@ -61,6 +61,30 @@ from . import sections as sections_mod
 from .blocks import HEADING, PARAGRAPH, Block, strip_invisible
 from .limits import Limits
 
+# MuPDF's own diagnostics go to **stdout**, not stderr, and not through Python: the
+# C library writes them itself, so nothing in this package could see them and
+# nothing could keep them out of the way.
+#
+# That is a correctness problem and not merely noise, because `extract/cli.py`'s
+# `one` prints the extracted directory to stdout as its machine-readable result.
+# Four of the 1,097 PDFs in this corpus emit a message -- a broken ICC profile in
+# 10.21203/rs.3.rs-7535904_v2, a stitching function with too many sub-functions in
+# 10.1101/2025.09.14.673351, an annotation with no appearance stream in
+# 10.1101/2024.08.12.607536, and `object is not a stream` in a supplement of
+# 10.1038/s41588-025-02083-8 -- and for those four
+# `DIR=$(manuscript-extract one ...)` came back with 55 bytes of MuPDF in front of
+# the path. `extract all` was unaffected only because it reports on stderr.
+#
+# Silenced rather than redirected, and then read back per file: `mupdf_warnings()`
+# returns everything MuPDF would have printed, so the messages end up in the
+# extraction record where every other finding about a file already lives. The
+# captured form is the fuller one -- for the ICC profile it is three lines ending
+# `ignoring broken ICC profile`, which is MuPDF saying what it did about it.
+#
+# None of the four costs any text: all four files parse, and the two whose PDF this
+# stage actually reads come out `ok` with 96,493 and 103,580 characters.
+fitz.TOOLS.mupdf_display_errors(False)
+
 OK = "ok"
 OK_VIA_OCR = "ok_via_ocr"
 NO_TEXT = "no_text"
@@ -756,6 +780,16 @@ def _ocr_pass(data: bytes, source_file: str, limits: Limits, blocks: List[Block]
     because the measurement behind this pass is the 70 scanned files, and a status
     that means "the fonts do not say what their glyphs are" should not start
     sometimes meaning "and we OCR'd it anyway" without its own measurement.
+
+    That measurement has since been taken, on both files, and it says keep the
+    refusal. 10.1038/s41586-022-05670-5's MOESM3 is 55 pages, over `max_ocr_pages`,
+    so this pass would decline it anyway and nothing changes. 10.1038/
+    s41588-024-01702-0's MOESM2 is 3 pages and does OCR, to 7,200 characters -- and
+    the document is a Nature Reporting Summary, a checkbox form, which comes back as
+    `[] xX`, `Oo x`, `[__]| BX]` and boilerplate about editorial policy. So routing
+    `garbled_text_encoding` here would buy nothing on one file and 7,200 characters
+    of OCR'd tickbox on the other. Revisit if a garbled file turns up that is prose,
+    under the page cap, and load-bearing.
     """
     pages = meta.get("pages") or 0
     if not pages:
@@ -804,6 +838,88 @@ def _ocr_pass(data: bytes, source_file: str, limits: Limits, blocks: List[Block]
     return ocr_blocks, OK_VIA_OCR, merged
 
 
+#: How many of MuPDF's lines to keep per file, with the total kept alongside.
+#:
+#: Bounded because the buffer is wider than what was being printed. Only four PDFs
+#: in this corpus emit an *error*, but 15 of a random 40 emit a warning -- "bogus
+#: font", "freetype could not find any cmaps" -- at a median of one line, and a file
+#: that goes through `_repair_glyph_encoding` provokes a run of
+#: `FT_Get_Advance(...): invalid glyph index` on top: 20 lines for
+#: 10.21203/rs.3.rs-7535904_v2. Five keeps the defect legible without letting font
+#: chatter into 38% of records at unbounded length, and `mupdf_warnings_total` means
+#: the cap is never silent about what it dropped.
+_MAX_MUPDF_WARNINGS = 5
+
+
+def _mupdf_warnings() -> dict:
+    """What MuPDF said about the file just read, capped.
+
+    Reading the buffer clears it -- `mupdf_warnings(reset=1)` is the default -- so
+    this must be called once per file and its answer kept.
+    """
+    reported = (fitz.TOOLS.mupdf_warnings() or "").strip()
+    if not reported:
+        return {}
+    lines = [line.strip() for line in reported.splitlines() if line.strip()]
+    record: dict = {"mupdf_warnings": lines[:_MAX_MUPDF_WARNINGS]}
+    if len(lines) > _MAX_MUPDF_WARNINGS:
+        record["mupdf_warnings_total"] = len(lines)
+    return record
+
+
+#: A line ending in what could be a line number, and the number itself.
+_TRAILING_NUMBER = re.compile(r"\s+(\d{1,4})\s*$")
+
+#: What fraction of a document's lines must end in an ascending integer before its
+#: numbering is read as line numbering rather than coincidence.
+#:
+#: Measured over the 124 PDF-sourced articles in this corpus. The two line-numbered
+#: manuscripts score 0.90 (10.21203/rs.3.rs-7535904_v2, 1097 of 1222 lines) and 0.80
+#: (10.1101/2022.05.18.492547, 729 of 910). The highest score any other article
+#: reaches is 0.34 -- 10.1126/science.abo7257, whose trailing numbers are inline
+#: reference markers -- and the rest sit at 0.23 and below. 0.6 is the middle of
+#: that gap rather than a round number chosen for looking like one.
+_LINE_NUMBER_FRACTION = 0.6
+
+#: And they have to ascend. Both manuscripts score 1.00; this costs nothing and
+#: stops a document whose lines happen to end in a figure number from qualifying on
+#: the fraction alone.
+_LINE_NUMBER_ASCENDING = 0.9
+
+#: Lines shorter than this are ignored by the detector: a two-word heading tells
+#: you nothing about whether the document is numbered, and there are enough of them
+#: to move a fraction.
+_LINE_NUMBER_MIN_CHARS = 20
+
+
+def _line_numbered(per_page: List[List[Tuple[str, bool, dict]]]) -> bool:
+    """Does this document carry its own line numbering on every line?
+
+    Worth answering once per document rather than per line, because the per-line
+    question has no safe answer: `Extended Data Fig. 1` and `Discussion 361` are the
+    same shape, and only the rest of the document says which one is furniture.
+    """
+    numbers: List[int] = []
+    total = 0
+    for texts in per_page:
+        for text, _margin, _ref in texts:
+            stripped = text.strip()
+            if len(stripped) < _LINE_NUMBER_MIN_CHARS:
+                continue
+            total += 1
+            match = _TRAILING_NUMBER.search(stripped)
+            if match:
+                numbers.append(int(match.group(1)))
+    if total < 20 or not numbers:
+        return False
+    if len(numbers) / total < _LINE_NUMBER_FRACTION:
+        return False
+    if len(numbers) < 2:
+        return False
+    ascending = sum(1 for a, b in zip(numbers, numbers[1:]) if b > a)
+    return ascending / (len(numbers) - 1) >= _LINE_NUMBER_ASCENDING
+
+
 def blocks_from_pdf(
     data: bytes, source_file: str, limits: Limits, ocr: bool = True
 ) -> Tuple[List[Block], str, dict]:
@@ -821,10 +937,15 @@ def blocks_from_pdf(
     so OCR'd text gets exactly the treatment real text gets. Passing True on that
     inner call would OCR the OCR.
     """
+    # Anything MuPDF has to say about *this* file starts here. Cleared rather than
+    # appended to because the buffer is process-wide, so without this the first
+    # noisy PDF in a 393-article run would be reported against every file after it.
+    fitz.TOOLS.reset_mupdf_warnings()
     try:
         document = fitz.open(stream=data, filetype="pdf")
     except Exception as e:
-        return [], UNREADABLE, {"reason": f"{type(e).__name__}: {e}"}
+        return [], UNREADABLE, {"reason": f"{type(e).__name__}: {e}",
+                                **_mupdf_warnings()}
 
     per_page: List[List[Tuple[str, bool, dict]]] = []
     meta: dict = {}
@@ -881,6 +1002,12 @@ def blocks_from_pdf(
         return [], UNREADABLE, meta
     finally:
         document.close()
+        # Read here, in the `finally`, for two reasons: every path out of the parse
+        # above passes through it, and the buffer has to be emptied before
+        # `_ocr_pass` re-enters this function on the rendered copy -- otherwise the
+        # original's messages would be reported against the OCR'd rendition, or
+        # cleared by it.
+        meta.update(_mupdf_warnings())
 
     if hyphens:
         meta["hyphens_kept"] = hyphens["kept"]
@@ -912,6 +1039,22 @@ def blocks_from_pdf(
 
     blocks: List[Block] = []
     tracker = sections_mod.SectionTracker(limits=limits)
+    # Decided once, from the whole document, and recorded: a reader who sees
+    # `methods` appear on an article that had none needs to be able to see why.
+    line_numbered = _line_numbered(per_page)
+    if line_numbered:
+        meta["line_numbered"] = True
+
+    def probe(text: str) -> str:
+        """The text to ask the matchers about, which is not always the text stored.
+
+        In a line-numbered manuscript every line ends in its own line number, so
+        `Methods 606` is the heading `Methods`. The number is dropped for the
+        question and kept in the block, because it is on the page and this stage
+        does not silently rewrite what the page says.
+        """
+        return sections_mod.strip_line_number(text) if line_numbered else text
+
     for page_index, texts in enumerate(per_page, start=1):
         for text, _margin, ref in texts:
             if text in furniture or _PAGE_NUMBER.match(text):
@@ -921,20 +1064,35 @@ def blocks_from_pdf(
                 meta["blocks_capped"] = True
                 break
             locator = f"p.{page_index}"
-            named = sections_mod.normalize(text)
+            named = sections_mod.normalize(probe(text))
             if named:
                 blocks.append(Block(kind=HEADING, text=text, source_file=source_file,
                                     origin="pdf", locator=locator, locator_ref=ref,
                                     section=tracker.heading(named)))
                 continue
-            glued = sections_mod.split_leading_heading(text)
+            glued = sections_mod.split_leading_heading(probe(text))
             if glued:
                 named, heading, text = glued
                 blocks.append(Block(kind=HEADING, text=heading, source_file=source_file,
                                     origin="pdf", locator=locator, locator_ref=ref,
                                     section=tracker.heading(named)))
                 meta["glued_headings_split"] = meta.get("glued_headings_split", 0) + 1
-            elif sections_mod.looks_like_heading(text):
+                # MDPI glues a heading to its first subheading, so what is left over
+                # is a heading too. Emitted rather than dropped: it is under
+                # `min_paragraph_chars`, so the branch below would discard the text
+                # entirely and the subheading would vanish from the article.
+                if sections_mod.looks_like_heading(text):
+                    inner = sections_mod.normalize(text)
+                    blocks.append(Block(
+                        kind=HEADING, text=text, source_file=source_file,
+                        origin="pdf", locator=locator, locator_ref=ref,
+                        # `heading` when the remainder names a section of its own and
+                        # `carry` when it is a subheading, which is the same choice
+                        # the two branches above make and for the same reason.
+                        section=(tracker.heading(inner) if inner
+                                 else tracker.carry(text))))
+                    continue
+            elif sections_mod.looks_like_heading(probe(text)):
                 blocks.append(Block(kind=HEADING, text=text, source_file=source_file,
                                     origin="pdf", locator=locator, locator_ref=ref,
                                     section=tracker.carry(text)))
