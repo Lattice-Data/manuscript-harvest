@@ -160,6 +160,44 @@ def manifest_is_complete(record: Optional[dict]) -> bool:
     return True
 
 
+#: Manifest keys holding one artifact entry, and keys holding a list of them. The
+#: only definition of "where a stored file can be named" -- `referenced_paths`,
+#: `evict_article` and `fetch/orphans.py` all read it from here, because the day a
+#: fifth artifact key is added, a sweep that walks the directory and subtracts these
+#: would otherwise start deleting it.
+SINGLE_ARTIFACTS = ("fulltext", "fulltext_xml", "landing_html")
+GROUP_ARTIFACTS = ("supplementary", "media")
+
+
+def referenced_paths(record: Optional[dict]) -> set:
+    """Every relative path this record points at, as a file walk would see them.
+
+    The inverse of the question every other reader of a manifest asks. `save_file`
+    and `manifest_is_complete` go from an entry to a file; this goes from the record
+    to the whole set, so `fetch/orphans.py` can subtract it from what is on disk and
+    find the files nothing refers to. 202 of them, 1.37 GB, were invisible to every
+    command in this tool until it could be asked this way round.
+
+    An entry with no `path` contributes nothing, which is the right answer for both
+    kinds: a policy removal (`mark_entry_removed` drops the key deliberately) has no
+    file left, and a malformed entry names none. Neither can therefore make a file on
+    disk look referenced -- nor make one look unreferenced, since the subtraction is
+    over paths that *are* named.
+    """
+    if not record:
+        return set()
+    out = set()
+    for key in SINGLE_ARTIFACTS:
+        path = (record.get(key) or {}).get("path")
+        if path:
+            out.add(path)
+    for key in GROUP_ARTIFACTS:
+        for entry in record.get(key) or []:
+            if isinstance(entry, dict) and entry.get("path"):
+                out.add(entry["path"])
+    return out
+
+
 def save_file(directory, relative_path: str, content: bytes) -> dict:
     """Write bytes into the article directory and describe what was written."""
     target = Path(directory) / relative_path
@@ -399,7 +437,7 @@ def evict_article(directory) -> int:
         record["status"] = "evicted"
         record["evicted_at"] = datetime.now(timezone.utc).isoformat()
         record["evicted_bytes"] = freed
-        for group in ("supplementary", "media"):
+        for group in GROUP_ARTIFACTS:
             for entry in record.get(group) or []:
                 if entry_removed_by_policy(entry):
                     # Already gone, and its own marker says who took it. Marking it
@@ -408,7 +446,7 @@ def evict_article(directory) -> int:
                     # actually freed.
                     continue
                 entry["evicted"] = True
-        for key in ("fulltext", "fulltext_xml", "landing_html"):
+        for key in SINGLE_ARTIFACTS:
             entry = record.get(key)
             if isinstance(entry, dict) and entry.get("path"):
                 entry["evicted"] = True

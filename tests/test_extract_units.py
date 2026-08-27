@@ -9,7 +9,6 @@ was nothing there" unless something checks.
 
 import json
 import sys
-import types
 from unittest import mock
 
 import fitz

@@ -209,8 +209,9 @@ rather than by reading an enumeration, which is exactly why they report
 **Flags.** `get` and `batch` share `--oa-only`, `--no-proxy`, `--headed`,
 `--force`, `--no-supplements`, `--tiers` (comma-separated order), `--corpus-dir`,
 and `--json`/`--report` for the manifest. `usage` takes `--by-size` and `--limit`;
-`prune` takes `--max-gb` and `--dry-run`; `revalidate` and `drop-media` take
-optional slugs and `--apply`; `login` and `check` take `--url`.
+`prune` takes `--max-gb` and `--dry-run`; `revalidate`, `drop-media` and
+`drop-orphans` take optional slugs and `--apply`, and `drop-orphans` also takes
+`--include-unique` and `--adopt-landing`; `login` and `check` take `--url`.
 
 ### What the statuses mean
 
@@ -386,6 +387,48 @@ Running it twice does nothing the second time. A deletion the filesystem refuses
 printed with its path and its errno and exits 1 — see [Exit codes](#exit-codes) — and
 that file keeps its `path`, so the next pass offers it again.
 
+### Files nothing points at
+
+A supplement is stored as `supplementary/<NN>_<name>`, with `NN` its retrieval order.
+A re-fetch that comes back with a different-sized or differently-ordered set
+renumbers the files, writes the new names, and — before this existed — left the old
+ones on disk with nothing referring to them. **Measured here: 202 files, 1.37 GB,
+across 29 of 393 articles**, growing by 50 files in a single 38-article `--force`
+batch. Nothing could see them: `drop-media` walks manifest *entries*, and
+`manifest_is_complete` asks only whether a named file is present, so no command
+asked the question the other way round while `usage` counted the bytes against the
+budget.
+
+A fetch now sweeps its own leavings, immediately **after** writing the manifest — a
+crash between the two leaves stale files, which is recoverable, where the reverse
+leaves the record naming files that are gone, which makes every later batch re-fetch
+the article. For what earlier runs left behind:
+
+    manuscript-fetch drop-orphans                    # report only
+    manuscript-fetch drop-orphans --apply            # delete the provable duplicates
+    manuscript-fetch drop-orphans --apply --include-unique   # and the rest
+
+**`--apply` alone is lossless, and that split is the point.** Each file is classified
+by content, not by name: 136 of the 202 are byte-identical to a file the manifest
+still references, 3 more are archives whose every member is (`science.abo1984`'s
+orphaned 31.7 MB zip holds 264 members, all of them already stored under names PMC
+flattened beyond recognition), and **63 files / 868 MB are bytes stored nowhere
+else** — content a manifest lost track of rather than a duplicate.
+`10.1126/science.aat1699` is why they need a second flag: it references no
+supplements at all and sits on `expected_but_missing`, while 326.9 MB of its
+supplementary PDFs and tables are on disk from an older successful fetch. Those are
+reported per article as `kept` so the decision is made once, with the evidence, by a
+human.
+
+No manifest is rewritten by a deletion — these files have no entries, so the record
+is already correct without them, which is the mirror image of `drop-media`'s
+write-per-file. The one write it can make is `--adopt-landing`: 26 articles hold a
+`landing.html` that no entry names, because a re-fetch before the `_still_on_disk`
+fallback existed dropped the key while leaving the file. They are kept either way —
+the page is a proxy error, a Cloudflare challenge or a TDM-policy page, which is the
+evidence for *why* a tier failed and the only reason the browser tier saves it — and
+that flag gives them the entry they never got.
+
 ### Disk usage
 
 Articles average **~40 MB**, so a few hundred papers is tens of gigabytes.
@@ -417,18 +460,21 @@ Scripting either stage means reading the taxonomy off the exit code:
 | `fetch batch`, `extract all` | every article `complete` | at least one was not | no usable input |
 | `fetch check` | session works | it does not | — |
 | `fetch drop-media` | the sweep finished (with nothing to do, or everything removed) | the filesystem refused at least one deletion | — |
+| `fetch drop-orphans` | the sweep finished (with nothing to do, or everything removed) | the filesystem refused at least one deletion | — |
 | `extract review` | nothing queued | questions are queued | — |
 | `extract table` | a card was printed | re-read failed | ambiguous match |
 | `select readiness` | every article can carry a negative | at least one cannot | no articles |
 | `select verify` | every quote verified | at least one did not | no article, or nothing to verify against |
 | `select eval` | scored | below `--fail-under` | no labels, or nothing to score |
 
-`drop-media` is the only one of these whose 1 means "the tool could not finish".
+The two sweeps are the only ones whose 1 means "the tool could not finish".
 An `unlink` needs write permission on the containing directory, so a read-only mount
 or a corpus owned by another account fails every file in it; each refusal is printed
 with its path and its errno, and the exit code is there because the closing count
 would otherwise describe a corpus the sweep never reached. Nothing is half-done: a
-file that survived keeps its manifest `path`, so a later pass offers it again.
+file `drop-media` could not take keeps its manifest `path`, and one `drop-orphans`
+could not take never had an entry to begin with, so in both cases no record is wrong
+and a later pass offers it again.
 
 Other subcommands use 2 for "nothing to do" — `extract status` and `show` when
 nothing is extracted, `fetch prune` with no budget set. So

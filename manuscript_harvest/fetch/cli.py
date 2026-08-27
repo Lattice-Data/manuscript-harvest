@@ -6,6 +6,7 @@
     manuscript-fetch revalidate          # is each stored full text the right paper?
     manuscript-fetch prune --dry-run     # what a budget sweep would evict
     manuscript-fetch drop-media          # stored files no text can come out of
+    manuscript-fetch drop-orphans        # stored files no manifest entry points at
     manuscript-fetch login          # one-time Stanford SSO, headed
     manuscript-fetch check          # is the browser session alive?
 
@@ -446,6 +447,95 @@ def cmd_drop_media(args) -> int:
     return 0
 
 
+def cmd_drop_orphans(args) -> int:
+    """Delete stored files no manifest entry points at.
+
+    `drop-media`'s sibling, not an extension of it, and the docstring in
+    `fetch/orphans.py` says why: that command walks entry lists and keeps the entry as
+    the record of a file it deleted, this one walks the directory and deletes files
+    that never had an entry. One `--apply` could not have described both, and the
+    safety property is different in kind -- there is no record to keep here, so what
+    stands in for it is refusing to delete bytes stored nowhere else.
+
+    **Report-only by default like `revalidate` and `drop-media`, and lossless by
+    default beyond that.** `--apply` alone removes only files whose content is
+    provably still in the corpus under a referenced name; `--include-unique` is what
+    it takes to delete the rest, because `corpus/` is gitignored and unrecoverable and
+    0.869 GB of the 1.37 GB measured here exists in no other copy.
+
+    Exits 1 when a deletion was refused by the filesystem, for the reason
+    `cmd_drop_media` records: the totals line would otherwise read as a description
+    of a corpus that is not in that state.
+    """
+    from .orphans import human_kinds, summarize, sweep_corpus
+
+    config = _apply_cli_overrides(load_config(args.config), args)
+    corpus_dir = config["fetch"]["corpus_dir"]
+    reports = sweep_corpus(corpus_dir, apply=args.apply, slugs=args.slug or None,
+                           include_unique=args.include_unique,
+                           adopt_landing=args.adopt_landing)
+    if not reports:
+        print(f"{corpus_dir}: no articles", file=sys.stderr)
+        return 0
+
+    verb = "removed" if args.apply else "would remove"
+    stuck = 0
+    for report in reports:
+        if report["files"]:
+            print(f"  {verb} {report['slug']}: {len(report['files'])} file(s), "
+                  f"{store.human_bytes(report['bytes'])}")
+        if report["kept"]:
+            # Named per article rather than only in the totals, because this is the
+            # line a human acts on: `10.1126_science.aat1699` holding 326.9 MB of
+            # supplements its manifest references not at all is a different problem
+            # from a renumbered duplicate, and it is invisible in a corpus-wide sum.
+            print(f"  kept {report['slug']}: {len(report['kept'])} file(s), "
+                  f"{store.human_bytes(report['kept_bytes'])} stored nowhere else")
+        for item in report["failed"]:
+            stuck += 1
+            print(f"  ! {report['slug']}: {item['path']} not deleted: {item['error']}",
+                  file=sys.stderr)
+
+    totals = summarize(reports)
+    kinds = human_kinds(totals["by_kind"])
+    breakdown = f" ({kinds})" if kinds else ""
+    print(f"\n{totals['articles']} article(s) checked, {totals['affected']} holding "
+          f"files no manifest entry points at: {totals['files']} file(s) "
+          f"{'removed' if args.apply else 'to remove'}, "
+          f"{store.human_bytes(totals['bytes'])}{breakdown}", file=sys.stderr)
+    if totals["kept"]:
+        print(f"{totals['kept']} file(s), {store.human_bytes(totals['kept_bytes'])}, "
+              f"left alone: their bytes are stored under no other name, so deleting "
+              f"them would lose content rather than a duplicate. Pass "
+              f"--include-unique to delete them too -- read the per-article 'kept' "
+              f"lines first, corpus/ is not recoverable", file=sys.stderr)
+    if totals["landing_unreferenced"]:
+        print(f"{totals['landing_unreferenced']} article(s) hold a landing.html no "
+              f"manifest entry names (the browser tier saved the page it landed on, "
+              f"and a re-fetch before 186b2e4 dropped the key). Pass --apply "
+              f"--adopt-landing to record them; they are kept either way",
+              file=sys.stderr)
+    if args.adopt_landing and not args.apply and totals["landing_unreferenced"]:
+        # A flag that silently did nothing is worse than one that is refused: the user
+        # asked for the write and would otherwise read the report above as the result.
+        print("--adopt-landing needs --apply; nothing was written", file=sys.stderr)
+    if totals["landing_adopted"]:
+        print(f"{totals['landing_adopted']} landing.html file(s) now have a manifest "
+              f"entry, with bytes and sha256 measured from the file and no url -- the "
+              f"run that saved them is no longer in the record", file=sys.stderr)
+    if stuck:
+        print(f"{stuck} file(s) could not be deleted and are still on disk; nothing "
+              f"in any manifest claimed they existed, so no record is now wrong and "
+              f"re-running after fixing the permissions will offer them again",
+              file=sys.stderr)
+        return 1
+    if totals["files"] and not args.apply:
+        print("re-run with --apply to delete them. No manifest changes: these files "
+              "have no entries, so the record is already correct without them",
+              file=sys.stderr)
+    return 0
+
+
 def cmd_login(args) -> int:
     from .sources.proxy_browser import interactive_login
 
@@ -540,6 +630,29 @@ def build_parser() -> argparse.ArgumentParser:
                                    help="delete the files and record the removals "
                                         "(default: report only)")
     drop_media_parser.set_defaults(func=cmd_drop_media)
+
+    drop_orphans_parser = subparsers.add_parser(
+        "drop-orphans",
+        help="delete stored files no manifest entry points at (renumbering left "
+             "behind by an earlier re-fetch)",
+    )
+    drop_orphans_parser.add_argument("slug", nargs="*",
+                                     help="corpus directory names; default: all")
+    drop_orphans_parser.add_argument("--corpus-dir", default=None)
+    drop_orphans_parser.add_argument("--apply", action="store_true",
+                                     help="delete the files (default: report only)")
+    drop_orphans_parser.add_argument(
+        "--include-unique", action="store_true",
+        help="also delete unreferenced files whose bytes are stored nowhere else. "
+             "Off by default: 0.869 GB of the 1.37 GB measured here is content a "
+             "manifest lost track of, not a duplicate",
+    )
+    drop_orphans_parser.add_argument(
+        "--adopt-landing", action="store_true",
+        help="give an unreferenced landing.html the manifest entry it never got "
+             "(needs --apply; 26 articles here)",
+    )
+    drop_orphans_parser.set_defaults(func=cmd_drop_orphans)
 
     login_parser = subparsers.add_parser(
         "login", help="open a headed browser to complete Stanford SSO once"
