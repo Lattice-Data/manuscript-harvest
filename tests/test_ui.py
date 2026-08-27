@@ -50,7 +50,7 @@ def _wait_for(predicate, seconds=10.0):
 
 def _manifest(status="complete", supplementary=None, pdf_path="fulltext.pdf"):
     return {
-        "doi": "10.1/x",
+        "doi": "10.1038/x",
         "status": status,
         "fetched_at": "2026-01-01T00:00:00Z",
         "fulltext": {"path": pdf_path, "status": "ok", "bytes": 10},
@@ -427,13 +427,13 @@ def test_the_heartbeat_is_read_as_a_run_goes(tmp_path):
     job = jobs.Job("j1", "fetch", ["true"], tmp_path, label="t", progress_path=path)
     with progress.ProgressLog(path) as log:
         log.start(total=3)
-        log.item(doi="10.1/a", status="complete", files=4, bytes=100)
+        log.item(doi="10.1038/a", status="complete", files=4, bytes=100)
         job.drain_progress()
         assert job.progress["total"] == 3
         assert job.progress["done"] == 1
         assert job.progress["files"] == 4
 
-        log.item(doi="10.1/b", status="partial", files=1, bytes=50)
+        log.item(doi="10.1038/b", status="partial", files=1, bytes=50)
         log.end(by_status={"complete": 1, "partial": 1}, stopped=False)
         job.drain_progress()
 
@@ -441,7 +441,7 @@ def test_the_heartbeat_is_read_as_a_run_goes(tmp_path):
     assert job.progress["bytes"] == 150
     assert job.progress["by_status"] == {"complete": 1, "partial": 1}
     assert job.progress["ended"] is True
-    assert [item["doi"] for item in job.progress["recent"]] == ["10.1/a", "10.1/b"]
+    assert [item["doi"] for item in job.progress["recent"]] == ["10.1038/a", "10.1038/b"]
 
 
 def test_each_stage_counts_only_what_it_produces(tmp_path):

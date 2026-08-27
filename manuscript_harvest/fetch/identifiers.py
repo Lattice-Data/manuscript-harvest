@@ -63,9 +63,12 @@ def is_preprint_doi(doi: str) -> bool:
 def normalize_doi(raw: str) -> str:
     """Return a bare lowercase DOI, or raise ValueError.
 
-    Accepts `10.1/x`, `doi:10.1/x`, `https://doi.org/10.1/x`, and the same with
-    surrounding whitespace or a trailing period. DOIs are case-insensitive per
-    the DOI handbook, so lowercasing is safe and makes the corpus one-to-one.
+    Accepts `10.1038/x`, `doi:10.1038/x`, `https://doi.org/10.1038/x`, and the
+    same with surrounding whitespace or a trailing period. The registrant code --
+    the digits between `10.` and the `/` -- must be 4 to 9 long, so a short
+    prefix like `10.1/x` is refused rather than normalised. DOIs are
+    case-insensitive per the DOI handbook, so lowercasing is safe and makes the
+    corpus one-to-one.
     """
     text = (raw or "").strip()
     text = re.sub(r"^https?://(dx\.)?doi\.org/", "", text, flags=re.IGNORECASE)

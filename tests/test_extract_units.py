@@ -221,7 +221,7 @@ def test_a_low_value_heading_only_claims_text_that_looks_like_its_content():
     assert "low-value" in tracker.reason()
     # The span stays open, so a citation after a stray line is still labelled: a
     # reference list interrupted by a page artifact must not lose its tail.
-    assert tracker.carry("2. Smith J, Jones K (2020). Another paper. doi:10.1/x") \
+    assert tracker.carry("2. Smith J, Jones K (2020). Another paper. doi:10.1038/x") \
         == sections.REFERENCES
 
 

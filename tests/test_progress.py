@@ -42,8 +42,8 @@ def test_events_carry_the_sequence_and_the_total(tmp_path):
     path = tmp_path / "progress.jsonl"
     with progress.ProgressLog(path) as log:
         log.start(total=2, command="fetch batch")
-        log.item(doi="10.1/a", status="complete")
-        log.item(doi="10.1/b", status="partial")
+        log.item(doi="10.1038/a", status="complete")
+        log.item(doi="10.1038/b", status="partial")
         log.end(by_status={"complete": 1, "partial": 1}, stopped=False)
 
     events = [json.loads(line) for line in path.read_text().splitlines()]
@@ -60,9 +60,9 @@ def test_each_line_is_on_disk_before_the_next_one_is_written(tmp_path):
     path = tmp_path / "progress.jsonl"
     with progress.ProgressLog(path) as log:
         log.start(total=2)
-        log.item(doi="10.1/a")
+        log.item(doi="10.1038/a")
         assert len(path.read_text().splitlines()) == 2
-        log.item(doi="10.1/b")
+        log.item(doi="10.1038/b")
         assert len(path.read_text().splitlines()) == 3
 
 
