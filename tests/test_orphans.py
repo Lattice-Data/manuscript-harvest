@@ -438,27 +438,55 @@ def test_a_second_sweep_has_nothing_to_do(tmp_path):
     assert sweep_article_report(directory, apply=True)["files"] == []
 
 
-def test_the_fetch_path_sweep_does_not_weigh_content(tmp_path):
-    """`sweep_article` is the deliberate asymmetry with the command, not an oversight.
+def test_the_fetch_path_sweep_keeps_bytes_stored_nowhere_else(tmp_path):
+    """**The regression test for 49 MB of deleted supplements.**
 
-    It runs seconds after the manifest was written from the set the tiers actually
-    returned, so an unreferenced file there is one *this run's* renumbering just
-    abandoned -- its content is either still on disk under the new number or was never
-    wanted. Classifying would spend a full hash of the article to re-derive something
-    the run already knows. The command cannot make that assumption, which is why it
-    keeps `unique` files by default and this does not.
+    This asserted the opposite until 2026-08-27, on the argument that a file
+    unreferenced *during a fetch* is one the run's own renumbering just abandoned, so
+    its content is either still on disk under the new number or was never wanted. The
+    second half is false, and a `--force` batch found out: `10.1126/science.aax6234`
+    had seven referenced supplements at 58.4 MB, a re-fetch returned three at 9.4 MB
+    while its own manifest said "5 of 8 supplementary file(s) listed on the page could
+    not be fetched", and `sweep_article` deleted the other four.
+
+    The renumbering case it was built for still works -- that is the `02_` file below,
+    byte-identical to `01_` and gone. What changed is that bytes stored under no other
+    name survive, for `drop-orphans` to report to a human.
     """
     directory = _article(tmp_path, supplements=[("media-7.xlsx", TABLE_A)])
-    _orphan(directory, "supplementary/02_media-7.xlsx", TABLE_A)   # redundant
-    _orphan(directory, "supplementary/03_media-9.xlsx", TABLE_B)   # unique bytes
+    _orphan(directory, "supplementary/02_media-7.xlsx", TABLE_A)   # renumbering residue
+    _orphan(directory, "supplementary/03_media-9.xlsx", TABLE_B)   # nowhere else
 
     result = sweep_article(directory, _record(directory))
 
-    assert result["files"] == ["supplementary/02_media-7.xlsx",
-                              "supplementary/03_media-9.xlsx"]
-    assert result["bytes"] == len(TABLE_A) + len(TABLE_B)
+    assert result["files"] == ["supplementary/02_media-7.xlsx"]
+    assert result["bytes"] == len(TABLE_A)
+    assert result["kept"] == ["supplementary/03_media-9.xlsx"]
+    assert result["kept_bytes"] == len(TABLE_B)
     assert result["failed"] == []
-    assert _files_on_disk(directory) == ["01_media-7.xlsx"]
+    assert _files_on_disk(directory) == ["01_media-7.xlsx", "03_media-9.xlsx"]
+
+
+def test_the_fetch_path_sweep_does_not_open_archives(tmp_path):
+    """`inspect_archives=False`, and the article that prompted the fix is why.
+
+    A renumbered archive is byte-identical to its new copy, so the plain hash resolves
+    it and the member walk buys nothing on this path. Opening one would have cost a
+    347 MB decompression on `10.1126/science.aat1699`'s new `.gz` supplement, during a
+    fetch. The command still opens them -- that is where the question matters.
+    """
+    directory = _article(tmp_path, supplements=[("table_s1.xlsx", TABLE_A)])
+    _orphan(directory, "supplementary/09_tables.zip",
+            make_zip([("renamed_by_pmc.xlsx", TABLE_A)]))
+
+    result = sweep_article(directory, _record(directory))
+
+    assert result["kept"] == ["supplementary/09_tables.zip"], \
+        "fully contained, but not resolved as such without the walk"
+    assert result["files"] == []
+    # The command, asked the same question, does open it.
+    row, = classify(directory, _record(directory))
+    assert row["kind"] == REDUNDANT_ARCHIVE
 
 
 def test_the_corpus_pass_reports_every_article(tmp_path):
@@ -748,28 +776,71 @@ def test_a_fetch_stores_what_the_tier_returned(monkeypatch, tmp_path):
     assert unreferenced_files(directory, record) == []
 
 
-def test_a_refetch_that_shrinks_the_set_leaves_nothing_behind(monkeypatch, tmp_path):
+def test_a_refetch_that_renumbers_leaves_nothing_behind(monkeypatch, tmp_path):
     """The 1.37 GB, reproduced and then swept.
 
-    Three supplements become one, so `enumerate()` renumbers and `_write_group` writes
-    `01_media-3.xlsx` while `02_` and `03_` -- and the old `01_media-1.xlsx` -- are
-    abandoned. Before the sweep this left four files on disk against one referenced;
-    the measured corpus reached 27-against-15 on
-    `10.64898/2026.02.15.704933` the same way, over four runs.
+    The same two supplements come back in the opposite order, which is all it takes:
+    `_write_group` numbers from `enumerate()`, so the set is written as
+    `01_media-2`/`02_media-1` while the previous `01_media-1`/`02_media-2` stay on
+    disk under names nothing now references. Four files against two referenced, from a
+    re-fetch that lost nothing at all -- the measured corpus reached 27-against-15 on
+    `10.64898/2026.02.15.704933` this way over four runs, holding `media-7.xlsx` four
+    times over.
+
+    Every abandoned file here is byte-identical to one the new record names, so the
+    sweep takes all of them and the article is left exactly as clean as a first fetch.
+    """
+    first = _fetch(monkeypatch, tmp_path, [("media-1.xlsx", TABLE_A),
+                                           ("media-2.xlsx", TABLE_B)])
+    directory = Path(first["_directory"])
+    assert _files_on_disk(directory) == ["01_media-1.xlsx", "02_media-2.xlsx"]
+
+    second = _fetch(monkeypatch, tmp_path, [("media-2.xlsx", TABLE_B),
+                                            ("media-1.xlsx", TABLE_A)], force=True)
+
+    assert _files_on_disk(directory) == ["01_media-2.xlsx", "02_media-1.xlsx"]
+    assert unreferenced_files(directory, second) == []
+    assert second["orphans_swept"] == {"files": 2,
+                                       "bytes": len(TABLE_A) + len(TABLE_B)}
+    assert "orphans_kept" not in second
+    assert store.manifest_is_complete(second) is True
+
+
+def test_a_refetch_that_returns_less_keeps_what_it_did_not_replace(
+        monkeypatch, tmp_path):
+    """**The 49 MB regression, at the level where it actually happened.**
+
+    `10.1126/science.aax6234` had seven referenced supplements at 58.4 MB. A `--force`
+    re-fetch returned three at 9.4 MB -- its own manifest still saying "5 of 8
+    supplementary file(s) listed on the page could not be fetched" and "the browser
+    tier is required for them" -- so the smaller list won, four entries left the
+    record, and the sweep deleted their bytes. `10.1038/s41588-025-02454-1` lost two
+    files the same way in the same batch.
+
+    The preservation branch does not reach this: it fires only when a re-fetch returns
+    *nothing*. Returning *less* is a different case and the record cannot tell which
+    of the two happened -- so the bytes stay, and `problems` says the set shrank.
     """
     first = _fetch(monkeypatch, tmp_path, [("media-1.xlsx", TABLE_A),
                                            ("media-2.xlsx", TABLE_B),
                                            ("media-3.xlsx", TABLE_C)])
     directory = Path(first["_directory"])
-    assert len(_files_on_disk(directory)) == 3
 
     second = _fetch(monkeypatch, tmp_path, [("media-3.xlsx", TABLE_C)], force=True)
 
-    assert _files_on_disk(directory) == ["01_media-3.xlsx"]
-    assert unreferenced_files(directory, second) == []
-    assert second["orphans_swept"] == {"files": 3,
-                                       "bytes": len(TABLE_A) + len(TABLE_B) + len(TABLE_C)}
-    assert store.manifest_is_complete(second) is True
+    assert [e["path"] for e in second["supplementary"]] == \
+        ["supplementary/01_media-3.xlsx"]
+    assert _files_on_disk(directory) == [
+        "01_media-1.xlsx", "01_media-3.xlsx", "02_media-2.xlsx"], \
+        "the two the re-fetch did not replace are still there"
+    assert second["orphans_swept"] == {"files": 1, "bytes": len(TABLE_C)}, \
+        "only the renumbered copy of media-3 was redundant"
+    assert second["orphans_kept"] == {"files": 2,
+                                     "bytes": len(TABLE_A) + len(TABLE_B)}
+    assert any("stored nowhere else" in p and "smaller supplement set" in p
+               for p in second["problems"])
+    assert store.manifest_is_complete(second) is True, \
+        "the kept files have no entries, so the record is still true"
 
 
 def test_a_refetch_that_fails_keeps_the_previous_set_and_stays_complete(
@@ -870,7 +941,11 @@ def test_a_sweep_that_cannot_delete_records_it_and_finishes(monkeypatch, tmp_pat
             (Path(target) / store.SUPPLEMENT_DIR).chmod(0o700)
 
     monkeypatch.setattr(orphans, "sweep_article", locked)
-    second = _fetch(monkeypatch, tmp_path, [("media-1.xlsx", TABLE_A)], force=True)
+    # `media-2` again, so the abandoned `02_media-2.xlsx` is byte-identical to the new
+    # `01_media-2.xlsx` and the sweep genuinely attempts the unlink. Handing back
+    # `media-1` instead would classify the leftover as bytes stored nowhere else, and
+    # a file that is kept on purpose cannot exercise a refusal.
+    second = _fetch(monkeypatch, tmp_path, [("media-2.xlsx", TABLE_B)], force=True)
 
     assert second["status"] == "complete"
     assert any("could not remove the unreferenced file" in p
