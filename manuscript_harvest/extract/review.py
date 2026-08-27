@@ -82,6 +82,15 @@ STATES = frozenset({"unreviewed", "queued", "partially_reviewed", "reviewed", "s
 #: reporting summary is legible to anyone who opens it and unreadable only to a
 #: parser -- so a person can answer "does this carry article evidence?" in the
 #: time it takes to look.
+#: `ok_via_ocr` is deliberately absent, and the deliberation is the point: it is
+#: the only status added to the taxonomy that is not a failure, so the question
+#: this queue asks -- "does this file hold article evidence?" -- has already been
+#: answered for it by the text coming out. What a human might usefully be asked
+#: about an OCR'd file is a different question ("is this transcription right?"),
+#: needing a different item kind and the page image beside it, and inventing that
+#: to avoid an absence would put 70 files in front of a curator to be asked
+#: something nobody meant to ask. `no_text_scanned_pdf` stays here, which is where
+#: a scan that could not be read still lands.
 QUEUEABLE_FAILURES = frozenset({
     "no_text", "no_text_scanned_pdf", "unsupported_format", "too_large",
     "unreadable", "missing", "parser_error", "garbled_text_encoding",

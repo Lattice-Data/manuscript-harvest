@@ -82,6 +82,32 @@ class Limits:
 
     min_pdf_text_chars: int = 200
     """Matches manuscript_harvest.fetch.validate: less than this means scanned images."""
+    ocr_dpi: int = 300
+    """What a scanned page is rendered at before tesseract reads it.
+
+    Tesseract's own documentation asks for about 300 dpi for 10-point text, and
+    PyMuPDF's `get_textpage_ocr` default of 72 is the screen resolution rather than a
+    reading one. The *accuracy* of 300 here is not measured: the binary is not
+    installed on the machine this pass was written on, so this is the conventional
+    figure and not a tuned one.
+
+    The cost of it is measured. Rendering all 245 scanned pages in this corpus at
+    300 dpi takes 19.7 s -- 80 ms a page -- and the largest single pixmap is 54 MB,
+    which is a full-page figure panel and is transient. So the render half of the
+    pass is not what a change here would be trading against; tesseract's own time is.
+
+    Here rather than a module constant so that tuning it is a config edit which
+    lands in every extraction's `limits` block and moves the extraction key, which
+    is what `extraction_key` exists for."""
+    max_ocr_pages: int = 25
+    """Pages in one file this stage will OCR. Beyond it the file keeps
+    `no_text_scanned_pdf` and the reason says so.
+
+    Measured: the 70 scanned supplements in this corpus are 245 pages between them,
+    median 3, longest 11. This is twice that worst case, so nothing here is near it,
+    and what it stops is the shape that is not a supplementary table -- a scanned
+    88-page peer-review bundle, which at 300 dpi would cost more than the article it
+    belongs to."""
     max_unnamed_glyph_fraction: float = 0.25
     """How much of a PDF's text may be glyphs the document never says the meaning
     of before the file stops being `ok`. See `pdf._repair_glyph_encoding` for what

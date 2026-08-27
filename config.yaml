@@ -177,3 +177,5 @@ extract:
     max_member_mb: 50           # per file inside a zip
     max_archive_depth: 2        # some zips contain only more zips
     min_main_text_chars: 2000   # thinner JATS than this falls back to the PDF
+    ocr_dpi: 300                # scanned pages are rendered at this before tesseract
+    max_ocr_pages: 25           # 70 scanned files here are 245 pages, longest 11

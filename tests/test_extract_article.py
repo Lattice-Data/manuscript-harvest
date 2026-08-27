@@ -8,6 +8,8 @@ OCR, and a bot-check landing page is not an article.
 """
 
 import json
+import sys
+from unittest import mock
 
 import pytest
 
@@ -26,8 +28,13 @@ from tests.fakes import (
     make_docx,
     make_pdf,
     make_pdf_pages,
+    fake_tesseract,
+    make_gz,
+    no_tesseract,
     make_scanned_pdf,
+    make_tar,
     make_unreadable_font_pdf,
+    make_xls,
     make_xlsx,
     make_zip,
 )
@@ -511,12 +518,163 @@ def test_an_image_only_zip_is_not_blamed_for_having_no_text(tmp_path):
     assert record["status"] == "complete"
 
 
+# -- scanned supplements -----------------------------------------------------
+
+#: What tesseract would return for a scanned table: a page with a text layer.
+OCR_TEXT = ("Table S3. Donor characteristics. Islets were isolated from eight donors "
+            "and dissociated before loading on the Chromium controller. ")
+
+
+def test_a_scanned_supplement_stays_scanned_without_tesseract(tmp_path):
+    """The floor this machine actually runs at, and the shape of 70 supplements in
+    this corpus: the status stands and the reason is an install instruction."""
+    directory = _article(tmp_path, xml=jats_article(METHODS_BODY),
+                         supplements=[("scan.pdf", make_scanned_pdf(pages=3))])
+    with no_tesseract():
+        record = extract_article(directory, limits=L)
+    entry = record["supplementary"][0]
+
+    assert entry["status"] == "no_text_scanned_pdf"
+    assert "tesseract" in entry["note"]
+    assert entry["path"] in record["unextracted_text_files"]
+    assert record["status"] == "partial"
+
+
+def test_an_ocred_supplement_is_marked_distinctly_and_counts_as_read(tmp_path):
+    """`ok_via_ocr`, never `ok`. Both halves matter: the article stops being
+    `partial` because the text really was read, and the word says the text came out
+    of an OCR engine, so the perturbation stage can weight it differently."""
+    directory = _article(tmp_path, xml=jats_article(METHODS_BODY),
+                         supplements=[("scan.pdf", make_scanned_pdf(pages=2))])
+    with fake_tesseract(returns=make_pdf_pages([[OCR_TEXT * 3]])):
+        record = extract_article(directory, limits=L, force=True)
+    entry = record["supplementary"][0]
+
+    assert entry["status"] == "ok_via_ocr"
+    assert entry["origin"] == "pdf" and entry["blocks"] > 0
+    assert "OCR at 300 dpi" in entry["note"]
+    assert entry["ocr"]["pages"] == 2
+    assert record["unextracted_text_files"] == []
+    assert record["status"] == "complete"
+    assert record["supplementary_by_status"] == {"ok_via_ocr": 1}
+    block = next(b for b in read_blocks(directory / EXTRACT_DIR / BLOCKS_NAME)
+                 if b["source_file"].endswith("scan.pdf"))
+    assert "Donor characteristics" in block["text"]
+
+
+def test_installing_tesseract_invalidates_the_cache(tmp_path):
+    """The same trap `xlrd` was in, one dependency over and not a Python package at
+    all: a parser missing from `_parser_versions` is one whose arrival moves no key,
+    so all 70 scanned supplements would go on being served the
+    `no_text_scanned_pdf` cached from an install that could not read them."""
+    directory = _article(tmp_path, xml=jats_article(METHODS_BODY),
+                         supplements=[("scan.pdf", make_scanned_pdf(pages=1))])
+    with no_tesseract():
+        before = extract_article(directory, limits=L)
+        assert before["parser_versions"]["tesseract"] == "absent"
+        assert extract_article(directory, limits=L).get("cached") is True
+
+    with mock.patch.object(extractor.pdf, "tesseract_version", lambda: "5.5.1"), \
+            fake_tesseract(returns=make_pdf_pages([[OCR_TEXT * 3]])):
+        after = extract_article(directory, limits=L)
+
+    assert after.get("cached") is None, "installing tesseract did not move the key"
+    assert after["parser_versions"]["tesseract"] == "5.5.1"
+    assert after["supplementary"][0]["status"] == "ok_via_ocr"
+
+
+# -- archives other than zip -------------------------------------------------
+
+def test_a_tarball_supplement_is_read(tmp_path):
+    """10.1038/s41586-020-03182-8's MOESM4: 296 members under a `.tgz` name, and
+    not gzipped. Refused with "decompress by hand if it holds tables" until the tar
+    reader existed."""
+    data = make_tar([("tables/S1.csv", b"donor,Sex\nd1,F\nd2,M\n"),
+                     ("._S1.csv", b"apple double fork"),
+                     ("figs/f1.jpg", b"\xff\xd8x")])
+    directory = _article(tmp_path, xml=jats_article(METHODS_BODY),
+                         supplements=[("supp.tgz", data)])
+    entry = extract_article(directory, limits=L)["supplementary"][0]
+
+    assert entry["status"] == "ok" and entry["origin"] == "tar"
+    assert entry["tables"] == 1
+    assert entry["members_total"] == 3 and entry["members_read"] == 1
+    assert entry["member_extensions"] == {".csv": 1, ".jpg": 1}
+    block = next(b for b in read_blocks(directory / EXTRACT_DIR / BLOCKS_NAME)
+                 if b["kind"] == TABLE)
+    assert block["origin"] == "tar:csv"
+    assert block["source_file"] == "supplementary/01_supp.tgz!tables/S1.csv"
+
+
+def test_a_single_gzipped_table_is_read_and_named_from_the_header(tmp_path):
+    """Three of the five `.gz` supplements here are one compressed table with its
+    original name in the gzip header -- `meta.csv`, `cre.csv`,
+    `table-S4-cell-type-taxonomy.tsv` -- which is where the parser choice comes
+    from, since the outer name ends `-supplement-Table_5.gz`."""
+    data = make_gz(b"donor\tSex\nd1\tF\nd2\tM\n", stored_name="table-S4.tsv")
+    directory = _article(tmp_path, xml=jats_article(METHODS_BODY),
+                         supplements=[("NIHMS-supplement-Table_4.gz", data)])
+    entry = extract_article(directory, limits=L)["supplementary"][0]
+
+    assert entry["status"] == "ok" and entry["origin"] == "gzip"
+    assert entry["compression"] == "gzip"
+    assert "gzip wrapper around one file, table-S4.tsv" in entry["note"]
+    assert entry["tables"] == 1
+
+
+def test_a_gzipped_table_with_no_stored_name_is_sniffed(tmp_path):
+    """`02_media-4.gz` and `24_media-6.gz` store no name, so stripping `.gz` leaves
+    no extension and the content has to say what it is."""
+    directory = _article(tmp_path, xml=jats_article(METHODS_BODY),
+                         supplements=[("media-4.gz", make_gz(b"donor,Sex\nd1,F\nd2,M\n"))])
+    entry = extract_article(directory, limits=L)["supplementary"][0]
+
+    assert entry["status"] == "ok" and entry["tables"] == 1
+    assert entry["sniffed_as"] == ".txt" and "read as .txt" in entry["note"]
+
+
+def test_an_oversize_gzip_is_too_large_rather_than_unsupported(tmp_path):
+    """The distinction is the whole point of doing this at all: `unsupported_format`
+    says this stage has no parser, and `too_large` says it has one and a cap is in
+    the way. Three of the five .gz files here are 68, 128 and 329 MB decompressed."""
+    directory = _article(tmp_path, xml=jats_article(METHODS_BODY),
+                         supplements=[("big.gz", make_gz(b"x" * 5000))])
+    entry = extract_article(directory, limits=Limits(max_member_mb=0))["supplementary"][0]
+
+    assert entry["status"] == "too_large"
+    assert "max_member_mb" in entry["note"]
+
+
+def test_a_format_with_no_stdlib_reader_still_says_so(tmp_path):
+    """`.7z` and `.rar` would each be a third-party dependency for zero files in
+    this corpus, which is the trade the `xls` extra lost and this one wins."""
+    directory = _article(tmp_path, xml=jats_article(METHODS_BODY),
+                         supplements=[("data.7z", b"7z\xbc\xaf\x27\x1c" + b"x" * 50)])
+    entry = extract_article(directory, limits=L)["supplementary"][0]
+    assert entry["status"] == "unsupported_format"
+    assert "third-party reader" in entry["note"]
+
+
+def test_archives_nested_deeper_than_the_cap_stop_being_opened(tmp_path):
+    """`extract_bytes` dispatches a `.gz` inside a `.gz` by extension, and each
+    level decompresses before anything looks at it, so the cap has to be checked
+    where the container is opened and not only in the wanted set."""
+    inner = make_gz(b"donor,Sex\nd1,F\n")
+    directory = _article(tmp_path, xml=jats_article(METHODS_BODY),
+                         supplements=[("outer.gz", make_gz(make_gz(inner)))])
+    entry = extract_article(directory, limits=Limits(max_archive_depth=2))["supplementary"][0]
+    assert entry["status"] == "no_text"
+    assert "depth cap" in entry["note"]
+
+
 # -- files whose names do not say what they are ------------------------------
 
 @pytest.mark.parametrize("data,expected", [
     (b"%PDF-1.7 body", ".pdf"),
     (b"{\\rtf1 hello}", ".rtf"),
     (b"\x1f\x8b\x08\x00", ".gz"),
+    (b"BZh9 body", ".bz2"),
+    (b"\xfd7zXZ\x00 body", ".xz"),
     (b"<?xml version='1.0'?><article/>", ".xml"),
     (b"<!DOCTYPE html><html></html>", ".html"),
     (b"id,sex\na,M\n", ".txt"),
@@ -524,6 +682,17 @@ def test_an_image_only_zip_is_not_blamed_for_having_no_text(tmp_path):
 ])
 def test_sniff_extension_from_magic_bytes(data, expected):
     assert sniff_extension(data) == expected
+
+
+def test_a_tar_says_so_257_bytes_in():
+    """Not at the front, where every other format here puts its magic. `""` was the
+    old answer, which for an extensionless supplement meant no parser at all."""
+    assert sniff_extension(make_tar([("a.csv", b"x,y\n1,2\n")])) == ".tar"
+
+
+def test_bzip2_is_no_longer_sniffed_as_gzip():
+    """It always was, harmlessly, for as long as nothing decompressed either."""
+    assert sniff_extension(b"BZh9 body") != ".gz"
 
 
 def test_sniff_looks_inside_an_ooxml_package():
@@ -706,6 +875,34 @@ def test_a_changed_manifest_invalidates_the_cache(tmp_path):
     record["fetched_at"] = "2026-08-01T00:00:00+00:00"
     store.write_manifest(directory, record)
     assert extract_article(directory, limits=L).get("cached") is None
+
+
+def test_installing_a_parser_invalidates_the_cache(tmp_path):
+    """Adding a dependency has to move `extraction_key`, or nothing re-reads.
+
+    This is the trap that kept all 56 of the corpus's `.xls` supplements
+    unextracted. `xlrd` was an optional extra and `_parser_versions` did not name
+    it, so installing it left the key exactly where it was: `manuscript-extract all`
+    served every one of those files its cached `unsupported_format`, and only
+    `--force` -- a re-extract of all 393 articles -- would have picked the parser
+    up. `extract.source_fingerprint` exists for the same bug one layer in.
+
+    `sys.modules["xlrd"] = None` is what an install without xlrd looks like from
+    inside: `import xlrd` raises ImportError.
+    """
+    directory = _article(tmp_path, xml=jats_article(METHODS_BODY),
+                         supplements=[("s1.xls", make_xls({"S1": [["id", "Sex"],
+                                                                  ["a", "M"]]}))])
+    with mock.patch.dict(sys.modules, {"xlrd": None}):
+        without = extract_article(directory, limits=L)
+        assert without["supplementary"][0]["status"] == "unsupported_format"
+        assert without["parser_versions"]["xlrd"] == "absent"
+        assert extract_article(directory, limits=L).get("cached") is True
+
+    after = extract_article(directory, limits=L)
+    assert after.get("cached") is None, "installing xlrd did not move the key"
+    assert after["supplementary"][0]["status"] == "ok"
+    assert after["supplementary"][0]["tables"] == 1
 
 
 def test_an_unlabelled_body_is_reported_even_when_the_article_is_complete(tmp_path):

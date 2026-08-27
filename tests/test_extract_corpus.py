@@ -55,10 +55,10 @@ def test_every_status_is_in_the_taxonomy():
     """An unrecognised status means a code path invented one, and the `status`
     report would silently stop counting it."""
     articles = {"complete", "partial", "failed", "no_manifest"}
-    files = {extractor.OK, extractor.NO_TEXT, extractor.SCANNED, extractor.IMAGE_NO_TEXT,
-             extractor.MEDIA_NO_TEXT, extractor.DATA_SKIPPED, extractor.UNSUPPORTED,
-             extractor.TOO_LARGE, extractor.MISSING, extractor.UNREADABLE,
-             extractor.PARSER_ERROR, extractor.GARBLED}
+    files = {extractor.OK, extractor.OK_VIA_OCR, extractor.NO_TEXT, extractor.SCANNED,
+             extractor.IMAGE_NO_TEXT, extractor.MEDIA_NO_TEXT, extractor.DATA_SKIPPED,
+             extractor.UNSUPPORTED, extractor.TOO_LARGE, extractor.MISSING,
+             extractor.UNREADABLE, extractor.PARSER_ERROR, extractor.GARBLED}
     for record in _extractions():
         assert record["status"] in articles, record["slug"]
         assert (record["main_text"] or {}).get("status") in files | {None}
@@ -472,6 +472,30 @@ def test_the_strict_ooxml_supplement_still_reads():
     assert {"age", "sex"} <= headers
 
 
+def test_the_legacy_xls_supplements_still_read():
+    """The shape no fixture in `tests/fakes.py` builds: BIFF8 inside an OLE2
+    container, which is what publishers actually ship.
+
+    `make_xls` writes a bare BIFF5 record stream, so xlrd's own parser is covered
+    offline but the container is not, and these files are the only thing that
+    exercises it. They are also the measurement behind xlrd being a hard
+    requirement rather than an extra -- 56 files, 129 MB -- so a regression here is
+    the whole reason for the dependency going quiet.
+
+    Asserted over every `.xls` in the corpus rather than one named file: the point
+    is the population, and picking a favourite would let 55 regress unnoticed.
+    """
+    paths = sorted(CORPUS.glob("*/supplementary/*.xls"))
+    if not paths:
+        pytest.skip("no legacy .xls supplement in this corpus")
+    failed = []
+    for path in paths:
+        cards, status, meta = spreadsheet.cards_from_xls(path.read_bytes(), str(path), L)
+        if status != extractor.OK or not cards:
+            failed.append((str(path), status, meta.get("reason")))
+    assert not failed, failed
+
+
 def test_the_dimensionless_workbook_still_reads():
     """10.1038/s44161-025-00612-6, MOESM5: worksheets with no declared dimensions."""
     path = _needs("10.1038_s44161-025-00612-6/supplementary/05_44161_2025_612_MOESM5_ESM.xlsx")
@@ -488,6 +512,37 @@ def test_the_row_four_header_is_still_found():
     assert first.header_row == 3
     sex = next(c for c in first.columns if c["name"].lower() == "sex")
     assert sex["values"] == ["F", "M"]
+
+
+def test_the_non_zip_archives_still_read():
+    """The six files the tar and gzip paths were added for, checked against the real
+    bytes rather than a fixture.
+
+    Two shapes no synthetic archive in `tests/fakes.py` reproduces on its own, and
+    both of them decided the design: 10.1038/s41586-020-03182-8's MOESM4 is a plain
+    tar under a `.tgz` name (so `mode="r:gz"` reads nothing from it) with 176 of its
+    296 members AppleDouble junk, and 10.1126/science.adf5357's three `.gz` files
+    are one compressed table each, three of the five here carrying the inner file's
+    real name in the gzip header.
+
+    `too_large` is a pass, not a failure: 68, 128 and 329 MB of decompressed TSV
+    against a 50 MB `max_member_mb`. What must not happen is `unsupported_format`,
+    which is what all six said before and which claims there is no parser.
+    """
+    paths = [p for p in sorted(CORPUS.rglob("*"))
+             if p.is_file() and p.suffix.lower() in extractor.COMPRESSED_EXTENSIONS]
+    if not paths:
+        pytest.skip("no non-zip archive in this corpus")
+    verdicts = {}
+    for path in paths:
+        result = extractor.extract_path(path, path.name, L)
+        verdicts[path.name] = (result.status, result.n_tables, result.note)
+        assert result.status != extractor.UNSUPPORTED, (path.name, result.note)
+        assert result.status in {extractor.OK, extractor.TOO_LARGE}, (path.name, result.note)
+        if result.status == extractor.TOO_LARGE:
+            assert "max_member_mb" in (result.note or "")
+    assert any(status == extractor.OK and tables
+               for status, tables, _ in verdicts.values()), verdicts
 
 
 def test_springer_supplement_labels_are_still_joined():

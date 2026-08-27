@@ -230,20 +230,36 @@ def _cards_from_xlsx(
 def cards_from_xls(
     data: bytes, source_file: str, limits: Limits, overrides=None
 ) -> Tuple[List[tables.TableCard], str, dict]:
-    """Legacy binary `.xls`. One file in the 63-paper development corpus needs it.
+    """Legacy binary `.xls`. 56 supplements in the 393-article corpus need it.
 
-    `xlrd` 2.x reads only this format, which is exactly the reason to keep it
-    optional: without it the single file is reported as unsupported rather than
-    dragging in a dependency for 1 of 191 spreadsheets.
+    `xlrd` 2.x reads only this format, which was the whole argument for keeping it
+    an optional extra: one such file among the development corpus's 191
+    spreadsheets was not worth a dependency, and reporting it unsupported was
+    cheaper than acquiring one.
 
-    That file is not in a fetched corpus here, so this path is tested against a
-    stub standing in for `xlrd` rather than against real bytes.
+    That measurement is stale, and by a factor that reverses the decision. Over the
+    live corpus it is 56 files and 129 MB -- the largest block of supplementary
+    material this stage does not read -- so xlrd is a hard requirement
+    (requirements.txt carries the numbers) and the guard below now fires only on an
+    install that predates the promotion. It is kept for the same reason
+    `cards_from_xlsx` keeps one for openpyxl: a missing parser should name itself
+    rather than raise.
+
+    Installing xlrd is necessary and not sufficient. `extractor._parser_versions`
+    has to name it as well, or every one of those 56 files is served its cached
+    `unsupported_format` and a re-extract without `--force` changes nothing.
+
+    Covered against real bytes in `tests/fakes.py::make_xls`, which is a genuine
+    BIFF record stream that xlrd itself parses, and against the real publisher
+    files -- BIFF8 inside an OLE2 container, which no fixture here builds -- by
+    `tests/test_extract_corpus.py`.
     """
     try:
         import xlrd
     except ImportError:
         return [], UNSUPPORTED, {
-            "reason": "legacy .xls needs the optional xlrd package (pip install xlrd)"}
+            "reason": "legacy .xls needs the xlrd package, which this install does "
+                      "not have (pip install 'xlrd>=2.0')"}
 
     try:
         book = xlrd.open_workbook(file_contents=data)

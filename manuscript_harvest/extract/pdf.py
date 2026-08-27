@@ -34,13 +34,25 @@ Several clean-ups happen here and they change the characters:
   safe: without it the same test deleted `Reviewer #2 (Remarks to the Author):`
   from a peer-review file and a UMAP legend from a figure.
 
+**OCR, for pages that carry no text layer at all.** 70 supplements in this corpus
+extract as `no_text_scanned_pdf` -- 245 pages between them, median 3, longest 11 --
+and those are scans of tables and figure panels, not files with nothing in them.
+Where the `tesseract` binary is available they are rendered, read, and returned as
+`ok_via_ocr`: a status of its own, never folded into `ok`, because OCR'd characters
+are weaker evidence than a text layer the document actually carries. Where it is
+not available the file stays `no_text_scanned_pdf` and the reason names what to
+install. `_ocr_pass` is the whole account.
+
 Table structure is not recovered from PDFs. A supplementary PDF that is really a
 table still yields its cell text as paragraphs -- searchable, but not a card.
 That is a real gap; JATS and spreadsheets are where the tables come from.
 """
 
 import re
+import shutil
+import subprocess
 from collections import Counter
+from functools import lru_cache
 from typing import Dict, List, Optional, Tuple
 
 import fitz  # PyMuPDF
@@ -50,10 +62,16 @@ from .blocks import HEADING, PARAGRAPH, Block, strip_invisible
 from .limits import Limits
 
 OK = "ok"
+OK_VIA_OCR = "ok_via_ocr"
 NO_TEXT = "no_text"
 SCANNED = "no_text_scanned_pdf"
 UNREADABLE = "unreadable"
 GARBLED = "garbled_text_encoding"
+
+#: The language tesseract is told to expect. Not a `Limits` field: every paper in
+#: this corpus is in English, and a run that needs another one needs the matching
+#: tessdata installed as well, which is not something a config key can arrange.
+OCR_LANGUAGE = "eng"
 
 _HYPHEN_BREAK = re.compile(r"(\w)[-‐‑]\s*\n\s*(\w)")
 _PAGE_NUMBER = re.compile(r"^\s*(?:page\s*)?\d{1,4}\s*(?:of\s*\d{1,4})?\s*$", re.IGNORECASE)
@@ -613,14 +631,195 @@ def _running_lines(page_texts: List[List[Tuple[str, bool, dict]]],
             if count >= limits.running_header_min_pages}
 
 
+# -- OCR ---------------------------------------------------------------------
+
+@lru_cache(maxsize=1)
+def ocr_support() -> Tuple[str, str]:
+    """`(tessdata_path, "")` when OCR can run here, `("", why_not)` when it cannot.
+
+    An optional *system* dependency, handled the way `spreadsheet.cards_from_xls`
+    handles an optional Python one: the file keeps its old status and the reason
+    names what to install, rather than a traceback or a silent empty result.
+
+    `shutil.which` is asked first even though `fitz.get_tessdata` would answer the
+    same question, because of how it answers it. That function shells out to
+    `tesseract --list-langs`, then to `whereis tesseract-ocr` and `whereis
+    tesseract`, and on a machine without tesseract raises a RuntimeError whose text
+    is a list of glob patterns that did not match -- true, and no use at all to
+    whoever has to fix it. One `which` call turns that into a sentence with the
+    install command in it.
+
+    Cached because it is a subprocess. Asked once per file otherwise, which over
+    the 70 scanned supplements here is 70 processes to learn one fact that cannot
+    change during a run. `ocr_support.cache_clear()` is how a test moves it.
+    """
+    if shutil.which("tesseract") is None:
+        return "", ("scanned pages need the tesseract binary, which is not on PATH "
+                    "(macOS: brew install tesseract; Debian/Ubuntu: apt install "
+                    "tesseract-ocr)")
+    try:
+        return fitz.get_tessdata(), ""
+    except Exception as e:
+        # tesseract without its language data: PyMuPDF cannot start an OCR pass and
+        # the fix is a different package (`tesseract-ocr-eng`) from the binary.
+        return "", (f"tesseract is installed but its language data was not found "
+                    f"({type(e).__name__}: {e})")
+
+
+@lru_cache(maxsize=1)
+def tesseract_version() -> str:
+    """`"5.5.1"`, or `"absent"`. For the extraction cache key, not for a decision.
+
+    `extractor._parser_versions` records this for the same reason it records
+    `xlrd`: a parser that is not in the key is a parser whose arrival does not
+    invalidate anything, so installing tesseract would leave all 70 scanned
+    supplements serving the cached `no_text_scanned_pdf` from the install that
+    could not read them, and only `--force` would notice.
+
+    Being in the key means installing tesseract re-extracts every article, not only
+    the 70 with a scanned file in them. That is the same bluntness every other
+    entry in that dict has -- the key is per article and knows nothing about which
+    files are inside -- and the alternative, a key that varies with the previous
+    extraction's own outcome, is not one.
+    """
+    if shutil.which("tesseract") is None:
+        return "absent"
+    try:
+        out = subprocess.run(["tesseract", "--version"], capture_output=True,
+                             text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    first = (out.stdout or out.stderr or "").splitlines()
+    # `tesseract 5.5.1` on the first line, then leptonica and its dependencies.
+    return first[0].split()[-1] if first and first[0].split() else "unknown"
+
+
+def _render_with_ocr(data: bytes, limits: Limits, tessdata: str) -> bytes:
+    """Render every page, OCR the image, return a PDF that has a real text layer.
+
+    The point of returning a *PDF* rather than strings is that the result goes back
+    through `blocks_from_pdf`, so OCR'd text is de-hyphenated, stripped of
+    invisibles, checked for running heads and section-labelled by exactly the code
+    that does it for text a publisher typeset. Two parsers for the same job would
+    diverge, and the comparison between an `ok` file and an `ok_via_ocr` one is the
+    thing this whole status exists to support.
+
+    Each OCR'd page is placed back onto a page of the *original* size.
+    `pdfocr_tobytes` hands back a page the size of the pixmap -- at 300 dpi four
+    times the original in each direction -- and inserting that directly would
+    record every `locator_ref.bbox` in a coordinate space nothing else in the
+    corpus uses. `show_pdf_page` scales it back, so a bbox means the same thing on
+    an OCR'd file as on any other.
+
+    Measured over the 70 scanned supplements: 245 pages, 19.7 s of rendering at 300
+    dpi, 80 ms a page, largest pixmap 54 MB and transient. Whatever this pass costs
+    in practice is tesseract's time and not this.
+    """
+    source = fitz.open(stream=data, filetype="pdf")
+    out = fitz.open()
+    try:
+        for page in source:
+            pixmap = page.get_pixmap(dpi=limits.ocr_dpi)
+            layer = fitz.open(stream=pixmap.pdfocr_tobytes(
+                compress=True, language=OCR_LANGUAGE, tessdata=tessdata),
+                filetype="pdf")
+            try:
+                target = out.new_page(width=page.rect.width, height=page.rect.height)
+                target.show_pdf_page(target.rect, layer, 0)
+            finally:
+                layer.close()
+        return out.tobytes()
+    finally:
+        source.close()
+        out.close()
+
+
+def _ocr_pass(data: bytes, source_file: str, limits: Limits, blocks: List[Block],
+              meta: dict) -> Tuple[List[Block], str, dict]:
+    """A PDF with no text layer -> `ok_via_ocr`, or `no_text_scanned_pdf` and why.
+
+    `ok_via_ocr` is deliberately not `ok`. Three reasons, in the order they matter:
+    OCR'd characters are a guess where a text layer is a fact, so the downstream
+    perturbation stage should be free to weight a claim resting on them
+    differently; `no_text_scanned_pdf` has to go on meaning "a scan nobody has read"
+    rather than quietly becoming "a scan, or a scan we read, you cannot tell"; and a
+    corpus-wide count of how much of the evidence came from OCR is worth being able
+    to take.
+
+    Every way this can decline leaves the file exactly as it was -- the original
+    status, the original blocks, which are the handful of characters a scanned page
+    does yield -- and puts the cause in `reason`, where the review queue shows it.
+
+    Not applied to `garbled_text_encoding`, which returns before this is reached and
+    is arguably the better candidate: those two files render perfectly and only
+    their text layer is broken, which is precisely what OCR is for. Left alone
+    because the measurement behind this pass is the 70 scanned files, and a status
+    that means "the fonts do not say what their glyphs are" should not start
+    sometimes meaning "and we OCR'd it anyway" without its own measurement.
+    """
+    pages = meta.get("pages") or 0
+    if not pages:
+        # A PDF that opens and declares no pages reaches the scanned branch, having
+        # produced no characters. Said plainly here because the alternative is
+        # `_render_with_ocr` raising `cannot save with zero pages` and this
+        # returning "OCR failed", which blames the wrong thing.
+        meta["reason"] = "the document declares no pages; there is nothing to OCR"
+        return blocks, SCANNED, meta
+    tessdata, why_not = ocr_support()
+    if not tessdata:
+        meta["reason"] = why_not
+        return blocks, SCANNED, meta
+    if pages > limits.max_ocr_pages:
+        meta["reason"] = (f"{pages} pages is over the {limits.max_ocr_pages}-page OCR "
+                          f"cap (`max_ocr_pages`); a scan this long is a document to "
+                          f"read by hand rather than a supplementary table")
+        return blocks, SCANNED, meta
+
+    try:
+        rendered = _render_with_ocr(data, limits, tessdata)
+    except Exception as e:
+        # One file's OCR must not cost the run, the same rule the page loop above
+        # follows. A tesseract that is present and broken is a real shape: a
+        # language pack half-installed answers this way.
+        meta["reason"] = f"OCR failed: {type(e).__name__}: {e}"
+        return blocks, SCANNED, meta
+
+    ocr_blocks, status, ocr_meta = blocks_from_pdf(rendered, source_file, limits,
+                                                   ocr=False)
+    if status != OK or not ocr_blocks:
+        meta["reason"] = (f"OCR at {limits.ocr_dpi} dpi found "
+                          f"{ocr_meta.get('chars', 0)} characters, under "
+                          f"{limits.min_pdf_text_chars}: the pages carry no legible "
+                          f"text, not merely no text layer")
+        meta["ocr"] = {"dpi": limits.ocr_dpi, "language": OCR_LANGUAGE,
+                       "pages": pages, "chars": ocr_meta.get("chars", 0)}
+        return blocks, SCANNED, meta
+
+    # The OCR parse's own meta describes the document the blocks came from, so it
+    # wins; the original parse's findings about the file on disk are kept under it.
+    merged = {**meta, **ocr_meta}
+    merged.pop("reason", None)
+    merged["ocr"] = {"dpi": limits.ocr_dpi, "language": OCR_LANGUAGE, "pages": pages,
+                     "chars": ocr_meta.get("chars", 0)}
+    return ocr_blocks, OK_VIA_OCR, merged
+
+
 def blocks_from_pdf(
-    data: bytes, source_file: str, limits: Limits
+    data: bytes, source_file: str, limits: Limits, ocr: bool = True
 ) -> Tuple[List[Block], str, dict]:
     """Parse one PDF. Returns `(blocks, status, meta)`.
 
     `no_text_scanned_pdf` is a distinct status from `no_text` on purpose: it means
-    the file is the article but needs an OCR step this pipeline does not have,
-    which is a different problem from a file that genuinely has nothing in it.
+    the file is the article and its pages are images, which is a different problem
+    from a file that genuinely has nothing in it. Where tesseract is installed such
+    a file now goes through `_ocr_pass` and comes back `ok_via_ocr`; where it is not,
+    the status stands and says what to install.
+
+    `ocr=False` is the recursion guard, and the reason the OCR pass returns a PDF
+    rather than text: it renders the pages, has tesseract read them, and feeds the
+    result -- which has a text layer of its own -- back through this same function,
+    so OCR'd text gets exactly the treatment real text gets. Passing True on that
+    inner call would OCR the OCR.
     """
     try:
         document = fitz.open(stream=data, filetype="pdf")
@@ -778,5 +977,7 @@ def blocks_from_pdf(
         return [], GARBLED, meta
 
     if body_chars < limits.min_pdf_text_chars:
-        return blocks, SCANNED, meta
+        if not ocr:
+            return blocks, SCANNED, meta
+        return _ocr_pass(data, source_file, limits, blocks, meta)
     return blocks, OK, meta

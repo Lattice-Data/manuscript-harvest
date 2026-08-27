@@ -52,10 +52,12 @@ rather than a comment.
 **Archives are kept**, although no extension in them is text. `.zip` alone is
 5.05 GB of the 5.11 GB archive total, and those zips are mostly supplementary
 tables; `extract/extractor.py` already unpacks them and reads the members, so a
-zip is a text-bearing file with a lid on. `.gz`/`.tar`/`.tgz` come along because
-the same publishers use them for the same content, even where the extractor
-currently reports `unsupported_format` for them -- refusing to fetch a file is a
-much more expensive mistake than not yet having a parser for it.
+zip is a text-bearing file with a lid on. `.gz`/`.tar`/`.tgz` came along because
+the same publishers use them for the same content, at a time when the extractor
+reported `unsupported_format` for all of them -- refusing to fetch a file being a
+much more expensive mistake than not yet having a parser for it. That bet paid:
+`extract/archive.py` now reads them too, and five of the six such files here turned
+out to be a single compressed supplementary table each.
 
 **Scanned PDFs stay too**, and cannot be helped from here: 68 supplements in this
 corpus extract as `no_text_scanned_pdf`, which is only knowable after the bytes
