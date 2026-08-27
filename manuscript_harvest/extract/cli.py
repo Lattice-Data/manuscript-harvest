@@ -57,6 +57,20 @@ def load_config(path) -> dict:
         fetch_corpus = (raw.get("fetch") or {}).get("corpus_dir")
         if fetch_corpus:
             config["extract"]["corpus_dir"] = fetch_corpus
+    # The same rule for the per-file size cap, and for a sharper version of the
+    # same reason: `max_file_mb` is the name of a key in *both* sections, so the
+    # two disagreed without anything to notice. `fetch.max_file_mb` was raised to
+    # 500 while this one stayed at its 200 default, and the result was seven
+    # supplementary files across six articles fetched, stored and then refused by
+    # the reader -- 1.09 GB of text-bearing bytes on disk that no question could
+    # see, reported as `too_large` by a cap the config never names. A reader
+    # stricter than the fetcher is a legitimate thing to want, so an explicit
+    # `extract.limits.max_file_mb` still wins; it just has to be said out loud.
+    raw_limits = (raw.get("extract") or {}).get("limits") or {}
+    if "max_file_mb" not in raw_limits:
+        fetch_cap = (raw.get("fetch") or {}).get("max_file_mb")
+        if fetch_cap:
+            config["extract"]["limits"]["max_file_mb"] = fetch_cap
     return config
 
 

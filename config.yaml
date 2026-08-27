@@ -168,6 +168,10 @@ extract:
   write_markdown: true          # also write extracted/article.md for reading
 
   limits:
+    # max_file_mb is NOT listed here on purpose: it defaults to fetch.max_file_mb
+    # above, so raising the fetcher's per-file cap cannot strand files the reader
+    # then refuses. Uncomment only to make the reader stricter than the fetcher.
+    # max_file_mb: 200
     max_scan_rows: 5000         # rows profiled per sheet (one test corpus sheet is 16,596 x 88)
     max_unique_values: 25       # a column with at most this many values is enumerated
     max_unique_numeric_values: 12

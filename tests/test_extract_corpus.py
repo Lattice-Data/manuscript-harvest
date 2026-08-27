@@ -543,7 +543,16 @@ def test_the_non_zip_archives_still_read():
         assert result.status != extractor.UNSUPPORTED, (path.name, result.note)
         assert result.status in {extractor.OK, extractor.TOO_LARGE}, (path.name, result.note)
         if result.status == extractor.TOO_LARGE:
-            assert "max_member_mb" in (result.note or "")
+            # Either cap is a legitimate refusal, and which one fires depends on
+            # the limits in play. `L` is `Limits()`, whose `max_file_mb` default is
+            # 200, so 10.1126/science.aat1699's 364 MB `.gz` is refused on its size
+            # on disk before its trailer is ever read -- where the three smaller
+            # ones get far enough to declare 68, 128 and 329 MB decompressed and
+            # hit `max_member_mb`. Production config no longer sits at 200: the
+            # extract cap follows `fetch.max_file_mb` (see `cli.load_config`), so
+            # pinning one cap here would pin the wrong one for a real run.
+            note = result.note or ""
+            assert "max_member_mb" in note or "MB cap" in note, (path.name, note)
     assert any(status == extractor.OK and tables
                for status, tables, _ in verdicts.values()), verdicts
 
