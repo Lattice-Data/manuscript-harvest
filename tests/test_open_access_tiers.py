@@ -1334,8 +1334,9 @@ def test_a_refused_figure_never_spends_a_cap_slot_a_table_needed():
     re-loses the same tables.
 
     A cap this small is what makes the ordering visible at all: every other
-    text-bearing test here runs at the shipped `max_files: 50` over four files, where
-    both orders give the same answer.
+    text-bearing test here runs far below the shipped `max_files`, where both orders
+    give the same answer. The number is passed in rather than read from config so
+    raising the shipped cap cannot quietly stop this from testing anything.
     """
     stem = "41590_2023_1504"
     figures = [(f"{V1}/{stem}_Fig{n}_ESM.jpg", 100) for n in range(1, 3)]

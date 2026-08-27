@@ -56,8 +56,11 @@ DEFAULT_FETCH_CONFIG = {
     # takes editing it to a slower number rather than deleting the line.
     "min_interval_overrides": {"pmc-oa-opendata.s3.amazonaws.com": 0.2},
     "timeout_seconds": 60,
-    "max_file_mb": 200,
-    "max_files": 50,
+    # Kept in step with `config.yaml`, which carries the measurement behind the
+    # numbers: at 50 and 200 one article in 393 lost files to the count and two lost
+    # to the size, and all three fit under these.
+    "max_file_mb": 500,
+    "max_files": 300,
     "max_corpus_gb": None,
     # Fetch only supplementary files text can be extracted from -- see
     # `manuscript_harvest/text_bearing.py` for the sets and the measurement. Here as
