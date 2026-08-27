@@ -161,8 +161,8 @@ class SnapshotCache:
             fresh = self._value is not None and (time.monotonic() - self._at) < self.ttl
             if fresh and not force:
                 return self._value
-        # Computed outside the lock: it walks the whole corpus, and a slow walk
-        # should not block the endpoint that reports a running job's progress.
+        # Recomputed outside the lock: this walks the whole corpus, and a slow walk
+        # must not block the endpoint reporting a running job's progress.
         value = corpus_snapshot(self.corpus_dir)
         with self._lock:
             self._value = value
@@ -170,8 +170,18 @@ class SnapshotCache:
             return value
 
     def invalidate(self) -> None:
+        """Drop the cached value, rather than backdating the time it was taken.
+
+        Dropping the *value* and not the timestamp, because `time.monotonic()` is
+        measured from an arbitrary origin -- on Linux and macOS, the boot. Setting
+        `_at = 0.0` as a "long ago" sentinel therefore means "invalid" only on a
+        machine that has been up longer than the TTL: on a CI runner 30 seconds into
+        its life, `30.0 - 0.0 < 3600` reads as *fresh* and the invalidate did
+        nothing. That is how this was found -- the test passed on a workstation with
+        seven days of uptime and failed on all four CI interpreters.
+        """
         with self._lock:
-            self._at = 0.0
+            self._value = None
 
 
 def _sniff_doi_list(path: Path) -> dict:

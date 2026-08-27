@@ -301,6 +301,26 @@ def test_the_cache_is_invalidated_rather_than_waited_out(tmp_path):
     assert cache.get()["papers"] == 2
 
 
+def test_invalidating_works_on_a_machine_that_just_booted(tmp_path, monkeypatch):
+    """`time.monotonic()` counts from the boot, so a "long ago" sentinel timestamp
+    means "invalid" only on a host that has been up longer than the TTL.
+
+    This is the shape of the bug CI caught: the first version of `invalidate` set
+    the timestamp to 0.0, which on a runner 30 seconds into its life still read as
+    fresh. Pinned by pretending to be that runner, so the fix cannot regress on a
+    workstation with a week of uptime.
+    """
+    corpus = tmp_path / "corpus"
+    _article(corpus, "10.1038/a")
+    monkeypatch.setattr(state.time, "monotonic", lambda: 30.0)
+    cache = state.SnapshotCache(corpus, ttl=3600)
+    assert cache.get()["papers"] == 1
+
+    _article(corpus, "10.1038/b")
+    cache.invalidate()
+    assert cache.get()["papers"] == 2
+
+
 # -- the job runner -----------------------------------------------------------
 
 def _python(code):
