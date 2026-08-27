@@ -820,6 +820,25 @@ def fetch_publication(
     if swept["files"]:
         record["orphans_swept"] = {"files": len(swept["files"]),
                                    "bytes": swept["bytes"]}
+    if swept["kept"]:
+        # **The line that says a re-fetch went backwards.** An unreferenced file whose
+        # bytes are stored under no other name is not renumbering residue -- it is a
+        # file the previous record named and this run did not replace, which happens
+        # when a tier comes back with *less* rather than with nothing. The
+        # preservation branch above covers only the nothing case, so this is the
+        # article's own record telling a reader that the set on disk shrank, and where
+        # to look. 10.1126/science.aax6234 is the measured case: seven supplements,
+        # 58.4 MB, re-fetched into three at 9.4 MB while its own problems said "5 of 8
+        # ... could not be fetched".
+        record["orphans_kept"] = {"files": len(swept["kept"]),
+                                  "bytes": swept["kept_bytes"]}
+        record["problems"].append(
+            f"{len(swept['kept'])} file(s) from an earlier fetch "
+            f"({store.human_bytes(swept['kept_bytes'])}) are no longer referenced by "
+            f"this record and are stored nowhere else, so they were left on disk: "
+            f"this re-fetch returned a smaller supplement set than the one already "
+            f"there. Inspect with `manuscript-fetch drop-orphans {record['slug']}`"
+        )
     for failure in swept["failed"]:
         # Recorded but not fatal: the manifest is already written and correct, and a
         # stale file that could not be unlinked is exactly what `drop-orphans` is for.
@@ -827,7 +846,7 @@ def fetch_publication(
             f"could not remove the unreferenced file {failure['path']}: "
             f"{failure['error']}"
         )
-    if swept["files"] or swept["failed"]:
+    if swept["files"] or swept["kept"] or swept["failed"]:
         store.write_manifest(directory,
                              {k: v for k, v in record.items() if k != "_directory"})
 

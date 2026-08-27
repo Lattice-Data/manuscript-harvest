@@ -19,21 +19,29 @@ of them while `usage` counted it against `fetch.max_corpus_gb`.
 and `07_media-7.xlsx`, all 1057643 bytes, mtimes spread across four separate runs
 (Aug 25 15:12, Aug 26 08:30, Aug 26 17:02, Aug 27 09:00). Only `07_` is referenced.
 
-Two callers, one question, different remedies:
+**Content decides, on both paths, and it did not always.** 136 of those 202 files
+were byte-identical to a file the manifest still references and 51 were bytes found
+nowhere else, so a blanket delete would have destroyed 0.869 GB of supplements a
+manifest had merely lost track of. `drop-orphans` was built with that guard;
+`sweep_article` was not, on an argument about renumbering that held for the files it
+was written for and failed for the ones it met -- it deleted 49 MB of
+`10.1126/science.aax6234`'s supplements before the reasoning was corrected. That
+account is in `sweep_article`, at the code it constrains.
+
+Two callers, one question, and what differs is only who decides about the bytes that
+are stored nowhere else:
 
 - `sweep_article` runs inside `fetch_publication`, immediately after the manifest is
-  written, and deletes unconditionally. Anything the *final* record does not
-  reference was orphaned by the run that just finished, so there is nothing to weigh.
-  It does **not** run on a cached hit, which returns at `fetcher.py:445` before the
-  write-out block: a `batch` over 393 cached articles would then delete bytes while
-  doing no fetching at all, which is the surprise the report-by-default convention
-  exists to prevent. A fetch cleans up after itself; residue from runs that predate it
-  is `drop-orphans`' job, and a human asks for that.
+  written. It deletes what the corpus still holds elsewhere and *keeps* the rest,
+  leaving it for the command to report -- so a fetch never needs a human, and never
+  takes a byte a human should have been asked about. It does **not** run on a cached
+  hit, which returns at `fetcher.py:445` before the write-out block: a `batch` over
+  393 cached articles would then delete bytes while doing no fetching at all, which
+  is the surprise the report-by-default convention exists to prevent.
 - `classify` and `sweep_corpus` back the `drop-orphans` command, which faces residue
-  from runs whose records are long overwritten. There, content matters: 136 of the
-  202 files were byte-identical to a file the manifest still references and 51 were
-  bytes found nowhere else, so a blanket delete would have destroyed 0.869 GB of
-  supplements a manifest had merely lost track of.
+  from runs whose records are long overwritten. It reports the unique bytes per
+  article with the evidence and takes `--include-unique` to remove them, because
+  there the answer depends on the article and only a human has it.
 
 **Why this is not part of `drop-media`.** That command walks entry lists and deletes
 the file an entry names, keeping the entry as the record (`store.mark_entry_removed`).
@@ -70,15 +78,16 @@ _MAX_ARCHIVE_READ = 2 * 1024 ** 3
 
 #: Classification of one unreferenced file, by content rather than by name.
 #: `REDUNDANT` and `REDUNDANT_ARCHIVE` are provably lossless to delete; `UNIQUE` is
-#: not, and `sweep_article`'s callers are the only ones entitled to ignore the
-#: difference (see the module docstring).
+#: not, and nothing is entitled to ignore the difference -- see `sweep_article` for
+#: what happened when the fetch path was.
 REDUNDANT = "redundant"
 REDUNDANT_ARCHIVE = "redundant_archive"
 UNIQUE = "unique"
 
 #: Deletable without losing a byte the corpus does not still hold elsewhere. Read
-#: this rather than restating the pair -- `cli.cmd_drop_orphans` and
-#: `sweep_article` both key on it.
+#: this rather than restating the pair -- `cli.cmd_drop_orphans` and `sweep_article`
+#: both key on it, and that they key on the *same* set is the fix for the loss
+#: `sweep_article` records.
 LOSSLESS = {REDUNDANT, REDUNDANT_ARCHIVE}
 
 
@@ -150,30 +159,72 @@ def unreferenced_files(directory, record: Optional[dict]) -> List[dict]:
 
 
 def sweep_article(directory, record: Optional[dict]) -> dict:
-    """Delete every file `record` does not reference. Returns what went.
+    """Delete the files `record` does not reference whose bytes it still holds.
 
-    The half of this module that runs during a fetch, where classification would be
-    noise: the record was written seconds ago from the set the tiers actually
-    returned, so an unreferenced file is one this run's renumbering just abandoned
-    and its content is either still on disk under the new number or was never wanted.
-
-    Returns `{"files": [...], "bytes": int, "failed": [...], "emptied_dirs": [...]}`.
+    Returns `{"files", "bytes", "kept", "kept_bytes", "failed", "emptied_dirs"}`.
     Never raises: a fetch that has already written a good manifest must not fail
     because a stale file could not be unlinked. A file left behind is the state this
     module exists to clean up and the next sweep will offer it again, which is the
     strictly better failure.
+
+    **This weighed no content until it deleted 49 MB of supplements, and the
+    reasoning it used to carry is recorded here because it was wrong.** It said an
+    unreferenced file during a fetch is one this run's renumbering just abandoned, so
+    its content is "either still on disk under the new number or was never wanted".
+    The first clause is true. The second is false, and `--force` is what finds out:
+
+        10.1126/science.aax6234, 2026-08-27. Seven supplements on disk and
+        referenced, 58.4 MB. A --force re-fetch came back with three, 9.4 MB --
+        its own manifest still saying "5 of 8 supplementary file(s) listed on the
+        page could not be fetched" and "the browser tier is required for them".
+        The smaller list won, the other four entries left the record, and this
+        function deleted their bytes. 10.1038/s41588-025-02454-1 lost two files
+        the same way in the same batch.
+
+    The preservation branch at `fetcher.py:737` does not cover it: it fires only when
+    a re-fetch returns *nothing* (`if new_supplementary: ... elif
+    existing_supplementary_ok:`), so a run that returns *less* replaces the record
+    and takes the difference with it. That was a record-level loss before this module
+    existed -- the bytes survived on disk as orphans, and re-referencing them was a
+    manual but real repair. Sweeping them turned it into byte-level loss.
+
+    So the fetch path now applies the same guard as the command: a file goes only when
+    its content is still stored under a name the record does reference. Anything else
+    stays, and the caller says so in `problems` -- which is the honest signal, because
+    an unreferenced file whose bytes are nowhere else means *this re-fetch got a worse
+    set than what was already there*, and that is worth a line in the manifest rather
+    than a silent deletion.
+
+    The renumbering case this was built for is untouched: a file abandoned by
+    renumbering is byte-identical to its new copy, so it classifies `REDUNDANT` and
+    still goes. Costs one hash of the article's referenced files, and only when there
+    are candidates at all -- zero for an ordinary fetch that renumbered nothing, and
+    nothing next to the requests that produced the files.
     """
     directory = Path(directory)
     candidates = unreferenced_files(directory, record)
-    result: dict = {"files": [], "bytes": 0, "failed": [], "emptied_dirs": []}
-    for item in candidates:
-        try:
-            (directory / item["path"]).unlink()
-        except OSError as error:
-            result["failed"].append({"path": item["path"], "error": str(error)})
+    result: dict = {"files": [], "bytes": 0, "kept": [], "kept_bytes": 0,
+                    "failed": [], "emptied_dirs": []}
+    if not candidates:
+        return result
+    # `inspect_archives=False`: the archive walk answers "could this archive be
+    # reconstructed from what is stored", which is a recovery question for residue
+    # left by runs whose records are gone. A renumbered archive is byte-identical to
+    # its new copy and the plain hash already resolves it, so opening one here would
+    # buy nothing and could cost a 347 MB decompression on the article that prompted
+    # this fix.
+    for row in classify(directory, record, candidates, inspect_archives=False):
+        if row["kind"] not in LOSSLESS:
+            result["kept"].append(row["path"])
+            result["kept_bytes"] += row["bytes"]
             continue
-        result["files"].append(item["path"])
-        result["bytes"] += item["bytes"]
+        try:
+            (directory / row["path"]).unlink()
+        except OSError as error:
+            result["failed"].append({"path": row["path"], "error": str(error)})
+            continue
+        result["files"].append(row["path"])
+        result["bytes"] += row["bytes"]
     if result["files"]:
         result["emptied_dirs"] = _prune_empty_dirs(directory)
     return result
@@ -287,7 +338,8 @@ _ARCHIVE_SUFFIXES = (".zip", ".tar", ".tgz", ".gz", ".bz2", ".xz")
 
 
 def classify(directory, record: Optional[dict],
-             candidates: Optional[List[dict]] = None) -> List[dict]:
+             candidates: Optional[List[dict]] = None,
+             inspect_archives: bool = True) -> List[dict]:
     """Decide, per unreferenced file, whether deleting it would lose anything.
 
     Returns the `unreferenced_files` rows with `kind` added, plus `same_as` for a
@@ -299,6 +351,10 @@ def classify(directory, record: Optional[dict],
     51 `unique` (0.869 GB), 15 of those 51 duplicates of each other (0.019 GB).** So
     two thirds of the count is provably lossless and two thirds of the bytes are not,
     which is why the report separates them instead of offering one number.
+
+    `inspect_archives=False` skips the member walk, leaving an archive to stand or
+    fall on its own bytes. `sweep_article` passes it -- see there for why the fetch
+    path does not need the question that walk answers.
 
     `REDUNDANT_ARCHIVE` is the case that would otherwise be filed as `unique` and
     left for a human forever: `10.1126/science.abo1984`'s orphaned
@@ -345,6 +401,8 @@ def classify(directory, record: Optional[dict],
             # preserve the content, and choosing which one is a human's call, not a
             # sweep's.
             row["copies"] = copies
+        if not inspect_archives:
+            continue
         if Path(row["path"]).suffix.lower() not in _ARCHIVE_SUFFIXES:
             continue
         members = _member_hashes(directory / row["path"])

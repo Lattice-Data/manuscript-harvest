@@ -402,7 +402,17 @@ budget.
 A fetch now sweeps its own leavings, immediately **after** writing the manifest — a
 crash between the two leaves stale files, which is recoverable, where the reverse
 leaves the record naming files that are gone, which makes every later batch re-fetch
-the article. For what earlier runs left behind:
+the article.
+
+**It only removes bytes the corpus still holds under a referenced name.** A file
+abandoned by renumbering is byte-identical to its new copy, so it goes; a file the
+previous record named and this run did not replace stays, and the manifest gets an
+`orphans_kept` entry and a `problems` line saying the supplement set shrank. That
+distinction is not decoration — without it, a `--force` re-fetch that comes back with
+*fewer* files than are already on disk deletes the difference. The preservation branch
+that protects a re-fetch which returns *nothing* does not cover returning *less*, and
+`10.1126/science.aax6234` lost four supplements (49 MB) that way before the guard
+existed. For what earlier runs left behind:
 
     manuscript-fetch drop-orphans                    # report only
     manuscript-fetch drop-orphans --apply            # delete the provable duplicates
