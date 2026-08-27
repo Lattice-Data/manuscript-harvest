@@ -44,8 +44,21 @@ fetch:
     "api.elsevier.com": 0.2
 
   timeout_seconds: 60
-  max_files: 50                           # supplementary files per article; anything dropped is recorded
-  max_file_mb: 200
+
+  # Supplementary files per article, and the ceiling on any one of them. Anything a
+  # cap drops is recorded rather than silently skipped, which is how the old values
+  # were measured: at 50 files and 200 MB exactly one article in 393 lost anything to
+  # the file count -- 10.1126/science.abo1984, whose PMC deposit holds 265
+  # supplementary objects, 215 of them dropped -- and exactly two files in the whole
+  # corpus were refused for size, at 423.2 MB and 273.5 MB. Both now fit.
+  #
+  # Raised together because they bound the same thing from two directions and the
+  # measured cost is small: those three articles account for roughly 0.8 GB, taking
+  # the corpus from 84% to about 87% of max_corpus_gb below. The budget stays the
+  # real backstop -- it evicts oldest-first and keeps the manifest -- so a future
+  # article with a 300-file deposit cannot quietly fill the disk.
+  max_files: 300
+  max_file_mb: 500
 
   # Fetch only supplementary files text can be extracted from. Measured over this
   # corpus: 2428 of the 5116 stored supplementary entries (47%) are images, audio or
