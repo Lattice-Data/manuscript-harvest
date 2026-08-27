@@ -2200,7 +2200,7 @@ def test_a_line_numbered_manuscript_is_detected_and_an_ordinary_pdf_is_not():
                      for n in range(1, 41)])
     assert pdf._line_numbered([numbered]) is True
 
-    plain = page([f"a manuscript line of ordinary body text here"
+    plain = page(["a manuscript line of ordinary body text here"
                   for _ in range(40)])
     assert pdf._line_numbered([plain]) is False
 
@@ -2215,7 +2215,7 @@ def test_a_line_numbered_manuscript_is_detected_and_an_ordinary_pdf_is_not():
 def test_the_detector_needs_the_numbers_to_ascend():
     """The fraction alone would qualify a document whose lines happen to end in a
     repeated figure number."""
-    same = [[(f"a manuscript line of ordinary body text here 7", False, {})
+    same = [[("a manuscript line of ordinary body text here 7", False, {})
              for _ in range(40)]]
     assert pdf._line_numbered(same) is False
 
