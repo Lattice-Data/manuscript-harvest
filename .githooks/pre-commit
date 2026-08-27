@@ -1,0 +1,44 @@
+#!/bin/sh
+# Run the same lint gate CI runs, before the commit exists rather than after it is
+# pushed.
+#
+# This is here because the gate caught two F541s (f-strings with no placeholders) in
+# CI on a branch whose author had run the whole test suite and never run ruff. The
+# suite passing is not evidence about lint, and a red check on a pushed branch costs
+# a round trip to learn something a local command answers in 33 milliseconds.
+#
+# Version controlled rather than written into .git/hooks, which is not shared and
+# not reviewable. Git does not install it for you; opt in once per clone with:
+#
+#     git config core.hooksPath .githooks
+#
+# Deliberately the whole tree and not just the staged files. It is fast enough that
+# scoping would be a premature optimisation, and `--select F` includes rules like
+# "undefined name" whose answer depends on files the commit does not touch: linting
+# only the staged half of a rename would report an error that does not exist, or miss
+# one that does.
+#
+# Bypass with `git commit --no-verify` when committing work in progress on purpose.
+set -e
+
+# Prefer the interpreter's ruff so this agrees with `pip install -r
+# requirements-dev.txt` in the active environment, and fall back to one on PATH.
+if python -c "import ruff" 2>/dev/null; then
+    RUFF="python -m ruff"
+elif command -v ruff >/dev/null 2>&1; then
+    RUFF="ruff"
+else
+    # Not an error. A clone that has not installed the dev requirements should still
+    # be able to commit; CI remains the gate that cannot be skipped.
+    echo "pre-commit: ruff not installed, skipping lint" >&2
+    echo "pre-commit: install it with 'pip install -r requirements-dev.txt'" >&2
+    exit 0
+fi
+
+if ! $RUFF check --select F manuscript_harvest tests; then
+    echo >&2
+    echo "pre-commit: ruff found errors CI will also reject." >&2
+    echo "pre-commit: most are auto-fixable --" >&2
+    echo "    $RUFF check --select F --fix manuscript_harvest tests" >&2
+    exit 1
+fi

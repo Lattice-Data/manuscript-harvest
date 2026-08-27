@@ -36,7 +36,11 @@ dependencies = [
 # The library-proxy tier. Kept out of the base install so the open-access path
 # stays dependency-light and CI needs no browser.
 browser = ["playwright>=1.45"]
-dev = ["pytest>=7.0", "pytest-cov>=4.0"]
+# Kept in step with requirements-dev.txt, which carries the reasoning for each pin.
+# `ruff` is in both because the lint job is a gate: `pip install -e '.[dev]'` and
+# `pip install -r requirements-dev.txt` have to hand a developer the same toolchain,
+# or one of the two routes cannot reproduce a CI failure.
+dev = ["pytest>=7.0", "pytest-cov>=4.0", "ruff>=0.15"]
 # There is no `xls` extra any more. `xlrd>=2.0` was one until the .xls count over
 # the live corpus turned out to be 56 files and 129 MB rather than the 1 of 191
 # spreadsheets it was made optional for; it is now a hard dependency above, and

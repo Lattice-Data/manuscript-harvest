@@ -1,9 +1,24 @@
-# Test dependencies. The suite is offline -- no network, no browser -- so it needs
-# nothing beyond pytest and the runtime requirements.
+# Development dependencies: the test suite and the lint gate. The suite is offline
+# -- no network, no browser -- so it needs nothing beyond pytest and the runtime
+# requirements.
 #
 #   pip install -r requirements.txt -r requirements-dev.txt
 #   python -m pytest tests -q
+#   ruff check --select F manuscript_harvest tests
 pytest>=7.0
 # pytest-cov 4.0 is the first release that can emit lcov, which is what CI hands to
 # Coveralls; it also pulls a coverage.py new enough to produce it.
 pytest-cov>=4.0
+# Listed because the lint job is a *gate*, and until it was listed the gate ran a
+# version nothing declared: the workflow said a bare `pip install ruff`, so CI took
+# whatever was newest that morning and a developer had no way to ask for the same
+# thing. A lint failure that nobody can reproduce locally is the one failure mode a
+# linter must not have.
+#
+# A floor and no ceiling, which for a linter needs the argument. The gate is
+# `--select F` -- pyflakes only: unused imports, undefined names, f-strings with no
+# placeholders -- and that rule set has been stable for years, so a new ruff is not
+# expected to invent an F-rule that fails this tree. It is deliberately not the
+# whole default rule set, which does move: see the comment on the lint job in
+# .github/workflows/tests.yml for why formatting is not gated here at all.
+ruff>=0.15

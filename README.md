@@ -952,6 +952,17 @@ Two CI jobs: the suite across Python 3.10–3.13 with coverage gated at 90%, and
 gate, because this repo's style is hand-maintained and reformatting would bury the
 comments explaining why the odd branches exist.
 
+The lint gate has a hook, because a passing suite is not evidence about lint and
+finding out from a red check on a pushed branch costs a round trip. Opt in once per
+clone:
+
+    git config core.hooksPath .githooks
+
+`.githooks/pre-commit` then runs exactly the command CI runs, over the whole tree, in
+about 30 ms. A clone that has not installed the dev requirements is not blocked — the
+hook says ruff is missing and lets the commit through, leaving CI as the gate that
+cannot be skipped. `git commit --no-verify` bypasses it deliberately.
+
 The coverage figure CI reports is always the no-corpus one:
 `tests/test_extract_corpus.py` skips itself without a local `corpus/`, so running
 with one present reads about a point higher than the badge.

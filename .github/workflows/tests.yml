@@ -90,9 +90,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install ruff
+      # From the requirements file rather than a bare `pip install ruff`, so the
+      # version this gate runs is the version a developer can install. It was
+      # unpinned here and undeclared anywhere, which meant a lint failure could not
+      # be reproduced locally except by guessing.
+      - run: pip install -r requirements-dev.txt
       # Correctness rules only (F = pyflakes: unused imports, undefined names,
       # f-strings with no placeholders). Deliberately not a formatting gate --
       # this repo's style is hand-maintained and reformatting it would bury the
       # comments that explain why the odd branches exist.
+      #
+      # The same command is in .githooks/pre-commit, which is the point: this job
+      # should be confirming a result rather than discovering it. Keep the two in
+      # step if the rule selection ever changes.
       - run: ruff check --select F manuscript_harvest tests
