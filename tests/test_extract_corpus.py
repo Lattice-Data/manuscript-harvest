@@ -354,7 +354,10 @@ EXPECTED_SCORES = Path("tests/expected_section_scores.json")
 #: Recorded on PyMuPDF 1.28.0, and it does not reproduce on any earlier release --
 #: measured on 1.24.0, 1.24.14, 1.25.5, 1.26.7, 1.27.1, 1.27.2, 1.27.2.2 and
 #: 1.27.2.3, all of which fail this gate. That is why `requirements.txt` floors
-#: pymupdf at 1.28.
+#: pymupdf, and the floor is now 1.28.2 rather than the 1.28.0 recorded here: this
+#: file reproduces unchanged on 1.28.2 (both papers, same `aligned` and `correct`),
+#: so the floor moved for the extraction cache key and not for these numbers. See
+#: requirements.txt for the corpus that came out split between the two.
 #:
 #: Read the failure carefully before believing an older release labels badly. What
 #: moves is mostly the *alignable sample*, not the accuracy: on 1.27.2.3 the two
