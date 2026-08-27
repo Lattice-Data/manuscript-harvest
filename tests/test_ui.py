@@ -268,6 +268,51 @@ def test_the_snapshot_counts_articles_the_way_both_stages_count_them(tmp_path):
                                                        "10.1038_c"}
 
 
+def test_every_row_carries_one_explicit_sentence_beside_the_raw_words(tmp_path):
+    """The panel's three status columns became one cell; both feeds must fill it.
+
+    The three raw fields stay on the row -- the page shows them as the cell's
+    tooltip, and an API caller may want either -- so this pins the sentence being
+    added rather than the tokens being taken away.
+    """
+    corpus = tmp_path / "corpus"
+    _article(corpus, "10.1038/a", status="complete", extraction=_extraction("complete"))
+    _article(corpus, "10.1038/b", status="partial")
+
+    rows = state.corpus_snapshot(corpus)["recent"]
+    by_slug = {row["slug"]: row for row in rows}
+    done = by_slug["10.1038_a"]["condition"]
+    assert done["summary"] == ("fetch complete, supplements complete, "
+                              "extraction complete")
+    assert done["level"] == "ok"
+    assert "fetch=complete" in done["raw"]
+    assert by_slug["10.1038_a"]["fetch_status"] == "complete"
+
+    # `_manifest` always writes `supplementary_status: fetched`, so the only
+    # incomplete clauses here are the two this article really has.
+    todo = by_slug["10.1038_b"]["condition"]
+    assert todo["summary"] == ("fetch incomplete, supplements complete, "
+                              "not extracted yet")
+    assert todo["level"] == "outstanding"
+    assert [c["level"] for c in todo["clauses"]] == ["outstanding", "ok", "outstanding"]
+
+
+def test_a_preflight_row_carries_the_same_sentence(tmp_path):
+    """One vocabulary across both tables, including for a DOI not in the corpus."""
+    corpus = tmp_path / "corpus"
+    _article(corpus, "10.1038/a", status="complete", extraction=_extraction("partial"))
+
+    rows = state.preflight(corpus, "10.1038/a\n10.1038/absent\n")["rows"]
+    by_doi = {row["doi"]: row for row in rows}
+    assert by_doi["10.1038/a"]["condition"]["summary"] == (
+        "fetch complete, supplements complete, extraction incomplete")
+    # A DOI with no manifest at all still gets three clauses rather than blanks.
+    absent = by_doi["10.1038/absent"]["condition"]
+    assert absent["summary"] == ("not fetched, supplements unrecorded, "
+                                 "not extracted yet")
+    assert len(absent["clauses"]) == 3
+
+
 def test_recently_added_is_newest_first(tmp_path):
     corpus = tmp_path / "corpus"
     _article(corpus, "10.1038/old", fetched_at="2026-01-01T00:00:00Z")

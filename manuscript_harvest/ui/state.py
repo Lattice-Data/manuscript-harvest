@@ -20,6 +20,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .. import article_state
 from ..extract import extractor
 from ..fetch import store
 from ..fetch.identifiers import normalize_doi
@@ -127,6 +128,11 @@ def corpus_snapshot(corpus_dir) -> dict:
             "fetch_status": status,
             "extract_status": extract_status,
             "supplementary_status": record.get("supplementary_status"),
+            # The three above, said in words that name their stage. Kept beside
+            # them rather than instead of them: the panel shows the sentence and
+            # reveals the raw words on hover, and an API caller may want either.
+            "condition": article_state.describe(
+                status, record.get("supplementary_status"), extract_status),
             "files": files,
             "bytes": size,
             # `fetched_at` is when the fetch ran; the manifest's mtime moves again
@@ -313,6 +319,9 @@ def preflight(corpus_dir, text: str) -> dict:
             "supplementary_status": record.get("supplementary_status"),
             "files": len(record.get("supplementary") or []),
             "extract_status": extraction.get("status"),
+            "condition": article_state.describe(
+                record.get("status"), record.get("supplementary_status"),
+                extraction.get("status")),
         })
 
     return {

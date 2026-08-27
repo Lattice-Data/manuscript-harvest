@@ -821,7 +821,10 @@ def test_cmd_all_survives_one_crashing_article(tmp_path, capsys):
         extractor.extract_article = real
     err = capsys.readouterr().err
     assert "crashed: RuntimeError: boom" in err
-    assert "crashed=1" in err
+    # The end-of-run tally groups on `article_state`'s sentence rather than on the
+    # bare extraction status, and a crash has to survive that phrasing: an article
+    # that raised must not be counted under any of the ordinary outcomes.
+    assert "1  fetch complete, supplements unrecorded, extraction crashed" in err
     assert calls["n"] == 2, "the second article was never reached"
 
 
@@ -1169,4 +1172,5 @@ def test_cli_all_reports_failures_in_its_exit_code(tmp_path, capsys):
     config = tmp_path / "config.yaml"
     config.write_text(f"extract:\n  corpus_dir: {tmp_path}\n")
     assert main(["--config", str(config), "all"]) == 1
-    assert "failed=1" in capsys.readouterr().err
+    assert ("1  fetch complete, supplements unrecorded, extraction failed"
+            in capsys.readouterr().err)
