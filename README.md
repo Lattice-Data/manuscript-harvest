@@ -711,11 +711,21 @@ Each of these looked exactly like "there was nothing there" until something
 checked: a strict-conformance workbook openpyxl reads as having zero sheets, an
 unsized worksheet, a caption nested inside `<media>`, a heading glued to its
 paragraph, a 23 MB "paragraph" that was really a TSV, files saved with no extension,
-and a bot-check page holding 129 characters of user-agent string. One did not look
-like that at all: a supplementary PDF that produced 124,178 characters of fluent
-nonsense and called it a clean run. Each is pinned by a test and commented at the
-code that enforces it; the corpus files that taught them are named in
-`tests/test_extract_corpus.py`.
+an xlsx workbook served under a `.csv` name, and a bot-check page holding 129
+characters of user-agent string. Two did not look like that at all: a supplementary
+PDF that produced 124,178 characters of fluent nonsense and called it a clean run,
+and an MDPI PDF whose Methods and Results headings were each glued to their first
+subheading, so two thirds of the paper carried the `introduction` label and
+`section_labelling` reported 96% coverage — every label present, and wrong.
+
+A labelling failure is why `section_labelling.confidence` exists and why it is worth
+reading next to `coverage`: coverage counts characters that carry *a* label, so it
+cannot see a wrong one. `line_numbered` marks the other shape — a manuscript PDF
+that numbers its own lines, where `Discussion 361` is the heading `Discussion` and
+the trailing number defeated every matcher.
+
+Each is pinned by a test and commented at the code that enforces it; the corpus
+files that taught them are named in `tests/test_extract_corpus.py`.
 
 ### The human review layer
 

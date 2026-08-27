@@ -179,6 +179,25 @@ class BiorxivSource(Source):
                 result.note("supplement_file", url=url, status="request_failed", error=str(e))
                 continue
             if not resp.ok or not resp.content:
+                # The `problems` line is the point. Without it this branch degraded
+                # `suppl_status` to `partial_failure` -- which `extract` turns into
+                # `supplements_expected_but_missing` and which blocks `complete` --
+                # while leaving `problems: []`, so the manifest said an article was
+                # permanently short of supplements and gave no reason anywhere a
+                # reader looks first. Four articles in this corpus sat in exactly
+                # that state.
+                #
+                # 429 is named apart because it is the one status here that says
+                # nothing is wrong with the file: bioRxiv rate-limited us, and every
+                # one of those files is still there. All 24 of this corpus's 429s
+                # came from bioRxiv, and 6 articles are `partial` for no other
+                # reason.
+                empty = resp.ok and not resp.content
+                why = ("bioRxiv rate-limited the download (HTTP 429); the file is "
+                       "still there, so re-fetch later"
+                       if resp.status == 429 else
+                       f"HTTP {resp.status}" + (" with an empty body" if empty else ""))
+                result.problems.append(f"supplement {url} failed: {why}")
                 result.note("supplement_file", url=url, status="http_error",
                             http_status=resp.status)
                 continue

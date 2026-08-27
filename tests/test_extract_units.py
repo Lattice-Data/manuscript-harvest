@@ -2143,3 +2143,198 @@ def test_the_pdf_parser_still_strips_them_after_rejoining_hyphens():
     assert pdf._clean_block("interleukin-\u00ad\n17A \ufeffand \u200bIFN") == \
         "interleukin-17A and IFN"
 
+
+
+# -- numbered-and-glued headings, and line-numbered manuscripts ---------------
+
+def test_a_numbered_glued_heading_is_split():
+    """`_HEADING_PREFIX` was in `_compiled` and not in `_leading_patterns`, so a
+    heading that was both numbered and glued matched neither: `_compiled` wants the
+    whole line and `_leading_patterns` wanted the alias at offset zero. MDPI writes
+    exactly that shape -- 10.3390/genes15030298 glues each section heading to its
+    first subheading -- and every block from 2.1 to 3.4 of that paper, the whole of
+    its Methods and Results, carried the `introduction` label instead."""
+    split = sections.split_leading_heading(
+        "3. Results 3.1. Cellular Landscape of the Donor Newborn Human Lung")
+    assert split is not None
+    name, heading, rest = split
+    assert (name, heading) == (sections.RESULTS, "3. Results")
+    assert rest == "3.1. Cellular Landscape of the Donor Newborn Human Lung"
+
+
+def test_a_short_remainder_still_splits_when_it_is_itself_a_heading():
+    """`_MIN_GLUED_REMAINDER` exists to stop a heading with a stray word being read
+    as a glued paragraph. A remainder that is itself a heading is the exception:
+    `2. Materials and Methods 2.1. Study Population` leaves 21 characters, under the
+    bound, and every one of them a heading."""
+    split = sections.split_leading_heading(
+        "2. Materials and Methods 2.1. Study Population")
+    assert split is not None
+    name, heading, rest = split
+    assert (name, heading, rest) == (sections.METHODS, "2. Materials and Methods",
+                                     "2.1. Study Population")
+
+
+def test_a_short_remainder_that_is_not_a_heading_still_refuses_to_split():
+    assert sections.split_leading_heading("Methods and") is None
+    assert sections.split_leading_heading("Results 1") is None
+
+
+def test_strip_line_number_takes_only_a_trailing_integer():
+    assert sections.strip_line_number("Discussion 361") == "Discussion"
+    assert sections.strip_line_number("Methods 606") == "Methods"
+    # Not a line number: no trailing integer at all, or one that is the whole line.
+    assert sections.strip_line_number("Discussion") == "Discussion"
+    assert sections.strip_line_number("Extended Data Fig. 1a") == "Extended Data Fig. 1a"
+
+
+def test_a_line_numbered_manuscript_is_detected_and_an_ordinary_pdf_is_not():
+    """The threshold is measured, not chosen: the two line-numbered manuscripts in
+    this corpus score 0.90 and 0.80, the highest any other article reaches is 0.34,
+    and 0.6 is the middle of that gap. `Extended Data Fig. 1` and `Discussion 361`
+    are the same shape per line, so the question is only answerable per document."""
+    def page(lines):
+        return [(line, False, {}) for line in lines]
+
+    numbered = page([f"a manuscript line of ordinary body text here {n}"
+                     for n in range(1, 41)])
+    assert pdf._line_numbered([numbered]) is True
+
+    plain = page([f"a manuscript line of ordinary body text here"
+                  for _ in range(40)])
+    assert pdf._line_numbered([plain]) is False
+
+    # A fifth of the lines ending in a figure number is the shape of an ordinary
+    # PDF, and is under the fraction.
+    sparse = page([f"a manuscript line of ordinary body text here {n}"
+                   if n % 5 == 0 else "a manuscript line of ordinary body text here"
+                   for n in range(1, 41)])
+    assert pdf._line_numbered([sparse]) is False
+
+
+def test_the_detector_needs_the_numbers_to_ascend():
+    """The fraction alone would qualify a document whose lines happen to end in a
+    repeated figure number."""
+    same = [[(f"a manuscript line of ordinary body text here 7", False, {})
+             for _ in range(40)]]
+    assert pdf._line_numbered(same) is False
+
+
+# -- a name the magic bytes contradict ----------------------------------------
+
+def test_an_xlsx_named_csv_is_read_as_an_xlsx():
+    """Nature served 10.1038/s41467-024-55440-2's MOESM10 as `.csv` and it is an
+    xlsx workbook. The csv reader met a zip and answered `unreadable` with
+    "new-line character seen in unquoted field", which describes the reader's
+    experience and tells a reader nothing about the file."""
+    data = make_xlsx({"Sheet1": [["gene", "logFC"], ["TP53", "1.4"]]})
+    outcome = extractor.extract_bytes(data, "supplementary/01_data.csv", L)
+
+    assert outcome.status == "ok"
+    assert outcome.n_tables == 1
+    assert outcome.meta["named_extension"] == ".csv"
+    assert outcome.meta["sniffed_as"] == ".xlsx"
+    assert "magic bytes say .xlsx" in outcome.note
+
+
+def test_a_zip_named_csv_says_so_even_when_it_yields_nothing():
+    """The archive branches build their own `FileResult` and never reach
+    `extract_bytes`'s `result` helper, so the naming note has to be stamped on the
+    way out. 10.1038/s41467-020-19737-2's MOESM18 is a zip named `.csv` holding a
+    3.45 GB member: no text either way, but `no_text` with no mention of the zip
+    would leave the record saying it had been read as a CSV."""
+    data = make_zip([("inner.bin", b"\x00\x01\x02")])
+    outcome = extractor.extract_bytes(data, "supplementary/02_data.csv", L)
+
+    assert outcome.meta["named_extension"] == ".csv"
+    assert outcome.meta["sniffed_as"] == ".zip"
+    assert "magic bytes say .zip" in outcome.note
+
+
+def test_a_real_xls_is_not_re_sniffed_into_a_doc():
+    """The guard on `SNIFF_OVERRIDES_EXTENSION`. An OLE2 container is legacy Excel
+    and legacy Word at the same 8 bytes, so `sniff_extension` answers `.doc` for a
+    real `.xls` whenever no Content-Type says otherwise. Sniffing every known
+    extension rather than only the text ones would route all 56 of this corpus's
+    `.xls` files to `unsupported_format`."""
+    data = make_xls({"Sheet1": [["gene", "logFC"], ["TP53", "1.4"]]})
+    outcome = extractor.extract_bytes(data, "supplementary/03_data.xls", L)
+
+    assert outcome.status == "ok"
+    assert "named_extension" not in outcome.meta
+
+
+def test_a_genuine_csv_is_left_alone():
+    """The override only fires on a container magic number, so ordinary text is
+    untouched and keeps its own extension."""
+    outcome = extractor.extract_bytes(b"gene,logFC\nTP53,1.4\n",
+                                      "supplementary/04_data.csv", L)
+    assert outcome.status == "ok"
+    assert "named_extension" not in outcome.meta
+    assert "sniffed_as" not in outcome.meta
+
+
+# -- what MuPDF has to say ----------------------------------------------------
+
+def test_mupdf_messages_are_captured_and_capped():
+    """MuPDF writes its diagnostics to stdout, which is where `extract one` prints
+    its machine-readable result, so they are silenced at import and read back per
+    file instead. Capped because the buffer is wider than what was being printed:
+    only four PDFs in this corpus emit an error, but 15 of a random 40 emit a font
+    warning, and a file that goes through `_repair_glyph_encoding` provokes 20
+    lines of `FT_Get_Advance`."""
+    lines = "\n".join(f"warning number {n}" for n in range(1, 13))
+    with mock.patch.object(fitz.TOOLS, "mupdf_warnings", return_value=lines):
+        captured = pdf._mupdf_warnings()
+
+    assert captured["mupdf_warnings"] == [f"warning number {n}" for n in range(1, 6)]
+    assert captured["mupdf_warnings_total"] == 12
+
+
+def test_a_quiet_pdf_adds_no_mupdf_field_at_all():
+    with mock.patch.object(fitz.TOOLS, "mupdf_warnings", return_value=""):
+        assert pdf._mupdf_warnings() == {}
+
+
+def test_mupdf_writes_nothing_to_stdout_and_the_message_reaches_the_record(capfd):
+    """The regression this guards: MuPDF prints on **stdout**, which is the channel
+    `extract/cli.py`'s `one` uses for its machine-readable result, so
+    `DIR=$(manuscript-extract one ...)` came back with 55 bytes of
+    `MuPDF error: ...` in front of the path. A truncated PDF is the cheapest way to
+    make MuPDF say something of the same class it says about the four real files."""
+    assert fitz.TOOLS.mupdf_display_errors() is False
+
+    whole = make_pdf()
+    _, _, meta = pdf.blocks_from_pdf(whole[: len(whole) // 2], "x.pdf", L)
+
+    assert capfd.readouterr().out == ""
+    assert any("startxref" in line for line in meta.get("mupdf_warnings", []))
+
+
+def test_one_pdf_s_mupdf_messages_are_not_reported_against_the_next(capfd):
+    """The buffer is process-wide, so without the reset the first noisy PDF in a
+    393-article run would be reported against every file after it."""
+    whole = make_pdf()
+    pdf.blocks_from_pdf(whole[: len(whole) // 2], "broken.pdf", L)
+    _, _, meta = pdf.blocks_from_pdf(whole, "clean.pdf", L)
+
+    assert "mupdf_warnings" not in meta
+    assert capfd.readouterr().out == ""
+
+
+@pytest.mark.parametrize("entry", [
+    "7. Results From A Randomized Trial Of Inhaled Steroids, N Engl J Med (2019).",
+    "3. Discussion Of Sampling Bias In Cohort Studies, Am J Epidemiol (2021).",
+    "21. Introduction To Single Cell Genomics, Cold Spring Harb Perspect (2018).",
+    "1. Smith, J. et al. Methods For Nuclei Isolation. Cell 180, 1-12 (2020).",
+    "4. Results Of The Trial. doi:10.1038/s41586-020-0000-0",
+])
+def test_a_numbered_reference_entry_is_not_split_into_a_heading(entry):
+    """Letting `_HEADING_PREFIX` into `_leading_patterns` widened it onto
+    reference-list entries, which begin with a number too, and a title in Title Case
+    passes the "followed by a capital" guard. A heading's section carries forward, so
+    a false split here opens `results` over a bibliography. The discriminator is the
+    citation signals other than the numbering -- a parenthesised year, an `et al.`,
+    a DOI -- because the numbering itself is what a numbered heading and a numbered
+    citation have in common."""
+    assert sections.split_leading_heading(entry) is None

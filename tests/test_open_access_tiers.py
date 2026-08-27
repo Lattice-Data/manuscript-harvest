@@ -386,6 +386,49 @@ def test_some_supplements_arriving_is_partial_failure():
     assert len(result.files) == 1
 
 
+def test_a_rate_limited_supplement_is_a_named_problem_not_a_silent_partial():
+    """`partial_failure` blocks `complete` all the way through `extract`, and this
+    branch used to reach it while leaving `problems: []`. Four articles in this
+    corpus sat in exactly that state: permanently short of supplements, with the
+    reason recorded only in `attempts` and nothing in the place a reader looks
+    first. 429 is named apart because it says nothing is wrong with the file --
+    bioRxiv throttled us and every one of those files is still there."""
+    class RateLimited(FakeHttp):
+        def get(self, url, params=None, accept=None, allow_redirects=True,
+                headers=None):
+            if url.endswith("media-2.zip"):
+                return Response(url=url, status=429, content=b"", content_type="")
+            return super().get(url, params, accept, allow_redirects)
+
+    http = RateLimited(_biorxiv_http().routes)
+    result = BiorxivSource(http).fetch(_preprint_ids(), need_pdf=False,
+                                       need_supplements=True)
+
+    assert result.suppl_status == "partial_failure"
+    assert result.problems, "a partial_failure with no problem is unreadable"
+    assert any("429" in p and "re-fetch later" in p for p in result.problems)
+
+
+def test_a_supplement_http_error_that_is_not_429_says_the_status():
+    """Same requirement, without the 429 wording: whatever went wrong has to reach
+    `problems`, because that is what the manifest shows."""
+    class Gone(FakeHttp):
+        def get(self, url, params=None, accept=None, allow_redirects=True,
+                headers=None):
+            if url.endswith("media-2.zip"):
+                return Response(url=url, status=403, content=b"", content_type="")
+            return super().get(url, params, accept, allow_redirects)
+
+    http = Gone(_biorxiv_http().routes)
+    result = BiorxivSource(http).fetch(_preprint_ids(), need_pdf=False,
+                                       need_supplements=True)
+
+    assert result.suppl_status == "partial_failure"
+    assert any("media-2.zip failed" in p and "HTTP 403" in p
+               for p in result.problems)
+    assert not any("429" in p for p in result.problems)
+
+
 def test_links_found_but_none_retrievable_is_page_not_parsed_not_none_listed():
     """The page named files and we got none: the one case where an empty
     `supplementary/` directory must never read as "there are none"."""
