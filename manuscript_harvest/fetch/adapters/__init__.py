@@ -6,19 +6,28 @@ from .base import Adapter
 from .generic import GenericAdapter
 from .publishers import (
     ElsevierAdapter,
+    FrontiersAdapter,
     NatureAdapter,
     PmcAdapter,
+    ResearchSquareAdapter,
     ScienceAdapter,
     WileyAdapter,
 )
 
 # Specific adapters first; the generic one always matches and comes last.
+#
+# Frontiers and Research Square are both open access, which is why they arrived
+# late: the browser tier reached neither of them until the proxy stopped being
+# insisted on, so their page shapes had never been read. Both subclass
+# `GenericAdapter` and override only `find_supplements`.
 ADAPTERS = [
     NatureAdapter(),
     WileyAdapter(),
     ElsevierAdapter(),
     ScienceAdapter(),
     PmcAdapter(),
+    FrontiersAdapter(),
+    ResearchSquareAdapter(),
 ]
 FALLBACK = GenericAdapter()
 

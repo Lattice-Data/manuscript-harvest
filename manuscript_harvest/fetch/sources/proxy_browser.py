@@ -75,12 +75,30 @@ CELL_PRESS_URL = "https://www.cell.com/retrieve/pii/{pii}"
 # Stanford login page and closed a second later, every time.
 SESSION_REMEDY = "run 'manuscript-fetch login' to re-establish the proxy session"
 
+# The second thing this diagnosis can mean, and the reason it is not acted on
+# automatically.
+#
+# EZproxy answers a host it has no stanza for by redirecting to the IdP -- exactly
+# what it does for a dead session -- and `_PROXY_NOT_CONFIGURED` only matches
+# EZproxy's own error page, which is not served in that case. So the two are
+# indistinguishable from the response, and the retry `proxy_not_configured` gets
+# cannot be extended to this status: for a paywalled article on a genuinely dead
+# session the direct page is a publicly readable abstract with no denial markers at
+# all, so the retry would "succeed", the expiry would never be reported, and the
+# one remedy that fixes it would never be printed. Measured on
+# 10.3389/fdmed.2021.806294 and 10.21203/rs.3.rs-7535904/v2 -- both fully open
+# access, both reported `session_expired` against a session `check` showed alive in
+# the same minute, and both fetched once `--no-proxy` was passed. Naming both
+# remedies is the honest answer; guessing between them is not.
+OPEN_ACCESS_REMEDY = ("if this host is open access the proxy is not needed for it: "
+                      "retry with --no-proxy")
+
 
 def denial_problem(denial: str, url: str) -> str:
     """The problem line for a named refusal, carrying the remedy where there is one."""
     line = f"{denial} at {url}"
     if denial == "session_expired":
-        line += f"; {SESSION_REMEDY}"
+        line += f"; {SESSION_REMEDY}, or {OPEN_ACCESS_REMEDY}"
     return line
 
 
@@ -1406,4 +1424,13 @@ def _filename_for(url: str, headers) -> str:
             candidate = value.rsplit("/", 1)[-1]
             if FILE_EXTENSION.search(candidate):
                 return candidate
+        # Others put the filename mid-path and end the URL with a version number.
+        # Frontiers serves 10.3389/fdmed.2021.806294's three supplements from
+        # `.../file/Table_1.XLSX/806294_supplementary-materials_tables_1_xlsx/1`:
+        # the basename is `1`, so without this all three land extension-less and
+        # collide under one name, and the extractor has nothing to pick a parser
+        # by. Scanned right to left so the segment nearest the end wins.
+        for segment in reversed(unquote(parts.path).split("/")):
+            if FILE_EXTENSION.search(segment):
+                return segment
     return base or "supplement"

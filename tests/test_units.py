@@ -24,8 +24,10 @@ from manuscript_harvest.fetch.adapters.base import (
 )
 from manuscript_harvest.fetch.adapters.publishers import (
     ElsevierAdapter,
+    FrontiersAdapter,
     NatureAdapter,
     PmcAdapter,
+    ResearchSquareAdapter,
     WileyAdapter,
 )
 from manuscript_harvest.config import merge_config
@@ -855,7 +857,8 @@ def test_elsevier_supplements_come_off_the_cdn():
 
 
 @pytest.mark.parametrize("adapter", [NatureAdapter(), WileyAdapter(), ElsevierAdapter(),
-                                     PmcAdapter()])
+                                     PmcAdapter(), FrontiersAdapter(),
+                                     ResearchSquareAdapter()])
 def test_no_adapter_confuses_an_unreadable_page_with_an_empty_one(adapter):
     """`parsed=False` for every adapter, not just the ones with tests: it is what
     makes a publisher redesign loud instead of reporting zero supplements."""
@@ -1358,3 +1361,121 @@ def test_load_config_fills_fetch_defaults(tmp_path):
 def test_load_config_survives_a_missing_file(tmp_path):
     config = load_config(tmp_path / "nope.yaml")
     assert config["fetch"]["corpus_dir"] == "corpus"
+
+
+# -- Frontiers / Research Square: the two open-access shapes -----------------
+
+FRONTIERS_SUPPLEMENT = (
+    "https://public-pages-files-2025.frontiersin.org/articles/806294/file/"
+    "Table_1.XLSX/806294_supplementary-materials_tables_1_xlsx/1"
+)
+
+
+def test_frontiers_supplements_survive_an_extension_that_is_not_last():
+    r"""10.3389/fdmed.2021.806294. The href names the file mid-path and ends in a
+    version number, so `is_file_url` -- which anchors the extension with `(\?|$)`
+    -- rejected all three, and the article recorded `unknown_none_found` for
+    supplements its own landing.html lists in plain anchors."""
+    assert not is_file_url(FRONTIERS_SUPPLEMENT), "the premise: last-segment matching fails"
+
+    page = FakePage(
+        url="https://www.frontiersin.org/articles/10.3389/fdmed.2021.806294/full",
+        links=[{"url": FRONTIERS_SUPPLEMENT, "text": "Table 1.XLSX"},
+               {"url": FRONTIERS_SUPPLEMENT.replace("Table_1.XLSX", "Data_Sheet_1.PDF"),
+                "text": "Data Sheet 1.PDF"}])
+    links, parsed = FrontiersAdapter().find_supplements(page, "10.3389/fdmed.2021.806294")
+
+    assert parsed is True
+    assert len(links) == 2
+
+
+def test_frontiers_leaves_the_article_and_its_own_navigation_alone():
+    """The real page carries 302 anchors. Only the ones on the files host count."""
+    page = FakePage(
+        url="https://www.frontiersin.org/articles/10.3389/fdmed.2021.806294/full",
+        links=[{"url": FRONTIERS_SUPPLEMENT, "text": "Table 1.XLSX"},
+               {"url": "https://www.frontiersin.org/articles/10.3389/fdmed.2021.806294/pdf",
+                "text": "Download PDF"},
+               {"url": "https://www.frontiersin.org/about/contact", "text": "Contact"},
+               {"url": "https://loop.frontiersin.org/people/1088695", "text": "An author"}])
+    links, parsed = FrontiersAdapter().find_supplements(page, "10.3389/fdmed.2021.806294")
+
+    assert parsed is True
+    assert [link["url"] for link in links] == [FRONTIERS_SUPPLEMENT]
+
+
+#: The shape Research Square embeds its attachments in, trimmed to two entries.
+#: `legend` is long on purpose: a forward window of 400 characters from `role`
+#: silently dropped the real `ExtendedDataFigures.pdf` for exactly this reason.
+RESEARCH_SQUARE_PAYLOAD = (
+    '<html><body><script>window.__DATA__={"files":['
+    '{"id":1,"extension":"pdf","role":"manuscript-pdf","size":9,'
+    '"legend":"","filename":"Manuscript.pdf",'
+    '"url":"https://assets-eu.researchsquare.com/files/rs-7535904/v2/covered.pdf"},'
+    '{"id":2,"extension":"pdf","role":"supplement","size":9,'
+    '"legend":"' + ("a full figure caption. " * 40) + '",'
+    '"filename":"ExtendedDataFigures.pdf",'
+    '"url":"https://assets-eu.researchsquare.com/files/rs-7535904/v2/a193.pdf"},'
+    '{"id":3,"extension":"csv","role":"supplement","size":8568,'
+    '"legend":"Supplementary Table 1. Panel of 40 heat-stress genes",'
+    '"filename":"SupplementaryTable1Heatstressgenepanel.csv",'
+    '"url":"https://assets-eu.researchsquare.com/files/rs-7535904/v2/af37.csv"}'
+    ']}</script></body></html>'
+)
+
+
+def test_research_square_reads_supplements_out_of_the_payload_not_the_anchors():
+    """10.21203/rs.3.rs-7535904/v2 has nine supplements and not one anchor for
+    them, so the generic adapter reported `parsed=True` with an empty list --
+    `unknown_none_found` for a preprint that has them."""
+    page = FakePage(url="https://www.researchsquare.com/article/rs-7535904/v2",
+                    links=[{"url": "https://www.researchsquare.com/article/rs-7535904/v2.pdf",
+                            "text": "PDF"}],
+                    content=RESEARCH_SQUARE_PAYLOAD)
+    links, parsed = ResearchSquareAdapter().find_supplements(page, "10.21203/rs.3.rs-7535904/v2")
+
+    assert parsed is True
+    assert [link["label"] for link in links] == [
+        "ExtendedDataFigures.pdf", "SupplementaryTable1Heatstressgenepanel.csv"]
+
+
+def test_research_square_never_serves_the_manuscript_as_a_supplement():
+    """`manuscript-pdf` is the only other role on the page, and it is the article."""
+    page = FakePage(url="https://www.researchsquare.com/article/rs-7535904/v2",
+                    content=RESEARCH_SQUARE_PAYLOAD)
+    links, _ = ResearchSquareAdapter().find_supplements(page, "10.21203/rs.3.rs-7535904/v2")
+
+    assert not any("covered.pdf" in link["url"] for link in links)
+
+
+def test_research_square_says_none_when_the_payload_holds_only_the_manuscript():
+    """A preprint with no attachments still carries its own `manuscript-pdf`, so
+    the payload is present and `[], True` is the honest answer -- distinct from the
+    renamed-keys case, which has to stay `[], False`."""
+    only_manuscript = (
+        '<html><script>{"files":[{"role":"manuscript-pdf","filename":"Manuscript.pdf",'
+        '"url":"https://assets-eu.researchsquare.com/files/rs-1/v1/x.pdf"}]}</script></html>'
+    )
+    page = FakePage(url="https://www.researchsquare.com/article/rs-1/v1",
+                    content=only_manuscript)
+    assert ResearchSquareAdapter().find_supplements(page, "10.21203/rs.3.rs-1/v1") == ([], True)
+
+
+def test_a_filename_survives_an_extension_that_is_not_the_last_segment():
+    """Frontiers ends every supplement URL with a version number:
+    `.../file/Table_1.XLSX/806294_supplementary-materials_tables_1_xlsx/1`. The
+    basename is `1`, so all three of 10.3389/fdmed.2021.806294's supplements would
+    land extension-less and collide under one name -- and the extractor picks its
+    parser by extension."""
+    from manuscript_harvest.fetch.sources.proxy_browser import _filename_for
+
+    class NoHeaders:
+        def get(self, _key):
+            return ""
+
+    assert _filename_for(FRONTIERS_SUPPLEMENT, NoHeaders()) == "Table_1.XLSX"
+    # The query-named case this shares its guard with still answers first.
+    assert _filename_for("https://h/ui/service/content/url?path=%2Fmmc1.pdf",
+                         NoHeaders()) == "mmc1.pdf"
+    # And a URL that names nothing is still not invented.
+    assert _filename_for("https://h/no/extension/anywhere", NoHeaders()) == "anywhere"

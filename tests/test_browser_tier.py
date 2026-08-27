@@ -731,9 +731,23 @@ def test_session_expired_carries_the_command_that_fixes_it():
 def test_only_a_dead_session_gets_the_login_advice():
     """A paywalled or misrouted page is not fixed by logging in again, so the
     remedy must not be stapled to every refusal."""
-    assert pb.denial_problem("session_expired", "https://x/") .endswith(pb.SESSION_REMEDY)
+    line = pb.denial_problem("session_expired", "https://x/")
+    assert pb.SESSION_REMEDY in line
     for denial in ("paywalled", "proxy_not_configured", "link_resolver_error"):
         assert pb.denial_problem(denial, "https://x/") == f"{denial} at https://x/"
+
+
+def test_a_dead_session_and_an_unproxied_host_both_get_named():
+    """`session_expired` has two causes and the response cannot tell them apart:
+    EZproxy bounces a host it has no stanza for to the IdP exactly as it does a
+    dead cookie. Measured on 10.3389/fdmed.2021.806294 and
+    10.21203/rs.3.rs-7535904/v2 -- both fully open access, both reported
+    `session_expired` while `check` showed the session alive, both fetched under
+    `--no-proxy`. Acting on one guess would hide the other, so the line names both.
+    """
+    line = pb.denial_problem("session_expired", "https://x/")
+    assert pb.SESSION_REMEDY in line and pb.OPEN_ACCESS_REMEDY in line
+    assert "--no-proxy" in line
 
 
 def test_unconfigured_proxy_retries_the_publisher_directly():
