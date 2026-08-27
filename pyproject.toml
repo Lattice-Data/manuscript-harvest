@@ -52,6 +52,9 @@ dev = ["pytest>=7.0", "pytest-cov>=4.0", "ruff>=0.15"]
 manuscript-fetch = "manuscript_harvest.fetch.cli:main"
 manuscript-extract = "manuscript_harvest.extract.cli:main"
 manuscript-select = "manuscript_harvest.select.cli:main"
+# The control panel. Stdlib only -- no web framework, no extra dependency, and
+# nothing in `manuscript_harvest/ui/` is imported by the three stages above.
+manuscript-ui = "manuscript_harvest.ui.cli:main"
 
 [tool.setuptools.dynamic]
 version = { attr = "manuscript_harvest.__version__" }
