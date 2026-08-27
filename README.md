@@ -222,7 +222,11 @@ and `--json`/`--report` for the manifest. `usage` takes `--by-size` and `--limit
 ### What the statuses mean
 
 The point of this vocabulary is that "no supplements" and "we failed to get the
-supplements" must never look alike.
+supplements" must never look alike. It is a vocabulary for a *record*, though, not
+for reading three columns at a glance — for that, the panel and the two
+`manuscript-extract` summaries render all three of an article's statuses as one
+sentence, and [Three statuses, one sentence](#three-statuses-one-sentence) is where
+that lives.
 
 `fulltext.status`, fifteen values: `ok` · `scanned_pdf_suspected` (saved, but has no
 extractable text; the extraction stage reads these by OCR where `tesseract` is
@@ -956,6 +960,50 @@ needs nothing further, which is a stricter and differently-shaped test than
 file this was built against, a list of twelve DOIs left over from an earlier run,
 turned out to hold ten partial and two complete papers: a plain run does the ten,
 and `--force` would have re-downloaded two papers for nothing.
+
+### Three statuses, one sentence
+
+An article carries three independent statuses — the manifest's `status` and
+`supplementary_status`, and the extraction record's `status` — and printed as three
+adjacent columns they were three vocabularies to memorise. The word `partial` means
+nothing until you know which column it was sitting in.
+
+So the panel's tables and the two `manuscript-extract` summaries render them as one
+cell whose clauses each name their own stage:
+
+    fetch complete, supplements fetched but set unconfirmed, extraction complete
+    fetch incomplete, some supplements failed, extraction incomplete
+
+Over the 63-paper development corpus's current 392 articles that is seven distinct
+lines, and `manuscript-extract status` prints them as a tally:
+
+      218  fetch complete, supplements fetched but set unconfirmed, extraction complete
+      127  fetch complete, supplements complete, extraction complete
+       19  fetch complete, supplements fetched but set unconfirmed, extraction incomplete
+       11  fetch complete, no supplements exist, extraction complete
+       11  fetch complete, supplements complete, extraction incomplete
+        5  fetch incomplete, some supplements failed, extraction incomplete
+        1  fetch incomplete, every supplement was lost, extraction incomplete
+
+Three rules, in `manuscript_harvest/article_state.py`:
+
+**All three clauses, always.** An omitted clause has to be decoded from its absence,
+which is the defect being fixed — so a settled supplement set says so out loud.
+
+**Nothing is collapsed, only phrased.** `fetcher._supplement_status` keeps ten
+values distinct on purpose and `test_supplement_status_precedence` pins their order.
+This is a display for that vocabulary: no manifest or extraction record is touched,
+and every cell keeps the raw tokens as its tooltip.
+
+**`fetched_unverified` does not read as complete.** It is settled — nothing will
+re-fetch it — but it means "every file we identified arrived", not "the deposit was
+enumerated", and 237 of 392 articles sit there. Flattening it would claim a
+completeness the record cannot back over 60% of the corpus, so it reads as
+*supplements fetched but set unconfirmed* and colours amber rather than green.
+
+The tally is also the fastest way to see which command an article needs. `extraction
+incomplete` is a re-extract; `fetch incomplete` is not — those six lost supplementary
+files at fetch time, and only a fetch with a live proxy session recovers them.
 
 ### What it is, and what it is not
 

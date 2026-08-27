@@ -69,6 +69,9 @@ td { padding: .25rem .4rem; border-top: 1px solid #eee; }
 td.mono { word-break: break-all; }
 .state-new { color: var(--accent); } .state-refetch { color: var(--warn); }
 .state-cached { color: var(--faint); }
+.lv-ok { color: var(--ok); } .lv-caution { color: var(--warn); }
+.lv-outstanding { color: var(--bad); }
+td.condition { line-height: 1.45; }
 .s-complete, .s-ok { color: var(--ok); }
 .s-partial, .s-stale { color: var(--warn); }
 .s-failed, .s-crashed { color: var(--bad); }
@@ -247,6 +250,29 @@ function statusClass(status) {
   return status ? "s-" + String(status).replace(/[^a-z_]/gi, "") : "";
 }
 
+// One article's three statuses as a single readable cell. Each clause carries its
+// own colour because a row is rarely uniform -- "fetch complete" beside
+// "extraction incomplete" is the common case, and one colour for the row would
+// have to pick a side. The raw manifest words stay reachable as the tooltip.
+function conditionCell(row, condition) {
+  const td = document.createElement("td");
+  row.appendChild(td);
+  if (!condition || !condition.clauses) {
+    text(td, "\u2014");
+    return td;
+  }
+  td.className = "condition";
+  td.title = condition.raw || "";
+  condition.clauses.forEach(function (clause, i) {
+    if (i) td.appendChild(document.createTextNode(", "));
+    const span = document.createElement("span");
+    span.className = "lv-" + clause.level;
+    text(span, clause.text);
+    td.appendChild(span);
+  });
+  return td;
+}
+
 function cell(row, value, className) {
   const td = document.createElement("td");
   if (className) td.className = className;
@@ -339,7 +365,7 @@ function renderRecent(articles) {
   }
   const table = document.createElement("table");
   const head = document.createElement("tr");
-  ["DOI", "fetched", "fetch", "extract", "files", "size"].forEach(function (label) {
+  ["DOI", "fetched", "state", "files", "size"].forEach(function (label) {
     const th = document.createElement("th");
     text(th, label);
     head.appendChild(th);
@@ -349,9 +375,7 @@ function renderRecent(articles) {
     const row = document.createElement("tr");
     cell(row, article.doi || article.slug, "mono");
     cell(row, (article.fetched_at || "").slice(0, 16).replace("T", " "), "small faint");
-    cell(row, article.fetch_status, statusClass(article.fetch_status));
-    cell(row, article.extract_status || "not extracted",
-         statusClass(article.extract_status));
+    conditionCell(row, article.condition);
     cell(row, article.files);
     cell(row, bytes(article.bytes));
     table.appendChild(row);
@@ -392,7 +416,7 @@ function renderPreflight(data) {
 
   const table = document.createElement("table");
   const head = document.createElement("tr");
-  ["DOI", "in corpus", "supplements", "extract", "a plain run would"].forEach(
+  ["DOI", "state", "a plain run would"].forEach(
     function (label) {
       const th = document.createElement("th");
       text(th, label);
@@ -407,9 +431,7 @@ function renderPreflight(data) {
   data.rows.forEach(function (row) {
     const tr = document.createElement("tr");
     cell(tr, row.doi, "mono");
-    cell(tr, row.fetch_status || "—", statusClass(row.fetch_status));
-    cell(tr, row.supplementary_status || "—", "small");
-    cell(tr, row.extract_status || "—", statusClass(row.extract_status));
+    conditionCell(tr, row.condition);
     cell(tr, verdict[row.state], "state-" + row.state);
     table.appendChild(tr);
   });

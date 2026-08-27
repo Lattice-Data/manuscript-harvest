@@ -26,7 +26,7 @@ from pathlib import Path
 
 import yaml
 
-from .. import progress
+from .. import article_state, progress
 from ..config import merge_config, warn_if_config_missing
 from ..fetch import store
 from ..fetch.identifiers import doi_slug, normalize_doi
@@ -114,6 +114,40 @@ def _section_warning(extraction: dict) -> list:
     return []
 
 
+def _print_conditions(conditions: Counter) -> None:
+    """The tally both batch commands end with, one line per distinct state.
+
+    Grouped on the whole sentence rather than on any one status, because the
+    sentence is the thing a reader acts on: `fetch incomplete` needs a fetch with
+    a live proxy session and `extraction incomplete` needs a re-extract, and a
+    tally split across three vocabularies could not say which article needed
+    which. Over the 392-article development corpus this is seven lines.
+    """
+    if not conditions:
+        return
+    # `sys.stderr` is read here rather than bound as a default argument: a default
+    # is evaluated at import, which under pytest's capsys means writing to the
+    # stream that was current before the fixture replaced it.
+    print("", file=sys.stderr)
+    for summary, count in sorted(conditions.items(), key=lambda kv: (-kv[1], kv[0])):
+        print(f"{count:>5d}  {summary}", file=sys.stderr)
+
+
+def _condition_of(directory: Path, extraction) -> dict:
+    """This article's state, reading the manifest for the two fetch-stage words.
+
+    The extraction record carries only its own status, so the other two have to
+    come from the manifest -- one small read per article, against a file
+    `_article_dirs` has already proven exists.
+    """
+    record = store.read_manifest(directory) or {}
+    # `extraction` is None for an article with no record on disk, and
+    # `article_state` turns that same None into "not extracted yet".
+    return article_state.describe(
+        record.get("status"), record.get("supplementary_status"),
+        (extraction or {}).get("status"))
+
+
 def cmd_one(args) -> int:
     corpus_dir, limits, markdown = _settings(args)
     directory = _resolve(corpus_dir, args.article)
@@ -164,6 +198,9 @@ def cmd_all(args) -> int:
         directories = directories[: args.limit]
 
     by_status: dict = {}
+    # Separate from `by_status`, which stays keyed on the bare extraction status
+    # because the exit code and the panel's live progress chips both read it.
+    conditions: Counter = Counter()
     done = 0
     stopped = False
     with progress.ProgressLog(args.progress_jsonl) as heartbeat, \
@@ -188,6 +225,8 @@ def cmd_all(args) -> int:
                 print(f"{directory.name:38s} crashed: {type(e).__name__}: {e}",
                       file=sys.stderr)
                 by_status["crashed"] = by_status.get("crashed", 0) + 1
+                crashed = _condition_of(directory, {"status": "crashed"})
+                conditions[crashed["summary"]] += 1
                 # Reported to the heartbeat too, with the exception named. A
                 # watcher that only heard about articles which survived would
                 # show a run stalling rather than one crashing.
@@ -196,6 +235,7 @@ def cmd_all(args) -> int:
                 continue
             status = extraction.get("status", "?")
             by_status[status] = by_status.get(status, 0) + 1
+            conditions[_condition_of(directory, extraction)["summary"]] += 1
             marker = " (cached)" if extraction.get("cached") else ""
             print(f"{directory.name:38s} {extractor.summarize(extraction)}{marker}",
                   file=sys.stderr)
@@ -204,7 +244,7 @@ def cmd_all(args) -> int:
             heartbeat.item(**_progress_fields(directory, extraction))
         heartbeat.end(by_status=by_status, stopped=stopped, read=done)
 
-    print("\n" + "  ".join(f"{k}={v}" for k, v in sorted(by_status.items())), file=sys.stderr)
+    _print_conditions(conditions)
     if stopped:
         return progress.STOPPED_EXIT_CODE
     return 0 if by_status.get("complete") == len(directories) else 1
@@ -223,9 +263,11 @@ def cmd_status(args) -> int:
     sources: dict = {}
     labelling: dict = {}
     reviews = {"signed": 0, "queued": 0, "answered": 0, "stale": 0}
+    conditions: Counter = Counter()
     for directory in directories:
         totals["articles"] += 1
         extraction = extractor.read_extraction(directory)
+        conditions[_condition_of(directory, extraction)["summary"]] += 1
         if extraction is None:
             print(f"{directory.name:38s} not extracted", file=sys.stderr)
             continue
@@ -255,6 +297,8 @@ def cmd_status(args) -> int:
     print(f"\n{totals['extracted']}/{totals['articles']} articles extracted: "
           f"{totals['blocks']} blocks, {totals['tables']} tables, "
           f"{totals['chars']} characters", file=sys.stderr)
+    _print_conditions(conditions)
+    print("", file=sys.stderr)
     print("main text source: " + "  ".join(f"{k}={v}" for k, v in sorted(
         sources.items(), key=lambda kv: str(kv[0]))), file=sys.stderr)
     print("supplementary files: " + "  ".join(f"{k}={v}" for k, v in sorted(
