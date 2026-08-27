@@ -29,15 +29,20 @@ dependencies = [
     "requests>=2.31",
     "pyyaml>=6.0.2",
     "openpyxl>=3.1",
+    "xlrd>=2.0",
 ]
 
 [project.optional-dependencies]
 # The library-proxy tier. Kept out of the base install so the open-access path
 # stays dependency-light and CI needs no browser.
 browser = ["playwright>=1.45"]
-# Legacy binary .xls supplements; rare enough not to be a default.
-xls = ["xlrd>=2.0"]
 dev = ["pytest>=7.0", "pytest-cov>=4.0"]
+# There is no `xls` extra any more. `xlrd>=2.0` was one until the .xls count over
+# the live corpus turned out to be 56 files and 129 MB rather than the 1 of 191
+# spreadsheets it was made optional for; it is now a hard dependency above, and
+# requirements.txt carries the measurement. `pip install -e '.[xls]'` warns that
+# the extra does not exist and installs the package, which is the right outcome:
+# xlrd arrives either way.
 
 [project.scripts]
 manuscript-fetch = "manuscript_harvest.fetch.cli:main"

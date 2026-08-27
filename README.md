@@ -74,10 +74,23 @@ things, so use whichever fits how you installed the package:
 
     pip install -r requirements-browser.txt   # or: pip install -e '.[browser]'
     pip install -r requirements-dev.txt       # or: pip install -e '.[dev]'
-    pip install 'xlrd>=2.0'                   # or: pip install -e '.[xls]'
 
-`browser` is the library-proxy tier (Playwright), `dev` is pytest, and `xls` is for
-legacy binary `.xls` supplements.
+`browser` is the library-proxy tier (Playwright) and `dev` is pytest. There is no
+`xls` extra any more: `xlrd` was one until the legacy `.xls` supplements in the
+corpus turned out to be 56 files and 129 MB, and it is now a plain requirement.
+
+One optional *system* dependency, `tesseract`, which is what reads the 70 scanned
+supplements here — 245 pages between them, median 3:
+
+    brew install tesseract          # macOS
+    apt install tesseract-ocr       # Debian/Ubuntu
+
+Nothing needs it. Without it those files keep the status they have always had,
+`no_text_scanned_pdf`, and the reason names the install command. With it they come
+back `ok_via_ocr` — a status of its own, never folded into `ok`, because OCR'd
+characters are a guess where a text layer is a fact. Installing it moves the
+extraction key, so the next `manuscript-extract all` re-reads them without
+`--force`.
 
 Playwright needs a browser too (`python -m playwright install chromium`), unless
 Google Chrome is installed — leave `fetch.browser.channel: "chrome"` and real Chrome
@@ -205,7 +218,8 @@ The point of this vocabulary is that "no supplements" and "we failed to get the
 supplements" must never look alike.
 
 `fulltext.status`, fifteen values: `ok` · `scanned_pdf_suspected` (saved, but has no
-extractable text — needs OCR) · `not_research_article` (the DOI resolves to a
+extractable text; the extraction stage reads these by OCR where `tesseract` is
+installed) · `not_research_article` (the DOI resolves to a
 correction, retraction or editorial notice — a real publication, but not the paper) ·
 `identity_unverified` (a document arrived and does not appear to be this paper; the
 bytes are kept, because they are the evidence) · `paywalled` · `not_in_oa_subset` ·
@@ -324,14 +338,16 @@ something downstream can read:
 | **Skipped** | figure images (`jpg` `png` `tif` `gif` `bmp` `eps` `ps` `svg` `webp` `ai`) and audio/video (`mp4` `mov` `avi` `mkv` `wmv` `mpg` `mpeg` `m4v` `mp3` `wav` `flv`) |
 | **Kept anyway** | anything with an unrecognised extension, or none at all |
 
-**Archives are kept** although nothing reads them directly: `.zip` alone is 5.05 GB
-of this corpus's 5.11 GB of archives, those zips are mostly supplementary tables,
-and the extraction stage already unpacks them. **Unknown means kept**, not skipped —
+**Archives are kept**, and the extraction stage unpacks them: `.zip` alone is 5.05 GB
+of this corpus's 5.11 GB of archives and those zips are mostly supplementary tables.
+The six that are not zips — five `.gz` and one `.tgz` — read too, and five of the six
+turned out to be a single compressed supplementary table each rather than an archive
+of anything. **Unknown means kept**, not skipped —
 13 supplements here were saved by the browser tier as `NN_url` with no extension at
 all, several of them real PDFs and spreadsheets, and a whitelist would have refused
 those plus every format a publisher adopts after today. Scanned PDFs are kept too:
-68 supplements here extract as `no_text_scanned_pdf`, which no predicate over a
-filename can know in advance.
+70 supplements here are scans, which no predicate over a filename can know in
+advance — and where `tesseract` is installed the extraction stage now reads them.
 
 **Nothing is silent.** Every refused file is named in the manifest's `attempts`
 under a `text_bearing_filter` note, with the reason, the role, and where in the flow
@@ -480,7 +496,7 @@ summary, a description-of-files stub. Its text is kept and readable.
 
 `extraction.json` carries an `extraction_key` hashed over the manifest sha, the
 extractor version, a fingerprint of this package's own parser source, the effective
-`limits`, the PyMuPDF/openpyxl/Python versions, and the sha of the article's review
+`limits`, the PyMuPDF/openpyxl/xlrd/tesseract/Python versions, and the sha of the article's review
 file. `all` reuses a cached extraction only while that key matches, so a parser edit
 or a `config.yaml` cap change invalidates the corpus by itself. The pieces stay in
 the record separately, so a human can see which moved. See
@@ -554,10 +570,11 @@ of the stage as the blocks are: a thin extraction has to be legible.
 | `image_no_text` | a figure image; no extractable text (a vision pass would be needed) |
 | `media_no_text` | audio or video |
 | `data_file_skipped` | binary or columnar data (`.h5ad`, `.bam`, …), not prose |
-| `no_text_scanned_pdf` | parses as a PDF but has almost no text: needs OCR |
+| `ok_via_ocr` | the pages are scans and OCR read them: weaker evidence than a text layer |
+| `no_text_scanned_pdf` | the pages are scans and OCR did not run or found nothing legible |
 | `no_text` | readable and genuinely empty, or everything inside was capped out |
-| `unsupported_format` | no parser (`.doc`, `.rtf`, `.pptx`, non-zip archives) |
-| `too_large` | over `max_file_mb`; recorded, not read |
+| `unsupported_format` | no parser (`.doc`, `.rtf`, `.pptx`, `.7z`, `.rar`) |
+| `too_large` | over `max_file_mb`, or a member over `max_member_mb`; recorded, not read |
 | `missing` | in the manifest but not on disk |
 | `unreadable` | corrupt, or a parser named its own failure |
 | `garbled_text_encoding` | draws correctly and cannot be read: its fonts never say what their glyphs mean |
@@ -881,7 +898,7 @@ with one present reads about a point higher than the badge.
 | `tests/test_browser_tier.py` | the browser tier offline — proxy rewriting, settling, challenges, caps |
 | `tests/test_open_access_tiers.py` | the four open-access tiers end to end: which status each outcome earns |
 | `tests/test_fetch_cli.py` | the fetch CLI: missing-login warning, proxy breaker, exit codes, `usage`/`prune`/`check` |
-| `tests/test_extract_units.py` | sections, table cards, and each parser: JATS, PDF, xlsx, docx, HTML, zip |
+| `tests/test_extract_units.py` | sections, table cards, and each parser: JATS, PDF, xlsx, xls, docx, HTML, zip, tar, gzip |
 | `tests/test_extract_article.py` | source choice, per-file statuses, the extraction record, the CLI |
 | `tests/test_extract_corpus.py` | the real files that taught the extractor its rules — skipped without `corpus/` |
 | `tests/test_review.py` | the review layer: what is asked, in what order, and when an answer expires |
@@ -955,11 +972,14 @@ itself twice on its first run, producing the low-value-heading rule and the
 
 Deliberate non-goals first — scope commitments, not gaps:
 
-- **No OCR** (text-based PDFs only), and **no vision pass**. Since
-  `fetch.text_bearing_only` a figure image is not even fetched — 47% of the
+- **No vision pass**, and OCR only for pages that carry no text layer at all.
+  Since `fetch.text_bearing_only` a figure image is not even fetched — 47% of the
   supplementary entries in this corpus were files no text can be extracted from — and
   the ones already stored are removed by `drop-media`, which keeps their names, sizes
-  and hashes. Set the key to `false` to keep fetching them.
+  and hashes. Set the key to `false` to keep fetching them. OCR is not the exception
+  to that: it reads the 70 *PDFs* that are scans, needs `tesseract` installed, and
+  marks what it produces `ok_via_ocr` rather than `ok`. Nothing here looks at a
+  figure and describes it.
 - **No table structure recovered from PDFs.** `page.find_tables()` exists, but a
   table found in a PDF has no stable `data_ref` to re-read, and the card contract is
   built on one.
@@ -984,8 +1004,27 @@ Deliberate non-goals first — scope commitments, not gaps:
 
 Gaps and dead ends, each with the detail at the code that handles it:
 
-- No parser for `.doc`, `.rtf`, `.pptx` or non-zip archives; legacy `.xls` needs the
-  optional `xlrd`.
+- **No parser for `.doc`, `.rtf` or `.pptx`, and that is a decision rather than a
+  gap.** Three `.rtf` totalling 1.7 MB and one 23.3 MB `.doc` in this corpus, and
+  reading them means an external converter per format — `unrtf` for one, `antiword`
+  or `catdoc` for the other — so two system dependencies for four files. Compare the
+  two calls made next to it: `xlrd` stopped being optional when the `.xls` count came
+  out at 56 files and 129 MB, and the tar and gzip readers cost nothing but standard
+  library for six files and 107 MB. Four files behind two system dependencies is
+  neither, and `unsupported_format` already queues the file for a human who can open
+  it in any word processor. `.7z` and `.rar` are refused for the same reason with a
+  smaller number: zero files.
+- Archives other than zip **are** read now — `.tar`, `.tgz` and single-file
+  `.gz`/`.bz2`/`.xz`, on content rather than on the suffix, because the one `.tgz`
+  here is an uncompressed tar and three of the five `.gz` files are one CSV each.
+- **`garbled_text_encoding` is not OCR'd, and it is the better candidate.** Those
+  two files render perfectly and only their text layer is broken, which is exactly
+  what OCR is for — but the measurement behind the OCR pass is the 70 scanned files,
+  and a status meaning "the fonts do not say what their glyphs are" should not start
+  sometimes meaning "and we OCR'd it anyway" without its own measurement
+  (`pdf._ocr_pass`).
+- **Table structure is still not recovered from PDFs**, OCR'd or not. A scanned
+  supplementary table yields its cell text as paragraphs — searchable, not a card.
 - **ScienceDirect blocks programmatic access** — no supplement links and no PDF href
   even to a real browser — so a stubbed Elsevier page is retried at cell.com, where a
   human downloads these files from. cell.com carries Cell Press but not all of

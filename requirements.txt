@@ -2,11 +2,28 @@ pymupdf>=1.28
 requests>=2.31
 pyyaml>=6.0.2
 openpyxl>=3.1
+xlrd>=2.0
 
 # openpyxl is required, not optional: of the 191 spreadsheets in the 63-paper
 # development corpus, 172 are .xlsx, and they are where sample-level metadata
 # actually lives. That corpus is not in this repository -- see the note in the
 # README about where these counts come from.
+#
+# xlrd is required for the same reason, on a measurement that moved. It was an
+# optional extra for as long as the development corpus held one .xls among those
+# 191 spreadsheets: not worth a dependency. Over the live 393-article corpus it is
+# 56 files and 129 MB, every one of them reported `unsupported_format` on an
+# install without it, and that is the largest block of supplementary material this
+# stage does not read. A dependency that decides whether 129 MB of tables are
+# extracted is not an extra. Installing it is necessary but not sufficient:
+# `extract.extractor._parser_versions` has to name it too, or the extraction cache
+# keeps serving the verdict from before it was there.
+#
+# The xlrd floor is not what makes .xls readable -- 1.2.0 read this format too --
+# it is which library owns .xlsx. 2.0 is the release that dropped .xlsx support,
+# and with the floor there the two spreadsheet parsers cannot both claim a file:
+# `spreadsheet` dispatches .xlsx to openpyxl and .xls to xlrd, and an xlrd 1.x
+# install would answer for both.
 #
 # The pymupdf floor is the version the checked-in section-score baseline was
 # measured on. `tests/expected_section_scores.json` does not reproduce on any
@@ -30,13 +47,7 @@ openpyxl>=3.1
 # institutional proxy, so it is the one dependency where that class of bug would
 # reach real credentials.
 #
-# Two optional extras:
+# One optional extra:
 #   requirements-browser.txt   the institutional-proxy tier (Playwright)
-#   xlrd>=2.0                  legacy binary .xls supplements (1 of those 191);
-#                              without it such a file is reported
-#                              `unsupported_format` rather than silently skipped.
-#                              No .xls file is in a fetched corpus here, so the
-#                              path is exercised against a stub standing in for
-#                              xlrd rather than against real bytes.
 #
 # Word documents, zips and JATS XML need nothing beyond the standard library.

@@ -230,9 +230,17 @@ def audit_article(directory, limits: Optional[Limits] = None) -> Optional[dict]:
         xml_path.read_bytes(), str(xml_path), limits)
     pdf_blocks, pdf_status, _ = pdf_mod.blocks_from_pdf(
         pdf_path.read_bytes(), str(pdf_path), limits)
+    # `ok` and not `_PRODUCTIVE`, so an `ok_via_ocr` PDF is skipped here, and
+    # deliberately: this audit scores *heading detection* against JATS as the ground
+    # truth, and OCR'd text carries its own error source -- a misread heading is not
+    # a heading this module failed to recognise. The skip reason has to say which of
+    # the two happened, since "did not parse" is untrue of a file OCR read.
     if jats_status != "ok" or pdf_status != "ok":
+        skipped = ("the PDF was read by OCR, whose errors are not this audit's "
+                   "subject" if pdf_status == pdf_mod.OK_VIA_OCR
+                   else "one rendition did not parse")
         return {"slug": directory.name, "jats_status": jats_status,
-                "pdf_status": pdf_status, "skipped": "one rendition did not parse"}
+                "pdf_status": pdf_status, "skipped": skipped}
 
     report = audit(jats_blocks, pdf_blocks)
     report["slug"] = directory.name

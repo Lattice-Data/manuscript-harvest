@@ -9,15 +9,22 @@ fragile module in the package and had no offline coverage at all, so every bug i
 it so far was found by running real DOIs.
 """
 
+import bz2
+import contextlib
+import gzip
 import io
 import json
+import lzma
 import re
+import struct
 import tarfile
 import zipfile
+from unittest import mock
 from typing import Dict, List, Optional
 
 import fitz
 
+from manuscript_harvest.extract import pdf as pdf_mod
 from manuscript_harvest.fetch.http import Response
 
 DOI = "10.1038/s41586-021-03852-1"
@@ -191,6 +198,76 @@ def make_xlsx(sheets) -> bytes:
     buffer = io.BytesIO()
     workbook.save(buffer)
     return buffer.getvalue()
+
+
+def _biff_record(code: int, payload: bytes = b"") -> bytes:
+    return struct.pack("<HH", code, len(payload)) + payload
+
+
+def make_xls(sheets) -> bytes:
+    """`sheets` is `{sheet_name: [row, ...]}`, as a real BIFF5 workbook.
+
+    Written by hand because nothing that writes `.xls` is installed and adding a
+    writer to test one reader is the wrong trade. What this buys is that
+    `spreadsheet.cards_from_xls` is exercised against `xlrd` itself -- its record
+    parser, its `nrows`, its float-vs-text cell typing -- where the tests here used
+    to hand it a `types.SimpleNamespace` whose `open_workbook` returned a fake book.
+    A stub cannot disagree with the library, so a change in xlrd's API would have
+    passed the suite and failed on all 56 of the corpus's .xls files.
+
+    BIFF5 (Excel 5/95) rather than BIFF8, and that is the fixture's one real limit.
+    xlrd accepts a bare record stream for the older versions -- see the comment in
+    its `open_workbook` about "ancient files that don't start with the expected
+    signature" -- so this needs no OLE2 container, which is what makes 40 lines
+    enough. Publishers ship BIFF8 *inside* OLE2, and writing a compound-file
+    container by hand to fake that is not worth it when the real files are on disk:
+    `tests/test_extract_corpus.py` covers that shape against them directly.
+
+    Cells are written as LABEL for `str` and NUMBER for everything else, which is
+    the same split a real workbook makes and the one the column profiler reads.
+    """
+    def sheet_stream(rows) -> bytes:
+        out = [_biff_record(0x0809, struct.pack("<HHHH", 0x0500, 0x0010, 2412, 1993))]
+        # DIMENSIONS holds one past the last row and column, as Excel writes it.
+        out.append(_biff_record(0x0200, struct.pack(
+            "<IIHHH", 0, len(rows), 0, max((len(r) for r in rows), default=0), 0)))
+        for r, row in enumerate(rows):
+            for c, value in enumerate(row):
+                if isinstance(value, str):
+                    encoded = value.encode("latin-1")
+                    out.append(_biff_record(0x0204, struct.pack(
+                        "<HHHH", r, c, 0, len(encoded)) + encoded))
+                else:
+                    out.append(_biff_record(0x0203, struct.pack(
+                        "<HHHd", r, c, 0, float(value))))
+        out.append(_biff_record(0x000A))
+        return b"".join(out)
+
+    streams = [sheet_stream(rows) for rows in sheets.values()]
+
+    def globals_stream(positions) -> bytes:
+        # 2412/1993 is a build/year pair xlrd reads as BIFF5 rather than BIFF7;
+        # either would do, but only one of them is a version this ever shipped as.
+        out = [_biff_record(0x0809, struct.pack("<HHHH", 0x0500, 0x0005, 2412, 1993)),
+               _biff_record(0x0042, struct.pack("<H", 0x04E4))]  # CODEPAGE: cp1252
+        for name, position in zip(sheets, positions):
+            encoded = name.encode("latin-1")
+            out.append(_biff_record(0x0085, struct.pack(
+                "<IBBB", position, 0, 0, len(encoded)) + encoded))
+        out.append(_biff_record(0x000A))
+        return b"".join(out)
+
+    # BOUNDSHEET carries each sheet's absolute offset, and the offsets depend on how
+    # long the globals stream is, which depends on the offsets. Iterating settles it:
+    # the record sizes are fixed, so only the digits of the offsets can move, and
+    # they stop moving once the globals length does.
+    positions = [0] * len(streams)
+    for _ in range(4):
+        at, positions = len(globals_stream(positions)), []
+        for stream in streams:
+            positions.append(at)
+            at += len(stream)
+    return globals_stream(positions) + b"".join(streams)
 
 
 #: Transitional -> strict, the inverse of `manuscript_harvest/extract/ooxml._NAMESPACES`.
@@ -631,13 +708,98 @@ def make_zip(members) -> bytes:
 
 
 def make_tgz(members) -> bytes:
+    return make_tar(members, compression="gz")
+
+
+def make_tar(members, compression: str = "") -> bytes:
+    """`members` is `[(name, bytes)]`. `compression` is "", "gz", "bz2" or "xz".
+
+    Uncompressed is the default because it is not the odd case: the only `.tgz` in
+    this corpus (10.1038/s41586-020-03182-8's MOESM4) is a plain tar that nobody
+    compressed, 296 members under a name that says gzip. That is why
+    `archive.looks_like_tar` asks tarfile to work the compression out instead of
+    trusting the suffix.
+    """
     buffer = io.BytesIO()
-    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+    with tarfile.open(fileobj=buffer, mode=f"w:{compression}" if compression else "w") as archive:
         for name, content in members:
             info = tarfile.TarInfo(name=name)
             info.size = len(content)
             archive.addfile(info, io.BytesIO(content))
     return buffer.getvalue()
+
+
+def make_gz(payload: bytes, stored_name: str = "", compression: str = "gzip") -> bytes:
+    """One file in a single-file wrapper: five of this corpus's six non-zip archives.
+
+    `stored_name` writes gzip's FNAME header field, which three of those five carry
+    -- `meta.csv`, `cre.csv`, `table-S4-cell-type-taxonomy.tsv` -- and which is the
+    only thing that says what the inner file's extension is when the outer name is
+    `04_NIHMS1929560-supplement-Table_4.gz`.
+    """
+    if compression == "bzip2":
+        return bz2.compress(payload)
+    if compression == "xz":
+        return lzma.compress(payload)
+    buffer = io.BytesIO()
+    # `mtime=0` so the bytes are reproducible; a fixture that changes every second
+    # cannot be compared against itself.
+    with gzip.GzipFile(filename=stored_name, mode="wb", fileobj=buffer, mtime=0) as handle:
+        handle.write(payload)
+    return buffer.getvalue()
+
+
+# -- OCR ---------------------------------------------------------------------
+
+@contextlib.contextmanager
+def no_tesseract():
+    """An install with no tesseract on PATH, whatever this machine has.
+
+    Needed in both directions, and the tests that assumed the machine were wrong
+    the moment the reader of them runs `brew install tesseract`: the degradation
+    path has to be asserted on a host that has the binary, and the OCR path on one
+    that does not. Both caches are cleared on the way in and out, because
+    `ocr_support` and `tesseract_version` each hold a subprocess result for the life
+    of the process.
+    """
+    pdf_mod.ocr_support.cache_clear()
+    pdf_mod.tesseract_version.cache_clear()
+    try:
+        with mock.patch.object(pdf_mod.shutil, "which", lambda name: None):
+            yield
+    finally:
+        pdf_mod.ocr_support.cache_clear()
+        pdf_mod.tesseract_version.cache_clear()
+
+
+@contextlib.contextmanager
+def fake_tesseract(returns: bytes = b"", raises: Exception = None):
+    """Stand in for the tesseract binary, and only for it.
+
+    The OCR pass has one line that needs the binary -- `Pixmap.pdfocr_tobytes` --
+    and this replaces that line and nothing else. The render, the `show_pdf_page`
+    that puts the OCR'd page back into the original page's coordinates, and the
+    re-parse of the resulting PDF all run for real, which is what makes the fake
+    worth having: the machine this was written on has no tesseract, so that one
+    line is the only part of the pass with no offline coverage.
+
+    `returns` is what tesseract would have produced -- a PDF with a text layer, as
+    `pdfocr_tobytes` produces -- so `make_pdf_pages` builds it.
+    """
+    def fake_pdfocr_tobytes(self, **kwargs):
+        assert kwargs.get("tessdata") == "/fake/tessdata", kwargs
+        assert kwargs.get("language") == "eng", kwargs
+        if raises is not None:
+            raise raises
+        return returns
+
+    pdf_mod.ocr_support.cache_clear()
+    try:
+        with mock.patch.object(pdf_mod, "ocr_support", lambda: ("/fake/tessdata", "")), \
+             mock.patch.object(fitz.Pixmap, "pdfocr_tobytes", fake_pdfocr_tobytes):
+            yield
+    finally:
+        pdf_mod.ocr_support.cache_clear()
 
 
 # -- fake HTTP ---------------------------------------------------------------

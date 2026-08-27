@@ -42,11 +42,17 @@ from tests.fakes import (
     make_dimensionless_xlsx,
     make_docx,
     make_embedded_font_pdf,
+    fake_tesseract as tesseract,
+    make_pdf,
+    no_tesseract,
     make_pdf_pages,
     make_scanned_pdf,
     make_unreadable_font_pdf,
     make_strict_xlsx,
     make_zero_sheet_xlsx,
+    make_gz,
+    make_tar,
+    make_xls,
     make_xlsx,
     make_zip,
 )
@@ -774,14 +780,6 @@ def test_empty_csv_is_no_text():
     assert spreadsheet.cards_from_csv(b"   \n", "x.csv", L)[1] == "no_text"
 
 
-def test_legacy_xls_without_xlrd_says_so(monkeypatch):
-    """One file in this corpus is a legacy `.xls`. Reporting it as unsupported is
-    better than adding a dependency for 1 of 191 spreadsheets."""
-    monkeypatch.setitem(sys.modules, "xlrd", None)
-    cards, status, meta = spreadsheet.cards_from_xls(b"\xd0\xcf\x11\xe0", "x.xls", L)
-    assert status == "unsupported_format" and "xlrd" in meta["reason"]
-
-
 def test_a_workbook_that_still_declares_no_sheets_after_relaxing_is_unreadable():
     """The other half of the strict-OOXML story. `relax_strict` returning None means
     the namespaces were already ordinary, so zero worksheets is the file's own
@@ -849,51 +847,19 @@ def test_a_sheet_that_cannot_reset_its_dimensions_is_still_read():
 
 
 # -- spreadsheets: legacy .xls -----------------------------------------------
+# Real BIFF bytes, parsed by xlrd itself. These used to run against a
+# `types.SimpleNamespace` whose `open_workbook` returned a hand-built fake book,
+# because xlrd was an optional extra and CI did not install it -- so the suite
+# could not have noticed xlrd changing under it, and the 56 .xls supplements in
+# the corpus were the only thing that would have. `make_xls` says what its BIFF5
+# stream does and does not stand in for.
 
-class _FakeXlsSheet:
-    def __init__(self, name, rows):
-        self.name = name
-        self._rows = rows
-        self.nrows = len(rows)
-
-    def row_values(self, index):
-        return self._rows[index]
-
-
-class _FakeXlsBook:
-    def __init__(self, *sheets):
-        self._sheets = list(sheets)
-        self.nsheets = len(self._sheets)
-
-    def sheets(self):
-        return self._sheets
-
-
-def _fake_xlrd(book=None, error=None):
-    """A stand-in for the optional `xlrd`, so the .xls path is covered without it.
-
-    xlrd 2.x is an optional extra for exactly one file in this corpus, so CI does
-    not install it -- but the branch that reads it is ours and should not go
-    untested for that reason.
-    """
-    module = types.SimpleNamespace()
-
-    def open_workbook(file_contents=None):
-        if error is not None:
-            raise error
-        return book
-
-    module.open_workbook = open_workbook
-    return module
-
-
-def test_legacy_xls_sheets_become_cards(monkeypatch):
-    book = _FakeXlsBook(
-        _FakeXlsSheet("Table S1", [["id", "Sex"], ["a", "M"], ["b", "F"]]),
-        _FakeXlsSheet("Notes", [["read me"], ["some prose"]]),
-    )
-    monkeypatch.setitem(sys.modules, "xlrd", _fake_xlrd(book))
-    cards, status, meta = spreadsheet.cards_from_xls(b"\xd0\xcf\x11\xe0", "mmc2.xls", L)
+def test_legacy_xls_sheets_become_cards():
+    data = make_xls({
+        "Table S1": [["id", "Sex"], ["a", "M"], ["b", "F"]],
+        "Notes": [["read me"], ["some prose"]],
+    })
+    cards, status, meta = spreadsheet.cards_from_xls(data, "mmc2.xls", L)
 
     assert status == "ok" and meta["sheets"] == 2
     assert [c.title for c in cards] == ["Table S1", "Notes"]
@@ -901,29 +867,54 @@ def test_legacy_xls_sheets_become_cards(monkeypatch):
     assert cards[0].locator == "sheet 'Table S1'"
 
 
-def test_legacy_xls_honours_the_row_and_sheet_caps(monkeypatch):
+def test_legacy_xls_numbers_arrive_as_numbers():
+    """The cell-type split is xlrd's, not ours, and the column profiler reads it:
+    a numeric column is enumerated under `max_unique_numeric_values` and a text one
+    under `max_unique_values`. A stub returning Python objects could not get this
+    wrong, so nothing here checked it."""
+    data = make_xls({"S": [["donor", "dose_uM"], ["d1", 0], ["d2", 10], ["d3", 10]]})
+    cards, status, _ = spreadsheet.cards_from_xls(data, "x.xls", L)
+
+    assert status == "ok"
+    dose = next(c for c in cards[0].columns if c["name"] == "dose_uM")
+    assert dose["dtype"] == "number"
+    assert (dose["min"], dose["max"]) == (0.0, 10.0)
+    assert set(dose["values"]) == {"0", "10"}
+
+
+def test_legacy_xls_honours_the_row_and_sheet_caps():
     rows = [["gene", "value"]] + [[f"G{n}", n] for n in range(100)]
-    book = _FakeXlsBook(_FakeXlsSheet("big", rows), _FakeXlsSheet("second", [["a"], ["b"]]))
-    monkeypatch.setitem(sys.modules, "xlrd", _fake_xlrd(book))
+    data = make_xls({"big": rows, "second": [["a"], ["b"]]})
     cards, status, _ = spreadsheet.cards_from_xls(
-        b"\xd0\xcf\x11\xe0", "x.xls", Limits(max_scan_rows=10, max_sheets=1))
+        data, "x.xls", Limits(max_scan_rows=10, max_sheets=1))
 
     assert status == "ok" and len(cards) == 1
     assert cards[0].truncated is True
     assert cards[0].n_rows_total == 101
 
 
-def test_an_unreadable_xls_is_named_not_crashed(monkeypatch):
-    monkeypatch.setitem(sys.modules, "xlrd",
-                        _fake_xlrd(error=ValueError("Unsupported format, or corrupt file")))
-    cards, status, meta = spreadsheet.cards_from_xls(b"garbage", "x.xls", L)
+def test_an_unreadable_xls_is_named_not_crashed():
+    """xlrd's own refusal, not a stubbed exception: `unreadable` blames the file,
+    where `parser_error` would blame this stage."""
+    cards, status, meta = spreadsheet.cards_from_xls(b"garbage, not a workbook", "x.xls", L)
     assert (cards, status) == ([], "unreadable")
-    assert "ValueError: Unsupported format" in meta["reason"]
+    assert "Unsupported format, or corrupt file" in meta["reason"]
 
 
-def test_an_empty_xls_is_no_text(monkeypatch):
-    monkeypatch.setitem(sys.modules, "xlrd", _fake_xlrd(_FakeXlsBook()))
-    assert spreadsheet.cards_from_xls(b"\xd0\xcf\x11\xe0", "x.xls", L)[1] == "no_text"
+def test_an_empty_xls_is_no_text():
+    assert spreadsheet.cards_from_xls(make_xls({"blank": []}), "x.xls", L)[1] == "no_text"
+
+
+def test_legacy_xls_without_xlrd_says_so(monkeypatch):
+    """xlrd is a hard requirement now -- 56 files and 129 MB of the corpus turn on
+    it -- so this covers an install that predates the promotion. The reason has to
+    name the package, because that string is the whole instruction a curator gets.
+    """
+    monkeypatch.setitem(sys.modules, "xlrd", None)
+    cards, status, meta = spreadsheet.cards_from_xls(make_xls({"S": [["a"], ["b"]]}),
+                                                    "x.xls", L)
+    assert (cards, status) == ([], "unsupported_format")
+    assert "xlrd" in meta["reason"] and "pip install" in meta["reason"]
 
 
 # -- spreadsheets: CSV sniffing ----------------------------------------------
@@ -1533,6 +1524,134 @@ def test_a_scanned_pdf_is_still_scanned_and_not_garbled():
     assert "glyphs_unnamed" not in meta
 
 
+# -- PDFs: OCR ---------------------------------------------------------------
+# 70 supplements in this corpus are scans -- 245 pages between them, median 3,
+# longest 11. What is faked below is one line, `Pixmap.pdfocr_tobytes`, which is the
+# only step that needs the tesseract binary and the only step with no offline
+# coverage; the render, `show_pdf_page`, and the re-parse of the OCR'd PDF all run
+# for real, which is the point of the pass returning a PDF rather than strings.
+
+#: What tesseract would hand back for a scanned table: a page with a text layer.
+OCR_TEXT = ("Table S3. Donor characteristics. Islets were isolated from eight "
+            "donors and dissociated before loading on the Chromium controller. ")
+
+
+def test_a_scanned_pdf_is_read_by_ocr():
+    with no_tesseract():
+        _, floor, _ = pdf.blocks_from_pdf(make_scanned_pdf(pages=2), "scan.pdf", L)
+    assert floor == pdf.SCANNED, "the status this file has without the binary"
+
+    with tesseract(returns=make_pdf_pages([[OCR_TEXT * 3]])):
+        blocks, status, meta = pdf.blocks_from_pdf(
+            make_scanned_pdf(pages=2), "scan.pdf", L)
+
+    assert status == "ok_via_ocr"
+    assert blocks and "Donor characteristics" in blocks[0].text
+    assert meta["ocr"] == {"dpi": 300, "language": "eng", "pages": 2,
+                           "chars": meta["chars"]}
+    assert meta["chars"] > L.min_pdf_text_chars
+
+
+def test_ocr_text_is_cleaned_by_the_same_rules_as_a_text_layer():
+    """The reason the pass hands a *PDF* back to `blocks_from_pdf` rather than
+    strings: a hyphen broken across lines has to be rejoined in OCR'd text too, and
+    two parsers for the same job would diverge."""
+    with tesseract(returns=make_pdf_pages([["Islets were dissociated and perturba-\ntion "
+                                            "was confirmed by flow cytometry. " * 4]])):
+        blocks, status, _ = pdf.blocks_from_pdf(make_scanned_pdf(pages=1), "scan.pdf", L)
+    assert status == "ok_via_ocr"
+    assert any("perturbation was confirmed" in b.text for b in blocks)
+
+
+def test_ocr_bboxes_are_in_the_original_pages_coordinates():
+    """`pdfocr_tobytes` returns a page the size of the pixmap -- at 300 dpi four
+    times the original in each direction -- so inserting it directly would record
+    every locator_ref in a coordinate space nothing else uses."""
+    with tesseract(returns=make_pdf_pages([[OCR_TEXT * 3]])):
+        blocks, status, _ = pdf.blocks_from_pdf(make_scanned_pdf(pages=1), "scan.pdf", L)
+    assert status == "ok_via_ocr"
+    page_height = fitz.open(stream=make_scanned_pdf(pages=1), filetype="pdf")[0].rect.height
+    boxes = [b.locator_ref["bbox"] for b in blocks if b.locator_ref]
+    assert boxes, "no bounding boxes were recorded"
+    assert max(box[3] for box in boxes) <= page_height + 1, boxes
+
+
+def test_a_scanned_pdf_without_tesseract_keeps_its_status_and_says_what_to_install():
+    """The optional-system-dependency contract, and the same one
+    `spreadsheet.cards_from_xls` keeps for xlrd: the old status, plus a reason that
+    is an instruction."""
+    with no_tesseract():
+        blocks, status, meta = pdf.blocks_from_pdf(
+            make_scanned_pdf(pages=2), "scan.pdf", L)
+
+    assert status == pdf.SCANNED
+    assert "tesseract" in meta["reason"] and "brew install" in meta["reason"]
+    assert meta["pages"] == 2, "the original parse's findings are kept"
+
+
+def test_ocr_that_finds_nothing_legible_leaves_the_file_scanned():
+    """A blank scan is not the same failure as a missing binary, and the two must
+    not read alike: this one says the pages carry no legible text."""
+    with tesseract(returns=make_scanned_pdf(pages=1)):
+        blocks, status, meta = pdf.blocks_from_pdf(make_scanned_pdf(pages=1), "scan.pdf", L)
+
+    assert status == pdf.SCANNED
+    assert "no legible text" in meta["reason"]
+    assert meta["ocr"]["chars"] < L.min_pdf_text_chars
+
+
+def test_a_scan_longer_than_the_ocr_cap_is_not_ocred():
+    """245 pages over 70 files, longest 11, against a cap of 25. What this stops is
+    a scanned 88-page peer-review bundle."""
+    with tesseract(returns=make_pdf_pages([[OCR_TEXT * 3]])):
+        blocks, status, meta = pdf.blocks_from_pdf(
+            make_scanned_pdf(pages=3), "scan.pdf", Limits(max_ocr_pages=2))
+
+    assert status == pdf.SCANNED
+    assert "3 pages is over the 2-page OCR cap" in meta["reason"]
+
+
+def test_ocr_failing_costs_one_file_not_the_run():
+    """A tesseract that is present and broken is a real shape -- a half-installed
+    language pack answers this way -- and it must not end a run of 393 articles."""
+    with tesseract(raises=RuntimeError("tesseract: error while loading libtesseract")):
+        blocks, status, meta = pdf.blocks_from_pdf(make_scanned_pdf(pages=1), "scan.pdf", L)
+
+    assert status == pdf.SCANNED
+    assert "OCR failed: RuntimeError" in meta["reason"]
+
+
+def test_a_readable_pdf_is_never_ocred():
+    """The pass is reached only by the scanned branch, so a file with a text layer
+    must not pay for a render. Asserted by making the OCR call fail loudly."""
+    with tesseract(raises=AssertionError("OCR was attempted on a readable PDF")):
+        _, status, _ = pdf.blocks_from_pdf(make_pdf(pages=2), "f.pdf", L)
+    assert status == "ok"
+
+
+def test_a_pdf_with_no_pages_is_not_reported_as_an_ocr_failure():
+    """It reaches the scanned branch having produced no characters, and
+    `_render_with_ocr` would raise `cannot save with zero pages` on the way out."""
+    one_page = make_scanned_pdf(pages=1)
+    document = fitz.open(stream=one_page, filetype="pdf")
+    document.delete_page(0)
+    # A zero-page document cannot be saved, so the shape has to be built by hand.
+    empty = one_page.replace(b"/Count 1", b"/Count 0")
+    document.close()
+
+    with tesseract(raises=AssertionError("nothing should have been rendered")):
+        _, status, meta = pdf.blocks_from_pdf(empty, "empty.pdf", L)
+    assert status == pdf.SCANNED
+    assert "no pages" in meta["reason"]
+
+
+def test_the_tesseract_version_is_absent_rather_than_missing():
+    """It goes in the extraction cache key, so it has to answer for an install that
+    does not have it -- and `absent` is an answer, where a missing key is not."""
+    with no_tesseract():
+        assert pdf.tesseract_version() == "absent"
+
+
 def test_running_headers_are_dropped_and_named():
     """A journal footer repeated on every page would otherwise appear as thirty
     near-identical paragraphs. Naming them matters as much as dropping them: the
@@ -1720,6 +1839,164 @@ def test_mac_resource_forks_are_ignored():
 def test_unreadable_archive_is_reported():
     members, meta = archive.read_members(b"not a zip", L, {".csv"})
     assert members == [] and "reason" in meta
+
+
+# -- archives: tar, and the single-file compressors --------------------------
+# Six supplements in this corpus, 107 MB, all reported `unsupported_format` before
+# these paths existed: "compressed archive other than zip; decompress by hand if it
+# holds tables". Five of the six turned out to be one compressed CSV or TSV each.
+
+@pytest.mark.parametrize("compression", ["", "gz", "bz2", "xz"])
+def test_a_tar_is_recognised_however_it_is_compressed(compression):
+    """The uncompressed case is the one that matters: 10.1038/s41586-020-03182-8's
+    MOESM4 is a plain tar under a `.tgz` name, so `mode="r:gz"` -- what
+    `fetch/sources/pmc_oa.py` uses for a package PMC built -- reads nothing from
+    it."""
+    data = make_tar([("table.csv", b"a,b\n1,2\n")], compression=compression)
+    assert archive.looks_like_tar(data) is True
+    members, meta = archive.read_tar_members(data, L, {".csv"})
+    assert [name for name, _ in members] == ["table.csv"]
+    assert meta["members_total"] == 1 and meta["members_read"] == 1
+
+
+def test_a_gzipped_csv_is_not_mistaken_for_a_tar():
+    """Three of the five `.gz` supplements here are a single table, not an archive,
+    so this is the branch that decides which of the two paths they take."""
+    assert archive.looks_like_tar(make_gz(b"a,b\n1,2\n")) is False
+    assert archive.looks_like_tar(b"not compressed at all") is False
+
+
+def test_tar_members_obey_the_same_caps_as_a_zip():
+    data = make_tar([("a.csv", b"x,y\n1,2\n"), ("b.csv", b"x,y\n3,4\n")])
+    members, meta = archive.read_tar_members(data, Limits(max_archive_members=1), {".csv"})
+    assert len(members) == 1
+    assert any(s["reason"] == "member cap reached" for s in meta["skipped"])
+
+    members, meta = archive.read_tar_members(data, Limits(max_member_mb=0), {".csv"})
+    assert members == []
+    assert "over the 0 MB member cap" in meta["skipped"][0]["reason"]
+
+    members, meta = archive.read_tar_members(data, L, {".xlsx"})
+    assert members == [] and meta["member_extensions"] == {".csv": 2}
+
+
+def test_the_tar_walk_stops_before_a_bomb_is_decompressed():
+    """A tar has no central directory, so reading the Nth header means decompressing
+    everything before it. Without this bound a 1 KB tar.gz claiming 10 GB of members
+    would be walked to the end before any per-member cap could apply."""
+    data = make_tar([(f"f{n}.csv", b"a,b\n1,2\n") for n in range(5)], compression="gz")
+    members, meta = archive.read_tar_members(data, Limits(max_file_mb=0), {".csv"})
+    assert members == []
+    assert "over the 0 MB cap" in meta["walk_stopped"]
+    assert meta["members_total"] == 0, "nothing was walked past the bound"
+
+
+def test_tar_member_names_cannot_escape_and_junk_is_ignored():
+    """176 of MOESM4's 296 members are AppleDouble forks and `.DS_Store` files, so
+    the filter is what makes the census mean anything."""
+    data = make_tar([("../../etc/passwd.csv", b"a,b\n1,2\n"),
+                     ("._x.csv", b"junk"), ("__MACOSX/y.csv", b"junk"),
+                     (".DS_Store", b"junk")])
+    members, meta = archive.read_tar_members(data, L, {".csv"})
+    assert [name for name, _ in members] == ["etc/passwd.csv"]
+    assert meta["members_total"] == 4 and meta["member_extensions"] == {".csv": 1}
+
+
+def test_a_tar_that_is_not_a_tar_is_reported():
+    members, meta = archive.read_tar_members(b"not a tar", L, {".csv"})
+    assert members == [] and "reason" in meta
+
+
+@pytest.mark.parametrize("compression", ["gzip", "bzip2", "xz"])
+def test_a_single_compressed_file_is_handed_on(compression):
+    data = make_gz(b"id,sex\na,M\n", compression=compression)
+    plain, status, meta = archive.decompress(data, L)
+    assert (plain, status) == (b"id,sex\na,M\n", "ok")
+    assert meta["compression"] == compression and meta["decompressed_bytes"] == 11
+
+
+def test_an_oversize_file_is_too_large_and_the_reason_says_how_large():
+    """10.1126/science.adf5357's Table_7 is 38 MB on disk and 329 MB of TSV.
+    `too_large` is the honest status now that there is a parser -- `max_member_mb`
+    is what stands in the way, not a missing one -- and the trailer's number is in
+    the reason because "more than 50 MB" does not say what to raise the cap to."""
+    plain, status, meta = archive.decompress(make_gz(b"x" * 500), Limits(max_member_mb=0))
+    assert (plain, status) == (None, "too_large")
+    assert "max_member_mb" in meta["reason"]
+    assert "trailer declares 500 bytes" in meta["reason"]
+
+
+def test_the_size_verdict_does_not_come_from_the_trailer():
+    """ISIZE describes only the *last* member of a multi-member gzip -- bgzip writes
+    thousands and this corpus is genomics supplements -- so a file that is over the
+    cap can declare nothing at all, and the bounded read is what refuses it."""
+    lying = make_gz(b"x" * 500) + make_gz(b"")
+    assert archive.gzip_declared_size(lying) == 0, "the trailer under-declares"
+    plain, status, meta = archive.decompress(lying, Limits(max_member_mb=0))
+    assert (plain, status) == (None, "too_large")
+    assert "trailer declares" not in meta["reason"], "an under-declaring trailer is not quoted"
+
+
+def test_a_truncated_file_is_not_read_as_a_size():
+    """The other direction, and the one that made this the verdict rather than the
+    check: in a truncated file the last four bytes are deflate, not a trailer, so a
+    failed download declared an arbitrary size and was called `too_large`."""
+    whole = make_gz(b"".join(b"%d,gene%d\n" % (n, n) for n in range(4000)))
+    half = whole[: len(whole) // 2]
+    assert archive.gzip_declared_size(half) != len(half), "the bytes read are not a trailer"
+    assert archive.decompress(half, L)[1] == "ok"
+
+
+def test_a_multi_member_gzip_is_read_whole():
+    plain, status, _ = archive.decompress(make_gz(b"a,b\n") + make_gz(b"1,2\n"), L)
+    assert (plain, status) == (b"a,b\n1,2\n", "ok")
+
+
+def test_junk_after_the_end_of_a_gzip_does_not_lose_the_table_before_it():
+    """A publisher's script concatenating padding onto a supplement is not a reason
+    to discard the supplement. The first member has to succeed; what follows it is
+    counted and stepped over."""
+    plain, status, meta = archive.decompress(make_gz(b"a,b\n1,2\n") + b"padding", L)
+    assert (plain, status) == (b"a,b\n1,2\n", "ok")
+    assert meta["trailing_bytes"] == 7
+
+
+def test_a_truncated_stream_keeps_what_arrived_and_says_so():
+    payload = b"".join(b"%d,gene%d,%d\n" % (n, n, n * 7) for n in range(4000))
+    whole = make_gz(payload)
+    plain, status, meta = archive.decompress(whole[: len(whole) // 2], L)
+    assert status == "ok" and meta["truncated_stream"] is True
+    assert plain and payload.startswith(plain)
+
+
+def test_an_empty_truncated_stream_is_unreadable_not_empty():
+    plain, status, meta = archive.decompress(make_gz(b"x" * 5000)[:12], L)
+    assert (plain, status) == (None, "unreadable")
+    assert "truncated" in meta["reason"]
+
+
+def test_something_that_is_not_compressed_at_all_is_refused():
+    plain, status, meta = archive.decompress(b"a,b\n1,2\n", L)
+    assert (plain, status) == (None, "unsupported_format")
+    assert "not a gzip, bzip2 or xz stream" in meta["reason"]
+
+
+@pytest.mark.parametrize("outer,stored,expected", [
+    # Three of the five `.gz` files here store the name; those are the only ones
+    # whose inner extension is knowable without sniffing.
+    ("04_NIHMS1929560-supplement-Table_4.gz", "table-S4-cell-type-taxonomy.tsv",
+     "table-S4-cell-type-taxonomy.tsv"),
+    ("05_NIHMS1929560-supplement-Table_5.gz", "meta.csv", "meta.csv"),
+    # The two that store nothing leave a stem with no extension at all, which is
+    # what sends them to `sniff_extension`.
+    ("02_media-4.gz", "", "02_media-4"),
+    ("counts.csv.gz", "", "counts.csv"),
+    # A stored name is still a name from a file, so it cannot carry a path.
+    ("x.gz", "../../etc/passwd", "passwd"),
+    ("x.gz", "sub/dir/table.csv", "table.csv"),
+])
+def test_the_inner_name_comes_from_the_gzip_header_when_there_is_one(outer, stored, expected):
+    assert archive.inner_name(outer, make_gz(b"a,b\n", stored_name=stored)) == expected
 
 
 # -- blocks ------------------------------------------------------------------

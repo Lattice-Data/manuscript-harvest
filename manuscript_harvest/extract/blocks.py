@@ -90,7 +90,8 @@ class Block:
     source_file: str
     origin: str
     """How the text was produced: jats, pdf, xlsx, xls, csv, docx, html, or
-    `zip:<member>` for something read out of an archive."""
+    `<container>:<member>` for something read out of one -- `zip:`, `tar:`, and
+    `gzip:`/`bzip2:`/`xz:` for a single file in a wrapper."""
     role: str = MAIN_TEXT
     locator: str = ""
     """Where inside the file: `p.7`, `sheet 'Table S6'`, `para 42`,

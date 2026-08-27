@@ -55,6 +55,14 @@ ARTICLE_MD = "article.md"
 
 # -- per-file statuses -------------------------------------------------------
 OK = "ok"
+OK_VIA_OCR = "ok_via_ocr"
+"""Text this stage produced by OCR rather than by reading a text layer.
+
+Its own word rather than `ok` on purpose, and `pdf._ocr_pass` carries the argument.
+The short version: OCR'd characters are a guess where a text layer is a fact, so
+the perturbation stage should be able to weight a claim resting on them
+differently, and `no_text_scanned_pdf` has to keep meaning "a scan nobody has
+read" rather than becoming "a scan, or one we read, you cannot tell from here"."""
 NO_TEXT = "no_text"
 SCANNED = "no_text_scanned_pdf"
 IMAGE_NO_TEXT = "image_no_text"
@@ -76,7 +84,13 @@ file it recognised as broken: this is the stage itself failing, and it is in
 neither `_PRODUCTIVE` nor `_BENIGN` because the text was probably there."""
 
 #: Statuses that mean "there was text here and we got it".
-_PRODUCTIVE = {OK}
+#:
+#: `ok_via_ocr` belongs here, which is the one consequence of adding it that is
+#: worth stating outright: without it those 70 files would stay in
+#: `unextracted_text_files` and their articles would stay `partial` after the text
+#: had in fact been read, which is the opposite of what this stage is for. The
+#: distinction OCR earns is in the word, not in being treated as a failure.
+_PRODUCTIVE = {OK, OK_VIA_OCR}
 #: Statuses that are expected and carry no blame -- a figure has no text.
 _BENIGN = {IMAGE_NO_TEXT, MEDIA_NO_TEXT, DATA_SKIPPED}
 
@@ -146,8 +160,35 @@ DATA_EXTENSIONS = {".h5", ".h5ad", ".hdf5", ".loom", ".mtx", ".rds", ".rdata", "
                    ".npy", ".mat", ".sav", ".dta", ".bam", ".bai", ".cram", ".fastq",
                    ".fq", ".fa", ".fasta", ".bed", ".vcf", ".gtf", ".gff", ".bw",
                    ".bigwig", ".pkl", ".parquet", ".sqlite", ".db", ".zarr"}
-COMPRESSED_EXTENSIONS = {".gz", ".bz2", ".xz", ".tar", ".tgz", ".7z", ".rar"}
+#: Compressed containers, split by what the *name* claims is inside. Only ever a
+#: first guess: `_extract_compressed` decides from the bytes, because both claims
+#: are wrong somewhere in this corpus -- 10.1038/s41586-020-03182-8's `.tgz` is an
+#: uncompressed tar and 10.1126/science.adf5357's three `.gz` files are one CSV
+#: each rather than an archive of many.
+TAR_EXTENSIONS = {".tar", ".tgz", ".tbz2", ".txz"}
+STREAM_COMPRESSED_EXTENSIONS = {".gz", ".bz2", ".xz"}
+#: No standard-library reader, so still refused, and the note names the format.
+#: Zero files in this corpus, against six for the two sets above; a third-party
+#: dependency for a format nobody has sent is the trade the `xls` extra lost.
+OPAQUE_ARCHIVE_EXTENSIONS = {".7z", ".rar"}
+COMPRESSED_EXTENSIONS = (TAR_EXTENSIONS | STREAM_COMPRESSED_EXTENSIONS
+                         | OPAQUE_ARCHIVE_EXTENSIONS)
 LEGACY_DOC_EXTENSIONS = {".doc", ".rtf", ".odt", ".ods", ".ppt", ".pptx", ".key", ".pages"}
+"""Refused, and deliberately, which is the decision worth recording rather than the
+capability.
+
+Measured over the 393-article corpus: three `.rtf` totalling 1.7 MB and one 23.3 MB
+`.doc`. Four files, and reading them means an external converter for each format --
+`unrtf` for one, `antiword` or `catdoc` for the other -- so two system dependencies
+that nothing else in this package needs and that CI would have to install.
+
+That is the opposite trade to the two the neighbouring paths just made. `xlrd` went
+from optional to required because the count moved to 56 files and 129 MB, and the tar
+and gzip readers cost nothing but standard library for six files and 107 MB. Four
+files behind two system dependencies is not that, and `unsupported_format` on a
+`.rtf` is already a queueable failure: `review.py` puts it in front of a human, who
+can open it in any word processor and say whether it holds evidence. Revisit if the
+count moves the way the .xls count did."""
 
 #: What is worth pulling out of a zip.
 TEXT_BEARING_EXTENSIONS = (
@@ -169,6 +210,10 @@ _CONTENT_TYPES = {
     "application/vnd.ms-excel": ".xls",
     "application/msword": ".doc",
     "application/zip": ".zip",
+    "application/gzip": ".gz",
+    "application/x-gzip": ".gz",
+    "application/x-tar": ".tar",
+    "application/x-bzip2": ".bz2",
     "text/csv": ".csv",
     "text/tab-separated-values": ".tsv",
     "text/plain": ".txt",
@@ -212,8 +257,16 @@ def sniff_extension(data: bytes, content_type: str = "") -> str:
         return ".xls" if "excel" in content_type.lower() else ".doc"
     if head.startswith(b"{\\rt"):
         return ".rtf"
-    if head.startswith((b"\x1f\x8b", b"BZh")):
+    if head.startswith(b"\x1f\x8b"):
         return ".gz"
+    if head.startswith(b"BZh"):
+        return ".bz2"
+    if head.startswith(b"\xfd7zXZ\x00"):
+        return ".xz"
+    # A tar says so 257 bytes in, not at the front. Answered `""` before, which for
+    # one of the 13 extensionless supplements would have meant no parser at all.
+    if data[257:262] == b"ustar":
+        return ".tar"
 
     mapped = _CONTENT_TYPES.get((content_type or "").split(";")[0].strip().lower())
     if mapped:
@@ -274,6 +327,8 @@ class FileResult:
             record["note"] = self.note
         for key in ("reason", "sheets", "sheets_skipped", "strict_ooxml", "pages",
                     "members_total", "members_read", "member_extensions", "errors",
+                    "compression", "decompressed_bytes", "walk_stopped", "ocr",
+                    "truncated_stream", "trailing_bytes",
                     "blocks_capped", "delimiter", "read_as", "text_runs",
                     "glued_headings_split", "truncated_paragraphs",
                     "sections", "sections_abandoned",
@@ -409,9 +464,13 @@ def extract_bytes(
             return result(MEDIA_NO_TEXT, note="audio or video")
         if extension in DATA_EXTENSIONS:
             return result(DATA_SKIPPED, note="binary or columnar data file, not prose")
+        if extension in OPAQUE_ARCHIVE_EXTENSIONS:
+            return result(UNSUPPORTED,
+                          note=f"{extension} needs a third-party reader; decompress "
+                               f"by hand if it holds tables")
         if extension in COMPRESSED_EXTENSIONS:
-            return result(UNSUPPORTED, note="compressed archive other than zip; "
-                                            "decompress by hand if it holds tables")
+            return _extract_compressed(data, relative_path, limits, role, label,
+                                       caption, depth, overrides)
         if extension in LEGACY_DOC_EXTENSIONS:
             return result(UNSUPPORTED, note=f"{extension} is not parsed by this stage")
 
@@ -437,7 +496,17 @@ def extract_bytes(
             blocks, status, meta = pdf.blocks_from_pdf(data, relative_path, limits)
             note = meta.get("reason")
             if status == SCANNED:
+                # Both halves, and neither is the other's fallback: the first says
+                # what the status means, the second says why OCR did not change it
+                # -- which since `pdf._ocr_pass` exists is always answerable, and is
+                # usually an install command.
                 note = "parses as a PDF but has almost no extractable text: scanned images"
+                if meta.get("reason"):
+                    note = f"{note}; {meta['reason']}"
+            if status == OK_VIA_OCR:
+                ocr = meta.get("ocr") or {}
+                note = (f"scanned pages, read by OCR at {ocr.get('dpi')} dpi: "
+                        f"weaker evidence than a text layer")
             return result(status, blocks, "pdf", meta, note=note)
         if extension == ".docx":
             blocks, status, meta = docxfile.blocks_from_docx(data, relative_path, limits, overrides)
@@ -449,8 +518,8 @@ def extract_bytes(
             blocks, status, meta = htmlfile.blocks_from_html(data, relative_path, limits)
             return result(status, blocks, "html", meta, note=meta.get("reason"))
         if extension == ".zip":
-            return _extract_zip(data, relative_path, limits, role, label, caption,
-                                depth, overrides)
+            return _extract_archive(data, relative_path, limits, role, label, caption,
+                                    depth, overrides, kind="zip")
 
         return result(UNSUPPORTED,
                       note=f"no parser for {extension or 'files without an extension'}")
@@ -465,20 +534,44 @@ def extract_bytes(
         return result(PARSER_ERROR, note=f"{type(e).__name__}: {e}")
 
 
-def _extract_zip(data: bytes, relative_path: str, limits: Limits, role: str,
-                 label: Optional[str], caption: Optional[str], depth: int,
-                 overrides=None) -> FileResult:
-    wanted = set(TEXT_BEARING_EXTENSIONS)
-    if depth + 1 < limits.max_archive_depth:
-        wanted.add(".zip")
-    members, meta = archive.read_members(data, limits, wanted)
+#: Which container reader `_extract_archive` uses, and what a block read out of
+#: one says its origin was.
+_ARCHIVE_READERS = {
+    "zip": archive.read_members,
+    "tar": archive.read_tar_members,
+}
+
+
+def _nested_archive_extensions(limits: Limits, depth: int) -> set:
+    """Container extensions worth pulling out of a container at this depth.
+
+    Three of this corpus's zips contain only more zips, which is why the descent
+    exists at all; a zip holding a `tables.tar.gz` is the same shape and now reads
+    the same way.
+    """
+    if depth + 1 >= limits.max_archive_depth:
+        return set()
+    return {".zip"} | TAR_EXTENSIONS | STREAM_COMPRESSED_EXTENSIONS
+
+
+def _extract_archive(data: bytes, relative_path: str, limits: Limits, role: str,
+                     label: Optional[str], caption: Optional[str], depth: int,
+                     overrides=None, kind: str = "zip") -> FileResult:
+    """A zip or a tar: read the members worth reading, extract each in turn.
+
+    `kind` picks the reader and nothing else. Both return the same
+    `(members, meta)` pair and both apply the same caps, so the statuses below --
+    which are the part a curator reads -- are decided once for either container.
+    """
+    wanted = set(TEXT_BEARING_EXTENSIONS) | _nested_archive_extensions(limits, depth)
+    members, meta = _ARCHIVE_READERS[kind](data, limits, wanted)
 
     blocks: List[Block] = []
     statuses: List[str] = []
     for name, member_bytes in members:
         inner = extract_bytes(
             member_bytes, f"{relative_path}!{name}", limits, role=role,
-            label=label, origin_prefix="zip:", depth=depth + 1, overrides=overrides,
+            label=label, origin_prefix=f"{kind}:", depth=depth + 1, overrides=overrides,
         )
         statuses.append(inner.status)
         blocks.extend(inner.blocks)
@@ -492,7 +585,7 @@ def _extract_zip(data: bytes, relative_path: str, limits: Limits, role: str,
     elif census and imagey == set(census):
         status = IMAGE_NO_TEXT
         note = "archive holds only figure images or media"
-    elif ".zip" in census and ".zip" not in wanted:
+    elif _nested_only(census) and not _nested_archive_extensions(limits, depth):
         status = NO_TEXT
         note = (f"archive holds only nested archives and the depth cap "
                 f"({limits.max_archive_depth}) stopped the descent")
@@ -505,7 +598,67 @@ def _extract_zip(data: bytes, relative_path: str, limits: Limits, role: str,
     if meta.get("skipped"):
         meta["errors"] = [f"{s['name']}: {s['reason']}" for s in meta["skipped"][:10]]
         meta.pop("skipped")
-    return FileResult(relative_path, role, status, blocks, "zip", meta, label, caption, note)
+    if meta.get("walk_stopped") and not note:
+        note = meta["walk_stopped"]
+    return FileResult(relative_path, role, status, blocks, kind, meta, label, caption, note)
+
+
+def _nested_only(census: dict) -> bool:
+    """Whether every member of an archive is itself an archive."""
+    containers = {".zip"} | TAR_EXTENSIONS | STREAM_COMPRESSED_EXTENSIONS
+    return bool(census) and set(census) <= containers
+
+
+def _extract_compressed(data: bytes, relative_path: str, limits: Limits, role: str,
+                        label: Optional[str], caption: Optional[str], depth: int,
+                        overrides=None) -> FileResult:
+    """A `.gz`/`.tgz`/`.tar`/`.bz2`/`.xz` supplement: tarball or single file.
+
+    Six files in this corpus, 107 MB, every one of them reported
+    `unsupported_format` before this existed -- "compressed archive other than zip;
+    decompress by hand if it holds tables" -- and five of the six are one
+    compressed CSV or TSV each, which is to say a supplementary table with a
+    wrapper on it rather than an archive at all.
+
+    Which of the two shapes it is comes from the bytes, not the name.
+    `archive.looks_like_tar` costs one member header, and the alternative would be
+    wrong twice over: `MOESM4_ESM.tgz` is an uncompressed tar, so a suffix rule
+    would hand it to gzip, and `...-supplement-Table_5.gz` is a single `meta.csv`,
+    so the same rule reading `.gz` as "tarball" would find no members in it.
+
+    The depth cap is checked here rather than only in the wanted set, which is what
+    `_extract_archive` can get away with: nothing stops `extract_bytes` from
+    dispatching a `.gz` inside a `.gz` inside a `.gz` by extension, and each level
+    of that decompresses before anything looks at it.
+    """
+    def refuse(status: str, note: str, meta=None) -> FileResult:
+        return FileResult(relative_path, role, status, [], "", meta or {}, label,
+                          caption, note)
+
+    if depth >= limits.max_archive_depth:
+        return refuse(NO_TEXT, f"nested {limits.max_archive_depth} archives deep, "
+                               f"which is the depth cap (`max_archive_depth`)")
+
+    if archive.looks_like_tar(data):
+        return _extract_archive(data, relative_path, limits, role, label, caption,
+                                depth, overrides, kind="tar")
+
+    plain, status, meta = archive.decompress(data, limits)
+    if plain is None:
+        return refuse(status, meta.get("reason", "not a readable compressed file"), meta)
+
+    name = archive.inner_name(relative_path, data)
+    inner = extract_bytes(
+        plain, f"{relative_path}!{name}", limits, role=role, label=label,
+        origin_prefix=f"{meta['compression']}:", depth=depth + 1, overrides=overrides,
+    )
+    note = f"{meta['compression']} wrapper around one file, {name}"
+    if meta.get("truncated_stream"):
+        note += "; the compressed stream is truncated, so this is a partial read"
+    if inner.note:
+        note = f"{note}; {inner.note}"
+    return FileResult(relative_path, role, inner.status, inner.blocks,
+                      meta["compression"], {**inner.meta, **meta}, label, caption, note)
 
 
 def extract_path(path, relative_path: str, limits: Limits, role: str = SUPPLEMENT,
@@ -622,10 +775,41 @@ def _parser_versions() -> Dict[str, str]:
     Python is major.minor only. A patch bump does not change how PyMuPDF reads a
     page, and invalidating every extraction in the corpus for one would make the
     key expensive enough that someone turns it off.
+
+    Every parser this stage dispatches to has to be named here, and `xlrd` is the
+    demonstration of what happens when one is not. It was missing for as long as it
+    was an optional extra, so installing it moved nothing in `extraction_key`: the
+    56 `.xls` supplements in the corpus went on being served their cached
+    `unsupported_format` from the install that had no xlrd, and `--force` -- a
+    re-extract of all 393 articles -- was the only thing that could pick the new
+    parser up. `source_fingerprint` in `__init__.py` exists for this same bug one
+    layer in: a version number nobody bumps is not a cache key, and neither is a
+    dependency nobody records.
+
+    `tesseract` is here for the same reason and is not a Python package at all: it
+    is the optional *system* dependency the OCR pass needs, and 70 scanned
+    supplements would otherwise keep serving the `no_text_scanned_pdf` cached from
+    an install that had no way to read them. See `pdf.tesseract_version`, including
+    what being in this key costs -- installing it re-extracts all 393 articles and
+    not only the 70 that hold a scan.
+
+    An absent parser is recorded as `"absent"` rather than left out, so the key
+    moves in both directions -- installing xlrd invalidates, removing it
+    invalidates -- and the `parser_versions` block in extraction.json says which of
+    the two kinds of install produced the record.
     """
     import fitz
     import openpyxl
+    try:
+        import xlrd
+        xlrd_version = xlrd.__version__
+    except ImportError:
+        # Still guarded: an install predating requirements.txt's promotion of xlrd
+        # to a hard dependency reads `.xls` as `unsupported_format`, and that
+        # verdict is exactly what this key has to stop outliving the install.
+        xlrd_version = "absent"
     return {"pymupdf": fitz.__version__, "openpyxl": openpyxl.__version__,
+            "xlrd": xlrd_version, "tesseract": pdf.tesseract_version(),
             "python": "%d.%d" % sys.version_info[:2]}
 
 
@@ -1023,7 +1207,11 @@ def extract_article(article_dir, limits: Optional[Limits] = None, force: bool = 
     # Nothing disappears: a file a human cleared stays listed, and one key away
     # is the human who cleared it.
     blocking = [p for p in text_bearing_failures if p not in cleared_by_review]
-    main_usable = main_result.status == OK and main_result.chars > 0
+    # `in _PRODUCTIVE` rather than `== OK`, so an OCR'd main text counts as one.
+    # No file in this corpus is that -- all 70 scanned files are supplements, zero
+    # main texts -- but `== OK` would have made an OCR'd article `failed` while its
+    # own record said `ok_via_ocr`, and a reader of the record can see which it was.
+    main_usable = main_result.status in _PRODUCTIVE and main_result.chars > 0
     main_info["usable"] = main_usable
     supplement_text = any(r.blocks for r in results[1:])
 

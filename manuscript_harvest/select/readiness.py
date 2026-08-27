@@ -57,7 +57,13 @@ _TEXT_SUBSTITUTED = {extractor.LANDING_PAGE_ONLY, extractor.MAIN_TEXT_THIN}
 
 #: Per-file extraction statuses that mean a supplement's text was never read. A
 #: donor table inside one of these is not absent, it is unreachable -- and unlike a
-#: figure image, something a human or an OCR pass could still recover.
+#: figure image, something a human could still recover.
+#:
+#: `ok_via_ocr` is not one of them and `no_text_scanned_pdf` still is, which is now
+#: a sharper distinction than when this set was written: the OCR pass this comment
+#: used to describe as hypothetical exists, so a scanned file that stayed
+#: `no_text_scanned_pdf` is one OCR was unavailable for or could not read, rather
+#: than one nobody has tried. `extract/pdf.py::_ocr_pass` says which, in `reason`.
 _FILE_TEXT_LOST = {extractor.SCANNED, extractor.UNSUPPORTED, extractor.TOO_LARGE,
                    extractor.MISSING, extractor.UNREADABLE, extractor.PARSER_ERROR,
                    extractor.GARBLED}
@@ -98,7 +104,13 @@ def assess(article_dir, extraction: Optional[dict] = None,
     # question of", so it needs no second opinion.
     if record.get("status") == "failed":
         why.append("extraction failed: there is no usable text")
-    if main_text.get("status") not in {extractor.OK, None} or not main_text.get("blocks"):
+    # `_PRODUCTIVE` rather than `{OK}`, so an OCR'd main text is not disqualifying:
+    # the text is there, weaker, and `main_text.status` says `ok_via_ocr` to anyone
+    # reading the record. No article in this corpus is that -- all 70 scanned files
+    # are supplements -- so this is the case being settled before it arrives rather
+    # than a behaviour change.
+    if main_text.get("status") not in extractor._PRODUCTIVE | {None} \
+            or not main_text.get("blocks"):
         why.append(f"main text yielded no blocks (status "
                    f"{main_text.get('status') or 'absent'})")
     substituted = sorted(caveats & _TEXT_SUBSTITUTED)
