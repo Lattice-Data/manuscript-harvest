@@ -94,7 +94,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from .. import text_bearing
-from . import store
+from . import orphans, store
 from .http import Http
 from .identifiers import Identifiers, normalize_doi, resolve_identifiers
 from .sources import DEFAULT_TIERS, build_sources
@@ -796,8 +796,45 @@ def fetch_publication(
     store.finalize_status(record)
     store.write_manifest(directory, {k: v for k, v in record.items() if k != "_directory"})
 
+    # Delete what this run's numbering just abandoned. `_write_group` names files
+    # `<subdir>/<NN>_<name>` with `NN` from `enumerate()`, so a re-fetch returning a
+    # different-sized or differently-ordered set writes new names and leaves the old
+    # ones behind; measured at 202 files and 1.37 GB across 29 articles before this
+    # existed, growing by 50 files with a single 38-article `--force` batch.
+    #
+    # **After the manifest, never before, and that is the whole of the ordering
+    # argument.** A crash between the two leaves unreferenced files, which is what
+    # this sweep is for and what the next one removes. A crash the other way round
+    # leaves files deleted while the record still names them, which makes
+    # `manifest_is_complete` false and sends every later batch re-fetching the whole
+    # article -- the same trap `drop_media` writes its manifest per file to stay out
+    # of, arrived at from the opposite direction (see `store.mark_entry_removed` on
+    # why a removal must not keep its `path`).
+    #
+    # `record` and not `new_supplementary`: the preservation branches above keep the
+    # *existing* entry list when a re-fetch came away empty, so the referenced set is
+    # then the previous numbering and sweeping what this run wrote would delete the
+    # very set that branch exists to save. `orphans.unreferenced_files` reads the
+    # final record for that reason.
+    swept = orphans.sweep_article(directory, record)
+    if swept["files"]:
+        record["orphans_swept"] = {"files": len(swept["files"]),
+                                   "bytes": swept["bytes"]}
+    for failure in swept["failed"]:
+        # Recorded but not fatal: the manifest is already written and correct, and a
+        # stale file that could not be unlinked is exactly what `drop-orphans` is for.
+        record["problems"].append(
+            f"could not remove the unreferenced file {failure['path']}: "
+            f"{failure['error']}"
+        )
+    if swept["files"] or swept["failed"]:
+        store.write_manifest(directory,
+                             {k: v for k, v in record.items() if k != "_directory"})
+
     # Keep the corpus inside its size budget, evicting oldest-first. The article
-    # just fetched is never the one evicted.
+    # just fetched is never the one evicted. After the sweep above, so the budget
+    # measures the article as it now stands rather than counting 1.37 GB of files
+    # that are about to go and evicting a neighbour to make room for them.
     max_gb = fetch_cfg.get("max_corpus_gb")
     if max_gb:
         outcome = store.enforce_budget(corpus_dir, int(float(max_gb) * 1024 ** 3))
