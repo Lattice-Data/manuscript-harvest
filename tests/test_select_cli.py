@@ -215,7 +215,7 @@ def test_sheet_refuses_a_corpus_with_nothing_worth_labelling(tmp_path, capsys):
 def test_label_applies_a_downloaded_sheet(tmp_path, capsys):
     source = tmp_path / "labels.json"
     source.write_text(json.dumps({"aspect": "accessions", "labeled_by": "me",
-                                  "articles": [{"slug": "s", "doi": "10.1/x",
+                                  "articles": [{"slug": "s", "doi": "10.1038/x",
                                                 "complete": True, "missing": [],
                                                 "accessions": [
         {"accession": "GSE208532", "repository": "GEO", "level": "study",

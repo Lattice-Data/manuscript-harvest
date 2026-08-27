@@ -99,7 +99,7 @@ def test_each_fetch_caveat_becomes_a_gap_that_bounds_the_answer(caveat, gap):
         "irrelevant",
         extraction={"status": "complete", "caveats": [caveat],
                     "main_text": {"status": "ok", "blocks": 40}},
-        manifest={"slug": "s", "doi": "10.1/x"})
+        manifest={"slug": "s", "doi": "10.1038/x"})
     assert verdict["state"] == readiness.READY_WITH_CAVEATS
     assert gap in verdict["gaps"]
     assert verdict["why"]
@@ -117,7 +117,7 @@ def test_weak_section_labelling_is_reported_as_a_gap(confidence):
                     "main_text": {"status": "ok", "blocks": 40,
                                   "section_labelling": {"confidence": confidence,
                                                         "why": "no headings matched"}}},
-        manifest={"slug": "s", "doi": "10.1/x"})
+        manifest={"slug": "s", "doi": "10.1038/x"})
     assert verdict["gaps"] == [f"section_labelling_{confidence}"]
     assert readiness.trustworthy(verdict)
 
@@ -128,9 +128,9 @@ def test_a_passed_in_extraction_is_used_rather_than_re_read(tmp_path):
     verdict = readiness.assess(tmp_path,
                                extraction={"status": "failed", "caveats": [],
                                            "main_text": {}},
-                               manifest={"slug": "s", "doi": "10.1/x"})
+                               manifest={"slug": "s", "doi": "10.1038/x"})
     assert verdict["state"] == readiness.TEXT_UNAVAILABLE
-    assert verdict["doi"] == "10.1/x"
+    assert verdict["doi"] == "10.1038/x"
 
 
 def test_lost_supplement_text_is_a_gap_not_a_disqualification(tmp_path):
@@ -565,7 +565,7 @@ def test_every_article_gets_a_complete_box_including_the_empty_ones():
     """The empty articles are where `complete` does all the work: an empty result from
     a broken pattern list and an empty result from a paper that deposited nothing are
     the same file otherwise."""
-    html = sheet.render([{"slug": "empty", "doi": "10.1/x", "candidates": [],
+    html = sheet.render([{"slug": "empty", "doi": "10.1038/x", "candidates": [],
                           "verdict": {"state": readiness.READY}}])
     assert html.count('class="complete"') == 1
     assert 'class="missing"' in html
@@ -575,7 +575,7 @@ def test_the_sheet_asks_about_study_ids_and_only_lists_sample_ids():
     found = candidates.find([
         {"block_id": "p", "kind": "paragraph",
          "text": "Deposited at GSE208532; samples GSM1839192 and GSM1839193."}])
-    html = sheet.render([{"slug": "s", "doi": "10.1/x", "candidates": found,
+    html = sheet.render([{"slug": "s", "doi": "10.1038/x", "candidates": found,
                           "verdict": {"state": readiness.READY}}])
     assert html.count('class="cand"') == 1              # one radio group, not three
     assert "GSM1839192" in html                         # but the sample ids are shown
@@ -586,7 +586,7 @@ def test_the_download_payload_is_parseable_json_not_html_escaped():
     """`html.escape` on a payload inside a `<script>` element is a real bug this
     package has already shipped once: HTML5 script data does not expand character
     references, so `&quot;` reaches `JSON.parse` literally and Download throws."""
-    html = sheet.render([{"slug": "s", "doi": '10.1/a"b<c', "candidates": [],
+    html = sheet.render([{"slug": "s", "doi": '10.1038/a"b<c', "candidates": [],
                           "verdict": {"state": readiness.READY}}])
     body = html.split('<script type="application/json" id="meta">')[1].split("</script>")[0]
     assert json.loads(body) == {"articles": 1, "candidates": 0}
@@ -594,7 +594,7 @@ def test_the_download_payload_is_parseable_json_not_html_escaped():
 
 
 def test_the_sheet_escapes_a_doi_in_the_visible_body():
-    html = sheet.render([{"slug": "s", "doi": "10.1/<script>x", "candidates": [],
+    html = sheet.render([{"slug": "s", "doi": "10.1038/<script>x", "candidates": [],
                           "verdict": {"state": readiness.READY}}])
     assert "<script>x" not in html.split("</style>")[1].split("<footer")[0]
 
@@ -608,7 +608,7 @@ def test_every_hook_the_download_script_reads_is_in_the_markup():
     """
     found = candidates.find([{"block_id": "p", "kind": "paragraph",
                               "text": "Deposited at GSE208532 in GEO."}])
-    html = sheet.render([{"slug": "s", "doi": "10.1/x", "candidates": found,
+    html = sheet.render([{"slug": "s", "doi": "10.1038/x", "candidates": found,
                           "verdict": {"state": readiness.READY}}])
 
     for hook in ['id="by"', 'id="progress"', 'id="out"',           # getElementById
@@ -636,7 +636,7 @@ def test_the_roles_the_sheet_offers_are_the_roles_scoring_understands():
 # -- the label round trip ----------------------------------------------------
 
 def _payload(**article):
-    base = {"slug": "s", "doi": "10.1/x", "aspect": "accessions",
+    base = {"slug": "s", "doi": "10.1038/x", "aspect": "accessions",
             "labeled_by": "you@example.edu", "complete": True,
             "accessions": [], "missing": []}
     return {"aspect": "accessions", "labeled_by": "you@example.edu",

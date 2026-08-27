@@ -66,7 +66,7 @@ def test_ezproxy_hostname_rewriting_selects_the_right_adapter():
     cases = {
         "https://www-nature-com.stanford.idm.oclc.org/articles/x": "nature",
         "https://www-sciencedirect-com.stanford.idm.oclc.org/science/article/pii/X": "elsevier",
-        "https://onlinelibrary-wiley-com.stanford.idm.oclc.org/doi/10.1/x": "wiley",
+        "https://onlinelibrary-wiley-com.stanford.idm.oclc.org/doi/10.1038/x": "wiley",
         "https://pmc-ncbi-nlm-nih-gov.stanford.idm.oclc.org/articles/PMC1/": "pmc",
         "https://www-science-org.stanford.idm.oclc.org/doi/10.1126/science.x": "science",
         "https://www.nature.com/articles/x": "nature",
@@ -647,7 +647,7 @@ def test_pmc_bot_check_says_use_headed():
     result = SourceResult(tier="proxy_browser")
 
     class Ids:
-        doi = "10.1/x"
+        doi = "10.1038/x"
         pmcid = "PMC1"
 
     source._pmc_supplements(FakeContext(pages=[page]), Ids(), result)
@@ -841,7 +841,7 @@ def test_a_broken_tier_does_not_raise():
     source = _source()
 
     class Ids:
-        doi = "10.1/x"
+        doi = "10.1038/x"
         pmcid = None
         landing_url = None
         is_preprint = False

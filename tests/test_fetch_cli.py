@@ -329,7 +329,7 @@ def test_batch_exits_nonzero_unless_every_article_is_complete(tmp_path, monkeypa
 def test_tiers_and_corpus_dir_override_the_config_file(tmp_path):
     config = _config_file(tmp_path, corpus_dir="from-config", tiers=["europepmc"])
     args = cli.build_parser().parse_args(
-        ["--config", str(config), "get", "10.1/x",
+        ["--config", str(config), "get", "10.1038/x",
          "--corpus-dir", "from-flag", "--tiers", "pmc_oa, biorxiv ,"])
     merged = cli._apply_cli_overrides(cli.load_config(config), args)
 
@@ -339,7 +339,7 @@ def test_tiers_and_corpus_dir_override_the_config_file(tmp_path):
 
 def test_oa_only_replaces_the_tier_list_entirely():
     """The promise is that no browser opens, so it cannot be an additive filter."""
-    args = cli.build_parser().parse_args(["get", "10.1/x", "--oa-only", "--tiers", "proxy_browser"])
+    args = cli.build_parser().parse_args(["get", "10.1038/x", "--oa-only", "--tiers", "proxy_browser"])
     merged = cli._apply_cli_overrides(cli.load_config("nonexistent.yaml"), args)
     assert merged["fetch"]["tiers"] == list(cli.OA_TIERS)
     assert "proxy_browser" not in merged["fetch"]["tiers"]
@@ -409,7 +409,7 @@ def test_a_users_own_overrides_are_added_to_the_default_not_swapped_for_it(tmp_p
 
 
 def test_no_proxy_and_headed_reach_the_nested_config():
-    args = cli.build_parser().parse_args(["get", "10.1/x", "--no-proxy", "--headed"])
+    args = cli.build_parser().parse_args(["get", "10.1038/x", "--no-proxy", "--headed"])
     merged = cli._apply_cli_overrides(cli.load_config("nonexistent.yaml"), args)
     assert merged["fetch"]["proxy"]["enabled"] is False
     assert merged["fetch"]["browser"]["headless"] is False

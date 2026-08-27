@@ -232,7 +232,7 @@ def test_duo_is_an_expired_session_by_host_alone():
     assert classify_denial(DUO_PROMPT_URL, b"<html><body>anything</body></html>") \
         == "session_expired"
     # ... and by wording alone, for the frameless prompt embedded elsewhere.
-    assert classify_denial("https://www-science-org.stanford.idm.oclc.org/doi/10.1/x",
+    assert classify_denial("https://www-science-org.stanford.idm.oclc.org/doi/10.1038/x",
                            DUO_PROMPT_HTML) == "session_expired"
 
 
@@ -442,7 +442,7 @@ def _article(root, slug, when, size):
     directory = root / slug
     (directory / "supplementary").mkdir(parents=True)
     (directory / "fulltext.pdf").write_bytes(b"x" * size)
-    store.write_manifest(directory, {"doi": f"10.1/{slug}", "status": "complete",
+    store.write_manifest(directory, {"doi": f"10.1038/{slug}", "status": "complete",
                                      "fetched_at": when,
                                      "fulltext": {"path": "fulltext.pdf"},
                                      "supplementary": []})

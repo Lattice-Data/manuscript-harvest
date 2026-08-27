@@ -679,7 +679,7 @@ def test_budget_evicts_during_a_fetch_and_says_so(tmp_path):
     old = tmp_path / "10.1_older"
     old.mkdir(parents=True)
     (old / "fulltext.pdf").write_bytes(b"x" * 5000)
-    store.write_manifest(old, {"doi": "10.1/older", "status": "complete",
+    store.write_manifest(old, {"doi": "10.1038/older", "status": "complete",
                                "fetched_at": "2020-01-01T00:00:00Z",
                                "fulltext": {"path": "fulltext.pdf"}, "supplementary": []})
 
@@ -697,7 +697,7 @@ def test_no_budget_means_no_eviction(tmp_path):
     old = tmp_path / "10.1_older"
     old.mkdir(parents=True)
     (old / "fulltext.pdf").write_bytes(b"x" * 5000)
-    store.write_manifest(old, {"doi": "10.1/older", "status": "complete",
+    store.write_manifest(old, {"doi": "10.1038/older", "status": "complete",
                                "fetched_at": "2020-01-01T00:00:00Z",
                                "fulltext": {"path": "fulltext.pdf"}, "supplementary": []})
     fetcher.fetch_publication(DOI, config, http=_http(hasSuppl="N"))
