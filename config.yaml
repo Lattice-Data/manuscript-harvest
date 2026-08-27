@@ -178,7 +178,12 @@ extract:
     max_card_chars: 4000        # budget for one table card's text
     max_sample_rows: 3
     max_archive_members: 25
-    max_member_mb: 50           # per file inside a zip
+    # Per file inside a zip. Raised from 50: at that value the cap was refusing
+    # nine text-bearing members, every one a labelled supplementary table, for
+    # 2.64 GB across six articles. This is a memory cap -- archive.py holds each
+    # member whole -- so 200 is the peak per member, and the three files still over
+    # it (408 MB, 595 MB, 1.09 GB) stay named in the record. See limits.py.
+    max_member_mb: 200
     max_archive_depth: 2        # some zips contain only more zips
     min_main_text_chars: 2000   # thinner JATS than this falls back to the PDF
     ocr_dpi: 300                # scanned pages are rendered at this before tesseract
