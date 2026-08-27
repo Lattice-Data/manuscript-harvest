@@ -24,6 +24,7 @@ from pathlib import Path
 
 import yaml
 
+from .. import progress
 from ..config import merge_config, warn_if_config_missing
 from . import store
 from .fetcher import build_http, fetch_publication
@@ -172,6 +173,32 @@ def _report(record: dict) -> None:
         print("    (cached; use --force to re-fetch)", file=sys.stderr)
 
 
+def _progress_fields(record: dict) -> dict:
+    """The same paper as `_report` prints, in fields a watcher can read.
+
+    `files` is deliberately the count `store.summarize` prints -- every entry,
+    including any a later `drop-media` marked removed -- so the log line and the
+    heartbeat can never disagree about one paper. `bytes` is the other question,
+    what actually landed on disk, and so counts only entries still holding a path.
+    """
+    fulltext = record.get("fulltext") or {}
+    supplementary = record.get("supplementary") or []
+    on_disk = [entry for entry in supplementary if not entry.get("removed")]
+    return {
+        "doi": record.get("doi"),
+        "slug": record.get("slug"),
+        "status": record.get("status"),
+        "pdf": fulltext.get("status"),
+        "suppl": record.get("supplementary_status"),
+        "files": len(supplementary),
+        "bytes": (fulltext.get("bytes") or 0)
+        + sum(entry.get("bytes") or 0 for entry in on_disk),
+        "tiers": record.get("tiers_tried") or [],
+        "cached": bool(record.get("cached")),
+        "problems": record.get("problems") or [],
+    }
+
+
 def cmd_get(args) -> int:
     config = _apply_cli_overrides(load_config(args.config), args)
     _warn_if_no_session(config)
@@ -233,51 +260,65 @@ def cmd_batch(args) -> int:
 
     # One shared Http so the per-host interval applies across the whole batch.
     http = build_http(config)
-    records = []
+    fetched = 0
+    by_status: dict = {}
     # A dead proxy session fails identically for every paper that needs it, and
     # each failure costs a browser launch, a navigation and the per-host wait. So
     # count them and stop, rather than proving the same point fifty times.
     session_failures = 0
     dropped_proxy = False
-    for doi in dois:
-        record = fetch_publication(
-            doi, config, force=args.force,
-            want_supplements=not args.no_supplements, http=http,
-        )
-        _report(record)
-        records.append(record)
+    stopped = False
 
-        tiers = config["fetch"].get("tiers") or []
-        if "proxy_browser" not in tiers:
-            continue
-        if _session_expired(record):
-            session_failures += 1
-        elif "proxy_browser" in (record.get("tiers_tried") or []):
-            # The tier ran and did not bounce, so the session is alive and
-            # whatever went wrong here was this paper's problem. Only a run of
-            # failures means the login is missing.
-            session_failures = 0
-        if session_failures >= SESSION_FAILURE_LIMIT:
-            config["fetch"]["tiers"] = [t for t in tiers if t != "proxy_browser"]
-            dropped_proxy = True
-            print(
-                f"\n{session_failures} papers in a row reported session_expired, so "
-                "proxy_browser is dropped for\nthe rest of this run -- the remaining "
-                "DOIs get open-access tiers only. To fix:\n"
-                "    manuscript-fetch login && manuscript-fetch check\n"
-                "then re-run this batch with --force.\n",
-                file=sys.stderr,
+    # Both files are written as the run goes rather than after it. `--report` used
+    # to be collected in memory and dumped once the loop finished, which meant a
+    # batch that was interrupted -- or that died on paper 50 of 55 -- left no report
+    # at all, having done all the work. Opening it here also means the file exists,
+    # empty, from the start of the run; that is the visible cost of the change, and
+    # a partial report is worth more than none.
+    with progress.JsonlWriter(args.report) as report, \
+            progress.ProgressLog(args.progress_jsonl) as heartbeat, \
+            progress.StopRequest() as stop:
+        heartbeat.start(total=len(dois), dois=dois, command="fetch batch")
+        for doi in dois:
+            if stop.requested:
+                stopped = True
+                print(f"\nstopped at your request before {doi}: {fetched} of "
+                      f"{len(dois)} papers fetched.", file=sys.stderr)
+                break
+            record = fetch_publication(
+                doi, config, force=args.force,
+                want_supplements=not args.no_supplements, http=http,
             )
+            _report(record)
+            fetched += 1
+            by_status[record.get("status")] = by_status.get(record.get("status"), 0) + 1
+            report.write({k: v for k, v in record.items() if k != "_directory"})
+            heartbeat.item(**_progress_fields(record))
 
-    if args.report:
-        with Path(args.report).open("w", encoding="utf-8") as handle:
-            for record in records:
-                clean = {k: v for k, v in record.items() if k != "_directory"}
-                handle.write(json.dumps(clean, ensure_ascii=False) + "\n")
+            tiers = config["fetch"].get("tiers") or []
+            if "proxy_browser" not in tiers:
+                continue
+            if _session_expired(record):
+                session_failures += 1
+            elif "proxy_browser" in (record.get("tiers_tried") or []):
+                # The tier ran and did not bounce, so the session is alive and
+                # whatever went wrong here was this paper's problem. Only a run of
+                # failures means the login is missing.
+                session_failures = 0
+            if session_failures >= SESSION_FAILURE_LIMIT:
+                config["fetch"]["tiers"] = [t for t in tiers if t != "proxy_browser"]
+                dropped_proxy = True
+                print(
+                    f"\n{session_failures} papers in a row reported session_expired, so "
+                    "proxy_browser is dropped for\nthe rest of this run -- the remaining "
+                    "DOIs get open-access tiers only. To fix:\n"
+                    "    manuscript-fetch login && manuscript-fetch check\n"
+                    "then re-run this batch with --force.\n",
+                    file=sys.stderr,
+                )
+        heartbeat.end(by_status=by_status, stopped=stopped, dropped_proxy=dropped_proxy,
+                      fetched=fetched)
 
-    by_status = {}
-    for record in records:
-        by_status[record.get("status")] = by_status.get(record.get("status"), 0) + 1
     print("\n" + "  ".join(f"{k}={v}" for k, v in sorted(by_status.items())), file=sys.stderr)
     if dropped_proxy:
         # Said again at the end because the mid-run notice scrolls away behind the
@@ -285,7 +326,9 @@ def cmd_batch(args) -> int:
         # on the papers rather than on a missing login.
         print("proxy_browser was dropped mid-run: these totals understate what a "
               "logged-in run would reach.", file=sys.stderr)
-    return 0 if by_status.get("complete") == len(records) else 1
+    if stopped:
+        return progress.STOPPED_EXIT_CODE
+    return 0 if by_status.get("complete") == fetched else 1
 
 
 def cmd_usage(args) -> int:
@@ -587,6 +630,10 @@ def build_parser() -> argparse.ArgumentParser:
     batch_parser = subparsers.add_parser("batch", help="fetch a file of DOIs, one per line")
     batch_parser.add_argument("file")
     batch_parser.add_argument("--report", default=None, help="write one manifest per line here")
+    batch_parser.add_argument("--progress-jsonl", default=None,
+                              help="write one small JSON object per paper here as the "
+                                   "run goes, for something watching from outside "
+                                   "(see manuscript_harvest/progress.py)")
     add_common(batch_parser)
     batch_parser.set_defaults(func=cmd_batch)
 
@@ -680,6 +727,13 @@ def main(argv=None) -> int:
     except ValueError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
+    except KeyboardInterrupt:
+        # A second Ctrl-C during a batch -- see `progress.StopRequest`, which
+        # re-raises for exactly this -- and the only one during any other command.
+        # Caught so an abort the user asked for exits like an abort instead of
+        # printing a traceback that reads like a crash.
+        print("\naborted.", file=sys.stderr)
+        return progress.STOPPED_EXIT_CODE
 
 
 if __name__ == "__main__":

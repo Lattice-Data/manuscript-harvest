@@ -26,6 +26,7 @@ from pathlib import Path
 
 import yaml
 
+from .. import progress
 from ..config import merge_config, warn_if_config_missing
 from ..fetch import store
 from ..fetch.identifiers import doi_slug, normalize_doi
@@ -135,6 +136,23 @@ def cmd_one(args) -> int:
     return _exit_code(extraction)
 
 
+def _progress_fields(directory: Path, extraction: dict) -> dict:
+    """The same article as the stderr line, in fields a watcher can read."""
+    totals = extraction.get("totals") or {}
+    return {
+        "slug": extraction.get("slug") or directory.name,
+        "doi": extraction.get("doi"),
+        "status": extraction.get("status"),
+        "blocks": totals.get("blocks", 0),
+        "tables": totals.get("tables", 0),
+        "chars": totals.get("chars", 0),
+        "files": totals.get("files", 0),
+        "sections": _labelling(extraction).get("confidence"),
+        "cached": bool(extraction.get("cached")),
+        "problems": extraction.get("problems") or [],
+    }
+
+
 def cmd_all(args) -> int:
     config = load_config(args.config)
     corpus_dir, limits, markdown = _settings(args)
@@ -146,27 +164,49 @@ def cmd_all(args) -> int:
         directories = directories[: args.limit]
 
     by_status: dict = {}
-    for directory in directories:
-        try:
-            extraction = extractor.extract_article(directory, limits=limits,
-                                                   force=args.force,
-                                                   write_markdown=markdown,
-                                                   config=config)
-        except Exception as e:
-            # One article must not take the rest of the corpus with it. The
-            # extractor guards each file; this guards everything above them.
-            print(f"{directory.name:38s} crashed: {type(e).__name__}: {e}", file=sys.stderr)
-            by_status["crashed"] = by_status.get("crashed", 0) + 1
-            continue
-        status = extraction.get("status", "?")
-        by_status[status] = by_status.get(status, 0) + 1
-        marker = " (cached)" if extraction.get("cached") else ""
-        print(f"{directory.name:38s} {extractor.summarize(extraction)}{marker}",
-              file=sys.stderr)
-        for line in _section_warning(extraction):
-            print(f"{'':38s}   ! {line}", file=sys.stderr)
+    done = 0
+    stopped = False
+    with progress.ProgressLog(args.progress_jsonl) as heartbeat, \
+            progress.StopRequest() as stop:
+        heartbeat.start(total=len(directories), command="extract all",
+                        slugs=[d.name for d in directories])
+        for directory in directories:
+            if stop.requested:
+                stopped = True
+                print(f"\nstopped at your request before {directory.name}: {done} of "
+                      f"{len(directories)} articles read.", file=sys.stderr)
+                break
+            done += 1
+            try:
+                extraction = extractor.extract_article(directory, limits=limits,
+                                                       force=args.force,
+                                                       write_markdown=markdown,
+                                                       config=config)
+            except Exception as e:
+                # One article must not take the rest of the corpus with it. The
+                # extractor guards each file; this guards everything above them.
+                print(f"{directory.name:38s} crashed: {type(e).__name__}: {e}",
+                      file=sys.stderr)
+                by_status["crashed"] = by_status.get("crashed", 0) + 1
+                # Reported to the heartbeat too, with the exception named. A
+                # watcher that only heard about articles which survived would
+                # show a run stalling rather than one crashing.
+                heartbeat.item(slug=directory.name, status="crashed",
+                               error=f"{type(e).__name__}: {e}")
+                continue
+            status = extraction.get("status", "?")
+            by_status[status] = by_status.get(status, 0) + 1
+            marker = " (cached)" if extraction.get("cached") else ""
+            print(f"{directory.name:38s} {extractor.summarize(extraction)}{marker}",
+                  file=sys.stderr)
+            for line in _section_warning(extraction):
+                print(f"{'':38s}   ! {line}", file=sys.stderr)
+            heartbeat.item(**_progress_fields(directory, extraction))
+        heartbeat.end(by_status=by_status, stopped=stopped, read=done)
 
     print("\n" + "  ".join(f"{k}={v}" for k, v in sorted(by_status.items())), file=sys.stderr)
+    if stopped:
+        return progress.STOPPED_EXIT_CODE
     return 0 if by_status.get("complete") == len(directories) else 1
 
 
@@ -420,6 +460,10 @@ def build_parser() -> argparse.ArgumentParser:
     every.add_argument("--force", action="store_true")
     every.add_argument("--limit", type=int, default=None)
     every.add_argument("--max-scan-rows", type=int, default=None)
+    every.add_argument("--progress-jsonl", default=None,
+                       help="write one small JSON object per article here as the run "
+                            "goes, for something watching from outside "
+                            "(see manuscript_harvest/progress.py)")
     add_common(every)
     every.set_defaults(func=cmd_all)
 
@@ -475,6 +519,11 @@ def main(argv=None) -> int:
     except ValueError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
+    except KeyboardInterrupt:
+        # A second Ctrl-C during `all` -- see `progress.StopRequest`, which
+        # re-raises for exactly this -- and the only one during any other command.
+        print("\naborted.", file=sys.stderr)
+        return progress.STOPPED_EXIT_CODE
 
 
 if __name__ == "__main__":

@@ -63,11 +63,17 @@ Needs **Python 3.10 or newer** (CI runs 3.10 through 3.13).
     manuscript-extract all                            # extract
     manuscript-select readiness                       # ask something of it
 
-Without installing, all three entry points are reachable as
+    manuscript-ui                                     # or press buttons instead
+
+Without installing, all four entry points are reachable as
 `python -m manuscript_harvest.fetch.cli`,
-`python -m manuscript_harvest.extract.cli` and
-`python -m manuscript_harvest.select.cli`; `pip install -r requirements.txt` is
-enough for that.
+`python -m manuscript_harvest.extract.cli`,
+`python -m manuscript_harvest.select.cli` and `python -m manuscript_harvest.ui`;
+`pip install -r requirements.txt` is enough for that.
+
+`manuscript-ui` is a local control panel for the first two stages — a DOI-list
+picker, a pre-flight table, and live progress, in a browser instead of a terminal.
+It needs no extra dependency. See [Panel](#panel-buttons-instead-of-a-terminal).
 
 Optional extras, as requirements files or as pip extras — they install the same
 things, so use whichever fits how you installed the package:
@@ -308,6 +314,34 @@ produced, and it is what a reader needs to check the verdict against. It is simp
 never counted as having the article, so it can never finish `complete`, and the
 extraction stage will not offer it as main text.
 
+### Watching a run, and stopping one
+
+A batch is slow by design — one request per host every 3 seconds — so both loops
+can be watched from outside and interrupted without losing what they have done.
+
+    manuscript-fetch batch dois.txt --progress-jsonl run.progress
+    manuscript-extract all --progress-jsonl run.progress
+
+    tail -f run.progress | jq -c '{seq, total, doi, status}'
+
+One JSON object per paper, flushed as it completes, with `seq` and `total` on every
+one. `start` names the whole work list up front and `end` carries the status
+totals. It exists because the alternative is parsing the human-readable lines on
+stderr, whose column widths and wording are free to change; this is a contract, and
+[`manuscript_harvest/progress.py`](manuscript_harvest/progress.py) is where it is
+written down. Nothing needs the flag — without it neither loop writes a heartbeat.
+
+**Ctrl-C now finishes the paper in flight and then stops**, printing the summary
+and leaving `--report` and the heartbeat complete for the papers it reached. Press
+it twice to abort immediately, as before. A stopped run exits **130**, not 0 or 1:
+the papers it never reached are neither complete nor failed, and `batch` decides
+success by comparing completions against the number of records it made — so a run
+stopped after four good papers out of twelve would otherwise have exited 0.
+
+That also fixed a real loss. `--report` used to be written after the loop, in one
+pass, so interrupting a 55-DOI batch at paper 50 discarded the record of all 50
+after doing all the work. It streams now, one line per paper as each finishes.
+
 ### Re-checking a corpus fetched earlier
 
 The checks above run inside the tier loop, which fixes the next fetch and nothing
@@ -490,6 +524,11 @@ Other subcommands use 2 for "nothing to do" — `extract status` and `show` when
 nothing is extracted, `fetch prune` with no budget set. So
 `manuscript-fetch get ... ; echo $?` returning 1 means the paper is on disk but
 something is missing; check `manifest.json` for which artifact and why.
+
+`fetch batch` and `extract all` have one code outside that table: **130**, the
+conventional "terminated by SIGINT", meaning you stopped the run and it stopped
+cleanly after the item in flight. It is deliberately neither 0 nor 1 — see
+[Watching a run](#watching-a-run-and-stopping-one).
 
 ## Extract: corpus files → blocks
 
@@ -877,6 +916,120 @@ into per-article files and **refuses a half-filled one** unless `--partial`: a b
 scores as a deliberate `reused` call, quietly rewarding a model for the labeller's
 unfinished work.
 
+## Panel: buttons instead of a terminal
+
+    manuscript-ui               # prints one URL; open it
+
+A local control panel for the fetch and extract stages. It prints a line and waits;
+it opens no browser, because the URL carries a one-run secret and which browser
+gets it is not this process's decision.
+
+    manuscript-harvest panel
+      corpus  corpus
+      config  config.yaml
+      runs in /Users/you/manuscript-harvest
+
+    Open this, and keep it to yourself -- the token in it is this run's key:
+
+      http://127.0.0.1:8787/?t=itQ5TegaytQ8FtP0feHDiSl5cc9VqCFxMHMtT37Exm8
+
+What is on it: the corpus counts and disk usage; chips for the things that silently
+waste a run (which `config.yaml` was actually loaded, whether the proxy session is
+alive, whether the Elsevier key is set); a picker over the DOI lists in the
+directory it was started in, plus a paste box and a file chooser; **a pre-flight
+table**; the two run buttons; live progress with the log verbatim; what the run has
+added so far; and a collapsed section for the commands that delete things.
+
+**The pre-flight table is the reason to use it.** Before anything runs it says, per
+DOI, what a plain `batch` would actually do — and the middle answer is one most
+people guess wrong:
+
+| in the corpus | a plain run would | needs `--force`? |
+|---|---|---|
+| nothing | fetch it | no |
+| `partial`, or `complete` with files missing | **fetch it again** | **no** |
+| `complete`, or `evicted` | skip it | yes |
+
+`fetch_publication` skips a paper only when `store.manifest_is_complete` says it
+needs nothing further, which is a stricter and differently-shaped test than
+`status == "complete"`. So a partial paper is re-fetched with no flag at all. The
+file this was built against, a list of twelve DOIs left over from an earlier run,
+turned out to hold ten partial and two complete papers: a plain run does the ten,
+and `--force` would have re-downloaded two papers for nothing.
+
+### What it is, and what it is not
+
+It is a **front end over the three command lines**, and the boundary is narrow on
+purpose:
+
+- It **spawns** `manuscript-fetch` and `manuscript-extract` as subprocesses rather
+  than importing `fetcher` or `extractor` to do their work in-process. So the
+  tested surface stays the only code path, a `pymupdf` segfault on a malformed PDF
+  takes down a subprocess rather than the panel, and stopping a run is the CLI's own
+  `progress.StopRequest` rather than a cancellation protocol invented for a web page.
+- Every number it shows comes from `manifest.json` and `extraction.json`, read
+  through `store.read_manifest` and `extractor.read_extraction`. It never derives
+  state by parsing a log line. The log pane is the job's own words, verbatim.
+- It writes nothing into the corpus. The only files it creates are its own
+  heartbeat files and any DOI list pasted into the page, both in a temporary
+  directory it owns.
+- The command it is about to run is shown above the log **exactly as it will run**,
+  including the `--progress-jsonl` plumbing, so it can be copied into a terminal.
+
+**One job at a time, and that is a correctness rule.** The per-host request
+interval that keeps this client polite lives in a single `Http` object inside one
+process, so two concurrent fetch runs would hit a publisher at twice the configured
+rate while each obeyed the limit as it understood it. Two concurrent extract runs
+would race on the same `extracted/` directories. A second request gets a 409.
+
+Stop sends SIGINT to the job's process group, so it finishes the paper in flight,
+writes its summary and exits 130. There is a second button that sends SIGKILL; it
+warns first, because a fetch killed mid-download leaves bytes on disk with no
+manifest entry — recoverable with `drop-orphans`, but untidy. Ctrl-C in the panel's
+own terminal shuts the *panel* down and deliberately does not touch a running job:
+jobs get their own process group precisely so that closing the window is not a
+decision about the run.
+
+### It listens on loopback, and that is not the whole story
+
+This process runs a browser, holds a library session and can delete a corpus, and a
+browser on your machine will happily carry a request from a page on the internet to
+`127.0.0.1`. So there are three guards, and no flag to bind anywhere but loopback:
+
+- **`Host` must name loopback and this port.** This is the DNS-rebinding guard: a
+  page can point its own hostname at 127.0.0.1 and then talk to this server as
+  *same-origin*, which defeats the browser's cross-origin read protection and would
+  otherwise let it read the token out of the page. It cannot forge `Host`.
+- **`Origin`, when sent, must be this server.** A form on another page posting here
+  arrives with a foreign origin.
+- **A per-run token**, required on every `/api/` call in a custom header. Custom
+  headers cannot be set cross-origin without a CORS preflight, which this server
+  never answers.
+
+The token is in the printed URL and the page strips it from the address bar on
+load. No response ever carries an API key — `health` reports whether one is set and
+where it came from, never its value.
+
+### Housekeeping, and the polarity trap
+
+`revalidate`, `drop-media`, `drop-orphans` and `prune` are behind a collapsed
+section. Each previews first, and applying needs the word `delete` typed into a
+box — checked on the server, not just in the DOM.
+
+Worth knowing if you ever script these yourself: **the dry-run polarity is not
+uniform.** `prune` acts unless it is given `--dry-run`, while the other three only
+report unless given `--apply`. The panel names the flag for each direction rather
+than assuming a convention that does not exist.
+
+### Not in it
+
+`manuscript-select`, the truth labelling, `eval`, the review-sheet workflow, the
+perturbation skill, and any way to edit `config.yaml` — which is shown, read-only,
+because editing a config file from a web page is a footgun. There is no 392-row
+corpus browser either; "recently added" is the newest dozen. Adding one would mean
+serving files rather than linking to them, since browsers refuse `file://`
+navigation from an `http://` page.
+
 ## Skills
 
 `.claude/skills/` holds packaged answers to the question the three stages
@@ -984,6 +1137,17 @@ with one present reads about a point higher than the badge.
 | `tests/test_manual_fetch_live.py` | fetches those same DOIs for real and compares — off unless asked for twice |
 | `tests/test_select_units.py` | readiness states, the section rule, the accession finder, the quote verifier, scoring |
 | `tests/test_select_cli.py` | the select CLI: exit codes, and the warnings that stop a bad answer being kept |
+| `tests/test_progress.py` | the `--progress-jsonl` heartbeat and what a first Ctrl-C does to each loop |
+| `tests/test_ui.py` | the panel: the argv each button becomes, the pre-flight answers, and the three guards — over a real socket, no browser |
+
+Two of those deserve naming, because a panel is the one part of this repo a Python
+suite cannot fully reach. `test_every_element_the_script_reaches_for_exists` compares
+every `$("id")` in the page's script against the ids in its body — a lookup on a
+renamed element returns null and the next line throws, stopping the render half-done
+with nothing in any log. `test_the_pages_script_parses` runs `node --check` over the
+script, and skips where no JS engine is installed: a syntax error there would leave
+the panel dead in a browser and the suite green. Neither node nor a browser is a
+dependency of this package.
 
 They lean on failure cases rather than happy paths, because every bug found so far
 was a *plausible-looking success*. Where a test pins a rule a live batch disproved,
