@@ -1068,6 +1068,42 @@ def test_extract_follows_the_fetch_corpus_directory(tmp_path):
     assert load_config(path)["extract"]["corpus_dir"] == "/other"
 
 
+def test_extract_follows_the_fetch_size_cap(tmp_path):
+    """`max_file_mb` names a key in both sections, and the two silently disagreed.
+
+    Raising `fetch.max_file_mb` to 500 while this stage kept its 200 default meant
+    seven supplementary files over six articles were fetched, stored, and then
+    refused by the reader as `too_large` against a cap `config.yaml` never names.
+    """
+    path = tmp_path / "config.yaml"
+    path.write_text("fetch:\n  max_file_mb: 500\n")
+    assert load_config(path)["extract"]["limits"]["max_file_mb"] == 500
+
+    # A reader stricter than the fetcher is legitimate -- it just has to be said.
+    path.write_text("fetch:\n  max_file_mb: 500\n"
+                    "extract:\n  limits:\n    max_file_mb: 50\n")
+    assert load_config(path)["extract"]["limits"]["max_file_mb"] == 50
+
+    # And with no fetch cap set, the stage's own default still stands.
+    path.write_text("extract:\n  write_markdown: false\n")
+    assert load_config(path)["extract"]["limits"]["max_file_mb"] == \
+        DEFAULT_EXTRACT_CONFIG["limits"]["max_file_mb"]
+
+
+def test_the_two_size_caps_cannot_drift_apart_again(tmp_path):
+    """The regression guard: a raise on one side must not strand the other.
+
+    Written against the shape of the bug rather than the numbers, so it still
+    holds when the corpus outgrows 500 MB.
+    """
+    path = tmp_path / "config.yaml"
+    for cap in (200, 500, 1500):
+        path.write_text(f"fetch:\n  max_file_mb: {cap}\n")
+        config = load_config(path)
+        assert config["extract"]["limits"]["max_file_mb"] == cap, (
+            "the reader refuses bytes the fetcher was told to keep")
+
+
 def test_config_survives_a_missing_file(tmp_path):
     assert load_config(tmp_path / "nope.yaml")["extract"]["corpus_dir"] == "corpus"
 

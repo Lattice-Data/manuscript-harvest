@@ -830,6 +830,19 @@ and in the affected table card's notes, so a thin result reads as "capped" rathe
 than "empty". Because `limits` is part of the extraction key, changing one
 re-extracts rather than reusing a result made under the old value.
 
+**`max_file_mb` follows `fetch.max_file_mb`** unless `extract.limits` names its own,
+the same rule `corpus_dir` follows and for a sharper reason: the key has that name in
+*both* sections, so the two could disagree with nothing to notice. They did. Raising
+the fetch cap to 500 MB left this one at its 200 MB default, and seven supplementary
+files across six articles were fetched, stored, and then refused by the reader —
+1.09 GB of text-bearing bytes on disk that no question could see, reported as
+`too_large` against a cap `config.yaml` never mentioned. A reader stricter than the
+fetcher is a legitimate thing to want; it just has to be said out loud now.
+
+Two files stay refused, at 850 MB and 1.42 GB, because they are over the fetch cap
+too — they arrived without a `Content-Length` for it to check, which is what the
+commented-out `fetch.max_response_mb` backstop is for.
+
 ## Select: blocks → the evidence one question needs
 
     manuscript-select readiness                  # can a "not found" be believed?
