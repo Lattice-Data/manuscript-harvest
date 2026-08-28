@@ -569,7 +569,8 @@ def extract_bytes(
                       note=f"no parser for {extension or 'files without an extension'}")
 
     try:
-        return _stamp_read_as(dispatch(), sniffed, contradicted, extension)
+        return _explain_silence(
+            _stamp_read_as(dispatch(), sniffed, contradicted, extension))
     except Exception as e:
         # The backstop. Each parser guards itself, but a run of sixty articles
         # must not end because one supplement found a shape nobody anticipated:
@@ -729,6 +730,68 @@ def _stamp_read_as(outcome: FileResult, sniffed: str, contradicted: str,
     outcome.meta.setdefault("sniffed_as", extension)
     if not (outcome.note or "").startswith(("named ", "name carries")):
         outcome.note = prefix + (f"; {outcome.note}" if outcome.note else "")
+    return outcome
+
+
+def _explain_silence(outcome: FileResult) -> FileResult:
+    """A `no_text` result has to say why, even when no parser thought to.
+
+    "Never report emptiness you cannot account for" is the rule the whole status
+    taxonomy exists to serve, and `no_text` was the one status that could still
+    break it. Four files in the development corpus reached a record with
+    `status: no_text` and no note at all -- 10.1016/j.celrep.2017.10.030's
+    `mmc6.xlsx`, which recorded `sheets: 1, sheets_skipped: 0` and then zero
+    tables; 10.15252/embj.2019104063's MOESM6, which read two of three nested
+    archives and produced nothing; and two 3 MB files labelled `Video S1` and
+    `Video S2` that are `.HTML` with `text_runs: 0`. A curator reading any of
+    those learns that there is no text and nothing about why, which is the exact
+    shape of a plausible success this codebase is built to refuse.
+
+    Applied at the one chokepoint every `extract_bytes` path returns through, for
+    the same reason `_stamp_read_as` is: the archive branches build their own
+    `FileResult` and never see the `result` helper. It is a backstop and not a
+    replacement -- a parser that knows why it found nothing should still say so
+    itself, and this only speaks when nothing else did.
+
+    The sentences are built from `meta` the parsers already record, so each names
+    the work that was actually done rather than asserting a cause nobody checked.
+    """
+    if outcome.status != NO_TEXT or outcome.note:
+        return outcome
+    meta = outcome.meta or {}
+
+    sheets = meta.get("sheets")
+    if sheets is not None:
+        skipped = meta.get("sheets_skipped") or 0
+        outcome.note = (f"{sheets} sheet(s) read"
+                        + (f" and {skipped} skipped" if skipped else "")
+                        + ", and no cell in them held text")
+        return outcome
+
+    total = meta.get("members_total")
+    if total is not None:
+        read = meta.get("members_read") or 0
+        census = meta.get("member_extensions") or {}
+        kinds = ", ".join(sorted(census)) if census else "no recognised extension"
+        outcome.note = (f"{read} of {total} member(s) read ({kinds}); "
+                        f"none of them yielded text")
+        return outcome
+
+    runs = meta.get("text_runs")
+    if runs is not None:
+        outcome.note = f"parsed as HTML with {runs} text run(s); none held text"
+        return outcome
+
+    pages = meta.get("pages")
+    if pages is not None:
+        outcome.note = f"{pages} page(s) parsed, and none held extractable text"
+        return outcome
+
+    # Nothing in `meta` to build a sentence from. Say that, rather than inventing
+    # a cause: "the parser returned nothing and recorded no reason" is a true
+    # statement and a reportable defect, where silence is neither.
+    outcome.note = (f"read as {outcome.origin or 'an unrecognised format'} and "
+                    f"yielded no text; the parser recorded no reason")
     return outcome
 
 
