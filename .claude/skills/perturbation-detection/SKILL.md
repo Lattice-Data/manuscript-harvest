@@ -154,6 +154,23 @@ python -m pe.compare --baseline <old_run_dir>   # version-to-version diff
   dropped entirely; then the paper-level call is recomputed. Both values are
   kept (`perturbation_present_model` vs `..._final`), and a rising gap between
   them is the early warning for fabricated evidence.
+- **Adding a structured field changed judgment, with no criterion edited.** On
+  `suppressed_candidates`' first run, 2 of 6 papers moved `yes` -> `no`:
+  `s41586-024-07571-1` (gluten-free diet, n=2 treated vs n=3 untreated, both
+  sequenced) and `elife.104978.2` (chemotherapy at diagnosis vs relapse), both
+  reclassified as `incidental_clinical_therapy`, both with their `perturbations`
+  array emptied outright. Eight named buckets plus a required field made
+  suppression the salient action — making a path structured makes it more
+  travelled. What fixed it, and what to copy if you add another field: state the
+  precedence first (the new field never shortens `perturbations`), say plainly
+  that an empty array is normal and common, name the negative examples rather
+  than describing them, and hold any judgment sub-field to its parent's evidence
+  standard. A generic "do not enumerate the ambient Methods" was ignored twice in
+  one paper; the concrete list held.
+- **So run the acceptance test twice.** A single run cannot tell an attractor from
+  ordinary variance — that is the same lesson v0.0.9 learned from two runs of one
+  paper disagreeing. Keep a determination-only baseline (`pe.compare --baseline`),
+  and include at least one paper that must NOT populate whatever you added.
 - **A suppressed candidate must never move the determination.** It is not a
   perturbation, so it never enters `perturbations` and Stage A cannot see it —
   which is structural, not a convention: `stage_a` reads only
