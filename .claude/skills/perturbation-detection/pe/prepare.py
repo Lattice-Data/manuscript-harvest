@@ -32,6 +32,8 @@ try:
 except ImportError:  # config is optional; defaults live in paper_text.py
     yaml = None
 
+from pe.runroot import work_default  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 
 # Assembled-paper-text budget in characters. Scientific prose runs ~3 chars per
@@ -127,7 +129,7 @@ def main() -> int:
     parser.add_argument("--set", default=str(ROOT / "validation_set.txt"))
     parser.add_argument("--corpus", default=None, help="overrides config.yaml corpus_dir")
     parser.add_argument("--config", default=str(ROOT / "config.yaml"))
-    parser.add_argument("--work", default=str(ROOT / "work"))
+    parser.add_argument("--work", default=str(work_default()))
     parser.add_argument("--prompt", default=str(ROOT / "prompt.md"))
     parser.add_argument("--budget", type=int, default=None,
                         help=f"assembled text char budget (default {DEFAULT_BUDGET_CHARS:,})")

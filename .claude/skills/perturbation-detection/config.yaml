@@ -49,6 +49,11 @@ confidence_thresholds:
 # auto-accept/auto-reject routing to build.
 flag_all_for_review: true
 
-output_dir: ./output
+# Run artifacts (work/ and output/) live OUTSIDE this directory: `claude -p`
+# cannot write under `.claude/` and exits 0 regardless, so results written
+# here are lost silently. The location comes from pe/runroot.py, overridable
+# with PERTURBATION_RUN_ROOT or per-invocation with --work / --out. There is
+# deliberately no `output_dir:` key here any more -- the old one was read by
+# nothing, so setting it looked like it worked and did not.
 include_supplementary: true
 budget_chars: 400000

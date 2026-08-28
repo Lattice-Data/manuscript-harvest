@@ -16,9 +16,12 @@ import argparse
 import csv
 import json
 from collections import Counter
+import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from pe.runroot import work_default, output_default  # noqa: E402
 
 # prompt.md v0.0.5 step 10's column list, plus the pairing/quote counts the
 # curator needs to act on a row without opening the JSON.
@@ -226,8 +229,8 @@ def _counters(rows: list[dict], results: dict[str, dict]) -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--work", default=str(ROOT / "work"))
-    parser.add_argument("--out", default=str(ROOT / "output" / "perturbations_summary.csv"))
+    parser.add_argument("--work", default=str(work_default()))
+    parser.add_argument("--out", default=str(output_default("perturbations_summary.csv")))
     args = parser.parse_args()
 
     work = Path(args.work)

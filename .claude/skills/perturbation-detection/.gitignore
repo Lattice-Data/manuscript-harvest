@@ -1,4 +1,6 @@
 __pycache__/
 *.pyc
+# Run artifacts default to ~/.manuscript-harvest/perturbation (pe/runroot.py),
+# so these two only catch runs explicitly pointed back in here with --work/--out.
 work*/
 output/
