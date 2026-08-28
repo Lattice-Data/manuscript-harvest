@@ -259,6 +259,38 @@ def test_counters_tally_rules_and_flag_would_pair_yes():
     assert v["suppressed_would_pair_yes"] is True
 
 
+def test_all_yes_would_have_paired_is_flagged_as_undiscriminating():
+    """Observed on the first v0.0.10 run: giving the model eight named buckets
+    made suppression the salient action, and it pulled genuine perturbations
+    across the line on 10.1038/s41586-024-07571-1 and 10.7554/elife.104978.2 --
+    both moved yes -> no, both via incidental_clinical_therapy, and in both every
+    suppressed candidate was marked would_have_paired='yes'. The prompt carries
+    the fix; this is the mechanical tripwire for the same pattern recurring."""
+    out = _validate(_record(suppressed_candidates=[
+        _candidate(would_have_paired="yes", evidence_quote=None),
+        _candidate(would_have_paired="yes", candidate="HypoThermosol 4C hold",
+                   rule="sample_handling_protocol", evidence_quote=None),
+    ]))
+    assert any("stopped discriminating" in i for i in out["validation"]["issues"])
+    # An issue, not a determination change: judgment stays in the prompt.
+    assert out["perturbation_present"] == "no"
+
+
+def test_a_mixed_set_is_not_flagged():
+    out = _validate(_record(suppressed_candidates=[
+        _candidate(would_have_paired="yes", evidence_quote=None),
+        _candidate(would_have_paired="unclear", evidence_quote=None),
+    ]))
+    assert not any("stopped discriminating" in i for i in out["validation"]["issues"])
+
+
+def test_a_single_yes_is_not_flagged():
+    """One entry carries no signal about whether the column discriminates."""
+    out = _validate(_record(suppressed_candidates=[
+        _candidate(would_have_paired="yes", evidence_quote=None)]))
+    assert not any("stopped discriminating" in i for i in out["validation"]["issues"])
+
+
 # --------------------------------------------------------------------------
 # The closed set must not drift between prompt.md and the harness.
 # --------------------------------------------------------------------------
@@ -390,6 +422,47 @@ def test_suppressed_class_fires_when_a_baseline_perturbation_became_a_candidate(
     assert "UNEXPLAINED" not in classify(new, old)
     matches = _suppression_matches(new, old)
     assert matches and matches[0][0] == "reporter_or_marker"
+
+
+def test_matcher_survives_the_two_real_pairs_it_had_to_learn():
+    """Both observed on the first v0.0.10 run against the v0.0.9 baseline.
+
+    s41586 matched immediately. elife did not: the tokenizer kept
+    "chemotherapy-driven" whole, so it shared nothing with the baseline's
+    "chemotherapy (specific agent not named)", and even after splitting hyphens
+    the single shared word fell under a two-token threshold. Hence hyphen
+    splitting plus the single-distinctive-token rule."""
+    pairs = [
+        ("gluten-free diet",
+         "treated coeliac disease patients maintained on a gluten-free diet"),
+        ("chemotherapy (specific agent not named)",
+         "chemotherapy-driven lineage switch in the relapse sample"),
+    ]
+    for agent, candidate in pairs:
+        old = _run("yes", perts=[(agent, "yes")])
+        new = _run("no", supp=[_candidate(candidate=candidate,
+                                         rule="incidental_clinical_therapy")])
+        assert _suppression_matches(new, old), f"missed: {agent!r} -> {candidate!r}"
+        assert "SUPPRESSED" in classify(new, old)
+
+
+def test_a_perturbation_that_survived_under_a_reworded_agent_is_not_suppressed():
+    """The still-reported guard and the candidate match use the same test, so a
+    perturbation still in `perturbations` cannot also count as suppressed."""
+    old = _run("yes", perts=[("recombinant human IL-22 (20 ng/ml) vs mock", "yes")])
+    new = _run("yes", perts=[("recombinant human IL-22, 20 ng/ml", "yes")],
+               supp=[_candidate(candidate="IL-22 detection antibody",
+                                rule="readout_reagent")])
+    assert _suppression_matches(new, old) == []
+
+
+def test_generic_qualifiers_alone_do_not_match():
+    """"specific" is eight characters and would otherwise satisfy the
+    single-distinctive-token rule while carrying no identity at all."""
+    old = _run("yes", perts=[("a specific unnamed agent", "yes")])
+    new = _run("no", supp=[_candidate(candidate="a specific unnamed condition",
+                                     rule="unintended_condition")])
+    assert _suppression_matches(new, old) == []
 
 
 def test_unmatched_suppression_does_not_excuse_an_unexplained_change():

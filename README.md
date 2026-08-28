@@ -1150,6 +1150,18 @@ reported as "not perturbed" — it is capped at "unclear" and routed to re-fetch
 Positives are not capped, because missing text can conceal evidence but cannot
 manufacture it.
 
+The same principle applies to what the prompt *excludes*, which took a version to
+learn. v0.0.9 moved four boundary categories — reporters and epitope tags,
+incidental cohort therapy, unintended conditions, a model's own derivation
+formulation — from "report as a low-confidence candidate" to "do not report",
+telling the model to note each exclusion in a free-text field. That is unaccountable
+emptiness by another route: a record showing no perturbation cannot distinguish
+"considered the transgene and excluded it under the reporter rule" from "never
+noticed it", and the corpus cannot be asked how many papers a rule held back.
+v0.0.10 makes exclusions a structured, required field with a closed rule set, so
+each one is attributable and countable, and papers a rule alone kept out of "yes"
+sort to the top of the review queue.
+
 Read `.claude/skills/perturbation-detection/SKILL.md` to run it, and `prompt.md` in
 the same directory for the criteria — that file, not this one, is the source of
 truth for what counts as a perturbation.

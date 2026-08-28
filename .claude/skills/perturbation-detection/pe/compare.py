@@ -100,7 +100,7 @@ def classify(new: dict, old: dict | None = None) -> list[str]:
     # release -- `stage_b_capped` True -> False, which is what re-extraction
     # completing a paper's text looks like -- fell through to UNEXPLAINED and
     # read as a logic bug. Observed on 10.1126/science.adf5357.
-    old_capped = bool((old or {}).get("validation", {}).get("stage_b_capped")) if old else False
+    old_capped = bool(((old or {}).get("validation") or {}).get("stage_b_capped"))
     new_capped = bool(validation.get("stage_b_capped"))
     if new_capped:
         classes.append("STAGE-B")
@@ -161,11 +161,46 @@ def _tokens(value) -> set[str]:
     EF1a-TagRFP reporter"), so an exact match would never fire. Short and
     generic words are dropped so "the medium" does not match "the inhibitor".
     """
+    # Generic qualifiers are dropped as hard as articles are. "specific" is
+    # eight characters and carries no identity, so leaving it in would let the
+    # single-distinctive-token rule below fire on it.
     stop = {"the", "and", "with", "for", "from", "into", "was", "were", "that",
             "this", "only", "line", "lines", "cell", "cells", "human", "mouse",
-            "sample", "samples", "using", "used", "via", "vs", "versus"}
+            "sample", "samples", "using", "used", "via", "vs", "versus",
+            "specific", "unspecified", "named", "unnamed", "not", "various",
+            "different", "multiple", "detail", "details", "agent", "agents"}
     words = re.findall(r"[A-Za-z0-9][A-Za-z0-9\-']{2,}", str(value or "").lower())
-    return {w for w in words if w not in stop}
+    # Hyphenated compounds are emitted whole AND split. Without the split,
+    # "chemotherapy-driven lineage switch" shares no token with the baseline's
+    # "chemotherapy (specific agent not named)" and the pair goes unmatched --
+    # observed on 10.7554/elife.104978.2, where the suppression was real and the
+    # precise attribution was lost anyway.
+    out = set()
+    for w in words:
+        out.add(w)
+        if "-" in w:
+            out.update(part for part in w.split("-") if len(part) >= 3)
+    return {w for w in out if w not in stop}
+
+
+def _looks_like_same_thing(a: set[str], b: set[str]) -> bool:
+    """Whether two token sets plausibly name the same construct or condition.
+
+    Two shared content words, or one shared word distinctive enough to stand
+    alone. The single-token allowance exists because the two runs often describe
+    the same thing at different lengths: "chemotherapy (specific agent not
+    named)" against "chemotherapy-driven lineage switch in the relapse sample"
+    shares exactly one word, and it is the only one that matters.
+
+    Deliberately conservative in the false-positive direction. A wrong match
+    would make `SUPPRESSED` silence an UNEXPLAINED warning, which is the one
+    thing this module must not do; a missed match only costs precision, dropping
+    the paper to the weaker PERT-SET-CHANGED account.
+    """
+    shared = a & b
+    if len(shared) >= 2:
+        return True
+    return any(len(word) >= 8 for word in shared)
 
 
 def _suppression_matches(new: dict, old: dict) -> list[tuple[str, str, str]]:
@@ -187,13 +222,15 @@ def _suppression_matches(new: dict, old: dict) -> list[tuple[str, str, str]]:
         old_toks = _tokens(pert.get("agent"))
         if not old_toks:
             continue
-        # Still reported in this run? Then it was not suppressed.
-        if any(len(old_toks & cur) >= 2 or old_toks == cur for cur in new_agents):
+        # Still reported in this run? Then it was not suppressed. Same test as
+        # below, so the two sides cannot disagree about what "the same thing"
+        # means -- a looser candidate match than still-reported match would let a
+        # perturbation that survived under a reworded agent count as suppressed.
+        if any(_looks_like_same_thing(old_toks, cur) for cur in new_agents):
             continue
         for cand in supp:
             cand_toks = _tokens(cand.get("candidate"))
-            if len(old_toks & cand_toks) >= 2 or (
-                    old_toks & cand_toks and len(old_toks) <= 2):
+            if _looks_like_same_thing(old_toks, cand_toks):
                 matches.append((str(cand.get("rule")), str(pert.get("agent")),
                                 str(cand.get("candidate"))))
                 break

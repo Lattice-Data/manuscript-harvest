@@ -314,6 +314,20 @@ def _validate_suppressed(result: dict, sources_text: dict[str, str], threshold: 
 
         entries.append(item)
 
+    # prompt.md v0.0.10: `would_have_paired` held to Step 3's evidence standard,
+    # not used as an emphasis marker. If every entry says "yes" the column has
+    # stopped discriminating -- and in practice that pattern travelled with the
+    # field over-firing, pulling real perturbations across the line (observed on
+    # 10.1038/s41586-024-07571-1 and 10.7554/elife.104978.2, both moved yes ->
+    # no by a wrongly-suppressed clinical therapy). Mechanically checkable, so
+    # it is checked. This raises an issue only: judgment stays in the prompt.
+    if len(entries) >= 2 and all(e.get("would_have_paired") == "yes" for e in entries):
+        issues.append(
+            f"all {len(entries)} suppressed candidates have would_have_paired='yes'; "
+            f"the column has stopped discriminating. Check that none of them is "
+            f"actually a perturbation under a Step 2 report rule — filling "
+            f"suppressed_candidates must not shorten the perturbations array")
+
     return entries, checked, failed, wrong_source
 
 
