@@ -7,6 +7,7 @@ workbook, a header on row 4, and a bot-check landing page all look like "there
 was nothing there" unless something checks.
 """
 
+import io
 import json
 import sys
 from unittest import mock
@@ -2338,3 +2339,68 @@ def test_a_numbered_reference_entry_is_not_split_into_a_heading(entry):
     a DOI -- because the numbering itself is what a numbered heading and a numbered
     citation have in common."""
     assert sections.split_leading_heading(entry) is None
+
+
+# -- no_text has to say why --------------------------------------------------
+
+def _silent(status=extractor.NO_TEXT, meta=None, note=None, origin=""):
+    return extractor.FileResult("f", extractor.SUPPLEMENT, status,
+                                meta=meta or {}, note=note, origin=origin)
+
+
+def test_no_text_with_no_note_gets_one_built_from_what_the_parser_recorded():
+    """Each branch names the work actually done, not a cause nobody checked."""
+    cases = [
+        ({"sheets": 1, "sheets_skipped": 0}, "1 sheet(s) read, and no cell"),
+        ({"sheets": 3, "sheets_skipped": 2}, "3 sheet(s) read and 2 skipped"),
+        ({"members_total": 3, "members_read": 2, "member_extensions": {".zip": 2}},
+         "2 of 3 member(s) read (.zip)"),
+        ({"members_total": 1, "members_read": 0, "member_extensions": {}},
+         "no recognised extension"),
+        ({"text_runs": 0}, "parsed as HTML with 0 text run(s)"),
+        ({"pages": 4}, "4 page(s) parsed"),
+    ]
+    for meta, expected in cases:
+        out = extractor._explain_silence(_silent(meta=meta))
+        assert expected in (out.note or ""), (meta, out.note)
+
+
+def test_a_parser_that_recorded_nothing_at_all_says_so_rather_than_guessing():
+    """"The parser recorded no reason" is true and reportable; silence is neither."""
+    out = extractor._explain_silence(_silent(origin="rtf"))
+    assert "read as rtf" in out.note
+    assert "recorded no reason" in out.note
+    # And with no origin either, it still produces a sentence.
+    assert extractor._explain_silence(_silent()).note
+
+
+def test_the_backstop_never_overwrites_a_parser_that_did_explain_itself():
+    """It speaks only when nothing else did -- a real reason always wins."""
+    out = extractor._explain_silence(
+        _silent(meta={"sheets": 1}, note="the workbook is password protected"))
+    assert out.note == "the workbook is password protected"
+
+
+def test_only_no_text_is_touched():
+    """`ok` with no note is normal; `image_no_text` carries its own wording."""
+    for status in (extractor.OK, extractor.IMAGE_NO_TEXT, extractor.TOO_LARGE,
+                   extractor.UNSUPPORTED, extractor.MISSING):
+        out = extractor._explain_silence(_silent(status=status, meta={"sheets": 1}))
+        assert out.note is None, status
+
+
+def test_a_real_empty_workbook_comes_back_explained_end_to_end():
+    """Through `extract_bytes`, not just the helper -- the chokepoint has to fire.
+
+    An .xlsx holding one empty sheet is the shape of
+    10.1016/j.celrep.2017.10.030's mmc6.xlsx, which reached a record with
+    `sheets: 1, sheets_skipped: 0`, zero tables and no note at all.
+    """
+    workbook = openpyxl.Workbook()
+    workbook.active.title = "Sheet1"
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    result = extractor.extract_bytes(buffer.getvalue(), "empty.xlsx", Limits())
+    assert result.status == extractor.NO_TEXT
+    assert result.note, "an empty workbook came back with no reason"
+    assert "sheet" in result.note

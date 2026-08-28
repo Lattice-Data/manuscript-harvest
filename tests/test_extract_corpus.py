@@ -66,6 +66,26 @@ def test_every_status_is_in_the_taxonomy():
             assert entry["status"] in files, (record["slug"], entry)
 
 
+def test_no_text_always_says_why():
+    """Emptiness without a reason is the one thing this taxonomy must not report.
+
+    `no_text` is the status a curator acts on -- it says the bytes were read and
+    held nothing -- and four files in this corpus once reached a record carrying
+    it with no note at all. `extractor._explain_silence` is the backstop; this is
+    the check that it covers every path, against the real corpus rather than
+    against fakes, because the paths that broke were the ones no fake reproduces.
+    """
+    silent = []
+    for record in _extractions():
+        entries = list(record["supplementary"]) + [record.get("main_text") or {}]
+        for entry in entries:
+            if entry.get("status") != extractor.NO_TEXT:
+                continue
+            if not (entry.get("note") or "").strip():
+                silent.append((record["slug"], entry.get("path")))
+    assert not silent, f"{len(silent)} no_text entries with no reason: {silent[:5]}"
+
+
 def test_nothing_claims_ok_while_producing_no_text():
     """`ok` with zero blocks is the exact failure this stage exists to prevent."""
     for record in _extractions():
