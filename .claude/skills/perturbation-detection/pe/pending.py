@@ -29,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pe.paper_text import entry_paths  # noqa: E402
 from pe.validate import parse_raw  # noqa: E402
 
-ROOT = Path(__file__).resolve().parent.parent
+from pe.runroot import work_default  # noqa: E402
 
 # The fields pe/extract_workflow.js reads off each manifest entry.
 ARG_FIELDS = ("doi", "prompt_file", "prompt_lines", "prompt_chars", "chars",
@@ -71,7 +71,7 @@ def status_of(entry: dict, work: Path | None = None) -> tuple[str, str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--work", default=str(ROOT / "work"))
+    parser.add_argument("--work", default=str(work_default()))
     parser.add_argument("--json", action="store_true",
                         help="print the args array for Workflow instead of a report")
     parser.add_argument("--out", default=None, help="also write the args array here")

@@ -11,7 +11,11 @@
 # rest. Safe to re-run: it is the same idempotency rule `pe.pending` uses.
 set -uo pipefail
 
-WORK="${1:-work}"
+# Default outside the skill directory: `claude -p` cannot write under
+# `.claude/` and exits 0 anyway, so a result written there is lost
+# silently. See pe/runroot.py. An explicit path is honoured verbatim.
+RUN_ROOT="${PERTURBATION_RUN_ROOT:-$HOME/.manuscript-harvest/perturbation}"
+WORK="${1:-$RUN_ROOT/work}"
 JOBS="${2:-3}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY="${PY:-$(command -v python3 || command -v python)}"

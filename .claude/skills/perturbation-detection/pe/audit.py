@@ -38,6 +38,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pe.paper_text import prompt_version  # noqa: E402
 from pe.validate import paper_text_from_prompt  # noqa: E402
 
+from pe.runroot import work_default, output_default  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 
 PERTURBATION_SIGNALS: dict[str, list[str]] = {
@@ -125,8 +127,8 @@ def screen(text: str, compiled: dict[str, list[re.Pattern]]) -> dict[str, dict]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--work", default=str(ROOT / "work"))
-    parser.add_argument("--out", default=str(ROOT / "output" / "review_screen.txt"))
+    parser.add_argument("--work", default=str(work_default()))
+    parser.add_argument("--out", default=str(output_default("review_screen.txt")))
     parser.add_argument("--prompt", default=str(ROOT / "prompt.md"))
     args = parser.parse_args()
 

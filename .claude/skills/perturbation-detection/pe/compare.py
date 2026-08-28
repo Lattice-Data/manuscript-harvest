@@ -24,9 +24,13 @@ from __future__ import annotations
 import argparse
 import json
 from collections import Counter
+import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from pe.runroot import work_default, output_default  # noqa: E402
+
 ORDER = ["yes", "unclear", "no"]
 
 CLASS_LABELS = {
@@ -124,10 +128,10 @@ def _quote_line(entry) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--work", default=str(ROOT / "work"))
+    parser.add_argument("--work", default=str(work_default()))
     parser.add_argument("--baseline", required=True,
                         help="directory with validated/<doi>.json from the earlier run")
-    parser.add_argument("--out", default=str(ROOT / "output" / "v004_vs_v005.txt"))
+    parser.add_argument("--out", default=str(output_default("v004_vs_v005.txt")))
     args = parser.parse_args()
 
     work, baseline = Path(args.work), Path(args.baseline)

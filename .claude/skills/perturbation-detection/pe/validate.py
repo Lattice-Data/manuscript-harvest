@@ -25,7 +25,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pe.paper_text import (  # noqa: E402
-    entry_paths, fuzzy_match_quote, prompt_version, split_assembled,
+    entry_paths, prompt_version, split_assembled,
     verify_quote_sourced,
 )
 
@@ -33,6 +33,8 @@ try:
     import yaml
 except ImportError:
     yaml = None
+
+from pe.runroot import work_default  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 DOWNGRADE_CONFIDENCE = 0.2
@@ -461,7 +463,7 @@ def validate_result(result: dict, sources_text: dict[str, str], threshold: float
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--work", default=str(ROOT / "work"))
+    parser.add_argument("--work", default=str(work_default()))
     parser.add_argument("--threshold", type=float, default=None,
                         help="overrides config.yaml fuzzy_match.threshold")
     parser.add_argument("--config", default=str(ROOT / "config.yaml"))

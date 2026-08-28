@@ -42,17 +42,25 @@ In this repo, `manuscript-harvest` produces exactly this layout.
 Four steps. Only step 2 needs a model; the rest is plain Python.
 
 ```bash
-python -m pe.prepare  --set papers.txt --work work --corpus /path/to/corpus
-./pe/run_headless.sh work 4
-python -m pe.validate --work work --write-corpus --corpus /path/to/corpus
-python -m pe.summarize --work work
+python -m pe.prepare  --set papers.txt --corpus /path/to/corpus
+./pe/run_headless.sh
+python -m pe.validate --write-corpus --corpus /path/to/corpus
+python -m pe.summarize
 ```
 
 - `papers.txt` — one paper directory name per line.
+- **Run artifacts land outside this directory**, under
+  `~/.manuscript-harvest/perturbation/{work,output}` by default. That is not
+  tidiness: `claude -p` subagents cannot write under `.claude/`, and the CLI
+  exits 0 anyway, so a stage-2 result written beside the skill is lost with no
+  error. Two of six papers hit this on the first v0.0.9 run. Override the root
+  with `PERTURBATION_RUN_ROOT`, or a single run with `--work` / `--out`; an
+  explicit path is honoured verbatim. The skill directory keeps only what is
+  versioned and shared — `prompt.md`, `pe/`, `config.yaml`.
 - Step 2 runs `claude -p` once per paper. It uses the logged-in Claude Code
   session, **not** an API key. Set `PY=` if `python3` is not the interpreter you
   want.
-- To know when a long run has finished: `./pe/watch.sh work` prints progress
+- To know when a long run has finished: `./pe/watch.sh <work_dir>` prints progress
   every 30s and raises a desktop notification at the end. `./pe/watch.sh work
   status` prints one line and exits. Both only read state, so they are safe to
   start late or interrupt.
@@ -69,8 +77,8 @@ Faster and gives per-paper progress, but needs an interactive session.
 Then review:
 
 ```bash
-python -m pe.audit --work work      # five targeted review screens
-python -m pe.compare --work work --baseline <old_run_dir>   # version-to-version diff
+python -m pe.audit       # five targeted review screens
+python -m pe.compare --baseline <old_run_dir>   # version-to-version diff
 ```
 
 ## Output
