@@ -43,7 +43,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pe.paper_text import prompt_version  # noqa: E402
-from pe.validate import paper_text_from_prompt  # noqa: E402
+from pe.validate import RULES_UNDER_REVIEW, paper_text_from_prompt  # noqa: E402
 
 from pe.runroot import work_default, output_default  # noqa: E402
 
@@ -319,12 +319,16 @@ def main() -> int:
     lines.append("Rows marked >>> WOULD HAVE PAIRED YES are one toggle from flipping the")
     lines.append("paper to 'yes'. They are a review of the RULES, not of the reading:")
     lines.append("the model named the candidate and judged its pairing, then excluded it.")
+    lines.append("The paper-level marker counts only rules still under review, matching")
+    lines.append("triage P2; a settled toggle pairing 'yes' is annotated but not flagged,")
+    lines.append("since observational disease state alone would mark most clinical papers.")
     lines.append("=" * 78)
 
     def _supp_sort_key(item):
         doi, result, _ = item
         supp = result.get("suppressed_candidates") or []
-        flips = any(s.get("would_have_paired") == "yes" for s in supp) and \
+        flips = any(s.get("would_have_paired") == "yes"
+                    and s.get("rule") in RULES_UNDER_REVIEW for s in supp) and \
             result.get("perturbation_present") != "yes"
         return (0 if flips else 1, doi)
 
@@ -335,7 +339,11 @@ def main() -> int:
             continue
         counts["F"] += 1
         present = result.get("perturbation_present")
-        flips = [s for s in supp if s.get("would_have_paired") == "yes"]
+        # Keyed on the rules under review, matching triage P2. A settled toggle
+        # pairing "yes" is a fact worth printing but not a call to review, and
+        # marking it would contradict the tier it is supposed to explain.
+        flips = [s for s in supp if s.get("would_have_paired") == "yes"
+                 and s.get("rule") in RULES_UNDER_REVIEW]
         lines.append("")
         marker = ("   >>> WOULD HAVE PAIRED YES — one toggle flips this paper"
                   if flips and present != "yes" else "")
@@ -345,7 +353,12 @@ def main() -> int:
             rule = str(cand.get("rule"))
             rule_tally[rule] = rule_tally.get(rule, 0) + 1
             would = cand.get("would_have_paired")
-            flag = "  <<< would have paired YES" if would == "yes" else ""
+            if would != "yes":
+                flag = ""
+            elif rule in RULES_UNDER_REVIEW:
+                flag = "  <<< would have paired YES — rule under review"
+            else:
+                flag = "  <<< would have paired YES (settled toggle)"
             lines.append(f"    [{i}] {rule}  would_have_paired={would}{flag}")
             lines.append(f"        candidate: {str(cand.get('candidate'))[:110]}")
             lines.append(f"        why: {str(cand.get('why') or '(not given)')[:220]}")
