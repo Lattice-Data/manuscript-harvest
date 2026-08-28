@@ -1055,8 +1055,40 @@ def blocks_from_pdf(
         """
         return sections_mod.strip_line_number(text) if line_numbered else text
 
+    def named_section(text: str) -> Optional[str]:
+        """The section a heading names, by either route the loop below recognises one.
+
+        Factored out because the summary pre-pass has to ask exactly the question
+        the loop asks. Asking a narrower one -- `normalize` alone -- would miss a
+        structured abstract whose headings are glued to their paragraphs, and the
+        two answers drifting apart is the kind of bug that shows up as a span
+        covering three of a summary's four headings.
+        """
+        named = sections_mod.normalize(text)
+        if named:
+            return named
+        glued = sections_mod.split_leading_heading(text)
+        return glued[0] if glued else None
+
+    # Which headings belong to a structured abstract rather than to the paper --
+    # decided from the whole first page before any of it is labelled, because the
+    # evidence for the answer is the shape of the page and a single pass through it
+    # only ever sees one heading at a time. Keyed by position, since a summary and
+    # the paper it summarises use the same words.
+    recognised = []
     for page_index, texts in enumerate(per_page, start=1):
-        for text, _margin, ref in texts:
+        for item_index, (text, _margin, _ref) in enumerate(texts):
+            if text in furniture or _PAGE_NUMBER.match(text):
+                continue
+            named = named_section(probe(text))
+            if named:
+                recognised.append(((page_index, item_index), page_index, named))
+    summary = sections_mod.structured_abstract(recognised)
+    if summary.page is not None:
+        meta["structured_abstract_headings"] = len(summary.headings)
+
+    for page_index, texts in enumerate(per_page, start=1):
+        for item_index, (text, _margin, ref) in enumerate(texts):
             if text in furniture or _PAGE_NUMBER.match(text):
                 meta["running_lines_dropped"] += 1
                 continue
@@ -1064,8 +1096,10 @@ def blocks_from_pdf(
                 meta["blocks_capped"] = True
                 break
             locator = f"p.{page_index}"
+            in_summary = (page_index, item_index) in summary.headings
             named = sections_mod.normalize(probe(text))
             if named:
+                named = sections_mod.ABSTRACT if in_summary else named
                 blocks.append(Block(kind=HEADING, text=text, source_file=source_file,
                                     origin="pdf", locator=locator, locator_ref=ref,
                                     section=tracker.heading(named)))
@@ -1073,6 +1107,7 @@ def blocks_from_pdf(
             glued = sections_mod.split_leading_heading(probe(text))
             if glued:
                 named, heading, text = glued
+                named = sections_mod.ABSTRACT if in_summary else named
                 blocks.append(Block(kind=HEADING, text=heading, source_file=source_file,
                                     origin="pdf", locator=locator, locator_ref=ref,
                                     section=tracker.heading(named)))
@@ -1102,6 +1137,10 @@ def blocks_from_pdf(
             blocks.append(Block(kind=PARAGRAPH, text=text, source_file=source_file,
                                 origin="pdf", locator=locator, locator_ref=ref,
                                 section=tracker.carry(text)))
+        # A summary is bounded by the page it is printed on, and the page is the
+        # one thing the tracker cannot see.
+        if page_index == summary.page:
+            tracker.close_summary()
 
     tracker.record(meta)
     body_chars = sum(len(b.text) for b in blocks)
