@@ -20,6 +20,7 @@ was looking for while reporting a confident answer.
 """
 
 import re
+from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 from .limits import Limits
@@ -119,15 +120,23 @@ _MAX_HEADING_CHARS = 120
 """Longer than this and it is a sentence that happens to start with a keyword."""
 
 
-#: Optional section numbering ("2.", "2.1)", "IV.") or a bullet glyph. The bare
-#: `d` is Cell Press's bullet as PyMuPDF renders it: page 18 of
+#: Optional section numbering ("2.", "2.1)", "IV.", "2 |") or a bullet glyph. The
+#: bare `d` is Cell Press's bullet as PyMuPDF renders it: page 18 of
 #: 10.1016/j.cell.2021.01.053 emits `d KEY RESOURCES TABLE`,
 #: `d EXPERIMENTAL MODEL AND SUBJECT DETAILS`, `d METHOD DETAILS` and
 #: `d QUANTIFICATION AND STATISTICAL ANALYSIS` -- 9 such blocks in that file. It
 #: is safe only because the body must still match in full afterwards, so the four
 #: bulleted highlight lines on page 2 ("d Detailed COVID-19 immune landscape
 #: depicted by") are still not headings.
-_HEADING_PREFIX = r"(?:(?:\d+(?:\.\d+)*|[IVXLC]+|[d●▪•⁃])\s*[.)]?\s*)?"
+#:
+#: The `|` in the separator class is Wiley's, and it is the whole numbering scheme
+#: rather than an ornament: `10.1002/pros.24020` writes every heading in the paper
+#: as `1 | INTRODUCTION`, `2 | MATERIALS AND METHODS`, `2.1 | Human subjects`. With
+#: only `[.)]` allowed after the number, not one of them matched, so that article's
+#: real sections were invisible and every block from its abstract to page 21
+#: carried a label from the *abstract's* `Conclusions` heading instead -- 693
+#: blocks, none of them labelled `methods`.
+_HEADING_PREFIX = r"(?:(?:\d+(?:\.\d+)*|[IVXLC]+|[d●▪•⁃])\s*[.)|]?\s*)?"
 
 
 def _compiled() -> List[Tuple[str, re.Pattern]]:
@@ -325,6 +334,92 @@ def split_leading_heading(text: str) -> Optional[Tuple[str, str, str]]:
 # 10.1038/s41588-025-02433-6), so it is deliberately not in this set.
 BOUNDED_SECTIONS = frozenset({ABSTRACT, CONCLUSIONS, DATA_AVAILABILITY})
 
+# The sections a paper's own body is built out of, as opposed to the statements and
+# apparatus around it. Only these are what a structured abstract imitates.
+BODY_SECTIONS = frozenset({ABSTRACT, INTRODUCTION, METHODS, RESULTS,
+                           DISCUSSION, CONCLUSIONS})
+
+# Body sections a paper reaches only at the end. Seeing one of these on page 1
+# *together with* an earlier body section is the signal `structured_abstract`
+# turns on, because a paper cannot have both its opening and its closing section
+# on its first page -- but its abstract can.
+_TERMINAL_SECTIONS = frozenset({DISCUSSION, CONCLUSIONS})
+
+# Introduction is the one section a paper never comes back to, which makes a
+# second one evidence about the heading rather than about the paper. See
+# `SectionTracker.heading`.
+_AFTER_INTRODUCTION = frozenset({METHODS, RESULTS, DISCUSSION, CONCLUSIONS})
+
+
+@dataclass(frozen=True)
+class StructuredAbstract:
+    """Where a front-page summary is, if the first page holds one.
+
+    `headings` holds the caller's keys for the headings that belong to the summary
+    rather than to the paper, and `page` is the page the summary ends on -- None
+    when there is no summary, which is the "nothing to do" answer the caller tests
+    for.
+    """
+
+    headings: frozenset = frozenset()
+    page: Optional[int] = None
+
+
+def structured_abstract(recognised) -> StructuredAbstract:
+    """Which of a PDF's recognised headings are a structured abstract's, not the paper's.
+
+    A structured abstract labels its own paragraphs with the paper's section
+    names -- `BACKGROUND`, `METHODS`, `RESULTS`, `CONCLUSIONS` -- and Science
+    prints a whole "RESEARCH ARTICLE SUMMARY" page in that shape before the
+    article starts. Nothing in the *text* of those headings distinguishes them
+    from the real ones, so the labeller opened `conclusions` on page 1 and carried
+    it over the paper. `SectionTracker`'s character budget was the mitigation and
+    is not a fix: it stops the bleeding 6,000 characters in, and everything before
+    that is still labelled from the abstract while everything after is labelled
+    not at all.
+
+    What does distinguish them is that they are all on page 1. A paper cannot
+    open *and* close on its first page, so a first page that declares a terminal
+    section (`discussion`, `conclusions`) alongside an earlier body section is
+    summarising rather than sectioning.
+
+    Measured over the 124 PDF-sourced articles in the development corpus: 15
+    match, and they are exactly the 15 that have one --
+
+        10.1161/atvbaha.122.317953   BACKGROUND METHODS RESULTS CONCLUSIONS
+        10.1002/pros.24020           Abstract Background Methods Results Conclusions
+        10.1164/rccm.202207-1384oc   Abstract Methods Conclusions
+        10.1126/science.*  (12)      INTRODUCTION RESULTS CONCLUSION
+
+    -- while 10.1126/sciimmunol.abe6291, whose real `INTRODUCTION` and `RESULTS`
+    genuinely are both on page 1, does not, because it never reaches a terminal
+    section there. That article is the reason the rule is "declares an ending"
+    rather than "declares two sections".
+
+    `recognised` is `(key, page, section)` for every heading the caller's own
+    matcher recognised, in document order; `key` is whatever the caller wants to
+    look the answer up by. The walk stops at the first heading that is not a body
+    section, because a summary contains no Data Availability statement and no
+    reference list -- those belong to the paper, and in
+    10.1164/rccm.202207-1384oc the `Author Contributions` heading that follows the
+    abstract on page 1 is the paper's, not the abstract's.
+    """
+    first_page = [(key, section) for key, page, section in recognised if page == 1]
+    run = []
+    for key, section in first_page:
+        if section not in BODY_SECTIONS:
+            break
+        run.append((key, section))
+    named = {section for _, section in run}
+    if len(run) < 2 or not (named & _TERMINAL_SECTIONS):
+        return StructuredAbstract()
+    # A terminal section on its own is a one-heading page, not a summary: the run
+    # has to reach an ending *from* somewhere.
+    if not (named - _TERMINAL_SECTIONS):
+        return StructuredAbstract()
+    return StructuredAbstract(frozenset(key for key, _ in run), 1)
+
+
 # What a reference-list entry looks like: numbered, or carrying a year in
 # parentheses, or an "et al.", or a DOI. Any one is enough, and none of them
 # appears in a row of a key resources table.
@@ -403,7 +498,12 @@ class SectionTracker:
         """Blocks under a LOW_VALUE heading that did not look like its content."""
         self.reopens_refused: List[str] = []
         """Abandoned sections a later heading of the same name tried to reopen."""
+        self.resumed: List[str] = []
+        """Sections resumed after a bounded subsection of theirs ran too long."""
+        self.subsections_refused: List[str] = []
+        """Headings whose section a paper cannot have reached again, read as subheadings."""
         self._carried = 0
+        self._shadowed: Optional[str] = None
 
     def heading(self, name: str) -> Optional[str]:
         """Open `name` as the current section, and return it for the heading block.
@@ -416,17 +516,55 @@ class SectionTracker:
         beginning "Fig. 1. Mapping the spatial and temporal architecture of the
         mature and developing human kidney". Meanwhile the record said "the
         blocks after it are left unlabelled", which was false for 16 of them.
+
+        A second `introduction` is refused too, and for a different reason: not
+        that the section is spent but that a paper never returns to its opening.
+        Once methods, results, discussion or conclusions has been met, a heading
+        reading `Background` is a subheading of wherever it sits, so it is labelled
+        with the current section rather than opening one. Measured on
+        10.1161/atvbaha.122.317953, whose Methods contain the subsection
+        "Background Contamination Heuristic" -- laid out on two lines, so the first
+        of them is the bare word `Background` and matched the `introduction` alias.
+        It reopened `introduction` on page 5 and relabelled the rest of that
+        paper's Methods, 4,600 characters, as its introduction.
         """
         if name in self.abandoned:
             self.current = None
             if name not in self.reopens_refused:
                 self.reopens_refused.append(name)
             return None
+        if (name == INTRODUCTION and self.current != INTRODUCTION
+                and set(self.seen) & _AFTER_INTRODUCTION):
+            if name not in self.subsections_refused:
+                self.subsections_refused.append(name)
+            return self.current
+        # A bounded section opened inside an unbounded one *shadows* it rather than
+        # replacing it, so `carry` has something to go back to. See `carry`.
+        self._shadowed = (self.current if name in BOUNDED_SECTIONS
+                          and self.current is not None
+                          and self.current not in BOUNDED_SECTIONS else None)
         self.current = name
         self._carried = 0
         if name not in self.seen:
             self.seen.append(name)
         return name
+
+    def close_summary(self) -> None:
+        """The span the caller opened as a structured abstract is over.
+
+        Called when the page holding a `structured_abstract` ends. Without it the
+        abstract would keep carrying onto the paper's first real page, which for
+        10.1161/atvbaha.122.317953 is 4,900 characters of introduction: the summary
+        is bounded by the page it is printed on, and only the caller can see where
+        that is.
+
+        Deliberately not a general `close()`: it does nothing unless `abstract` is
+        still the open section, so a real heading that has since opened something
+        else is left alone.
+        """
+        if self.current == ABSTRACT:
+            self.current = None
+            self._shadowed = None
 
     def carry(self, text: str) -> Optional[str]:
         """The section to label `text` with. Call once per block, in document order.
@@ -449,8 +587,22 @@ class SectionTracker:
         if self._carried > self.max_bounded_chars:
             if self.current not in self.abandoned:
                 self.abandoned.append(self.current)
-            self.current = None
-            return None
+            # Back to the section this one interrupted, when there was one. A
+            # bounded section is usually a *subsection*: AHA journals open Methods
+            # with a `Data Availability` heading, so on
+            # 10.1161/atvbaha.122.317953 the statement's budget ran out six
+            # paragraphs into the Methods and, before this, took the remaining
+            # 14 blocks and 11,000 characters of Methods down with it -- the
+            # nuclei isolation, the 10x chemistry, the clustering parameters, all
+            # unlabelled with `methods` nowhere in the article. Resuming is the
+            # weaker claim of the two on offer: the enclosing heading is still the
+            # last one the page actually declared.
+            resumed, self.current = self._shadowed, self._shadowed
+            self._shadowed = None
+            self._carried = 0
+            if resumed is not None and resumed not in self.resumed:
+                self.resumed.append(resumed)
+            return self.current
         self._carried += len(text)
         return self.current
 
@@ -467,10 +619,20 @@ class SectionTracker:
             parts.append(
                 f"{self.withheld} block(s) under a low-value heading did not look like "
                 f"its content and were left unlabelled rather than dropped with it")
+        if self.resumed:
+            parts.append(
+                f"{', '.join(self.resumed)} resumed after a bounded statement inside "
+                f"it ran past {self.max_bounded_chars} characters, so the text after "
+                f"the statement is attributed to the section that contained it")
         if self.reopens_refused:
             parts.append(
                 f"a later heading tried to reopen {', '.join(self.reopens_refused)} "
                 f"after it had been abandoned; it was left unlabelled instead")
+        if self.subsections_refused:
+            parts.append(
+                f"a heading naming {', '.join(self.subsections_refused)} appeared after "
+                f"the paper had moved past it and was read as a subheading of the "
+                f"section it sits in")
         return "; ".join(parts) or None
 
     def record(self, meta: dict) -> None:
@@ -490,7 +652,11 @@ class SectionTracker:
             meta["sections_abandoned"] = self.abandoned
         if self.withheld:
             meta["low_value_blocks_withheld"] = self.withheld
+        if self.resumed:
+            meta["sections_resumed"] = self.resumed
         if self.reopens_refused:
             meta["reopens_refused"] = self.reopens_refused
+        if self.subsections_refused:
+            meta["subsections_refused"] = self.subsections_refused
         if self.reason():
             meta["reason"] = self.reason()
