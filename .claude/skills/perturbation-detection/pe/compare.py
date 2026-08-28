@@ -17,12 +17,25 @@ supplementary sources (prompt.md's default): a paper can move because the model
 finally saw the Methods. That class is labelled SUPP-EVIDENCE and is evidenced by
 a verified quote carrying a supplementary source_id. Anything left over is
 labelled UNEXPLAINED and is what the prompt says to investigate.
+
+Two later additions, both of which were previously landing in UNEXPLAINED and so
+reading as logic bugs:
+
+  STAGE-B-RELEASED — Stage B's cap is symmetric, but only its ENTRY was
+    classified. A paper leaving the cap (`stage_b_capped` True -> False, which is
+    what a completed re-extraction looks like) had no class. Observed on
+    10.1126/science.adf5357.
+  SUPPRESSED — v0.0.10 lets a paper move because a candidate was recorded in
+    `suppressed_candidates` instead of `perturbations`. The class only fires when
+    a baseline perturbation can actually be matched to a new suppressed
+    candidate; an unmatched suppression explains nothing.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import re
 from collections import Counter
 import sys
 from pathlib import Path
@@ -34,7 +47,9 @@ from pe.runroot import work_default, output_default  # noqa: E402
 ORDER = ["yes", "unclear", "no"]
 
 CLASS_LABELS = {
-    "STAGE-B": "capped by Stage B (degraded/incomplete text) — predicted class (a)",
+    "STAGE-B": "Stage B's degraded-text cap was ENTERED in the new run — predicted class (a)",
+    "STAGE-B-RELEASED": "Stage B's cap was RELEASED (the baseline was capped, this run is not) — e.g. re-extraction completed the text",
+    "SUPPRESSED": "a candidate the baseline reported as a perturbation is now recorded in suppressed_candidates (v0.0.10)",
     "CC-5": "has_single_cell_assay='unclear' with a 'yes' pairing — predicted class (b)",
     "SUPP-EVIDENCE": "new supplementary evidence the v0.0.4 main-text-only run never saw",
     "HARNESS-PRUNE": "quote pruning changed the determination (EV-* flags)",
@@ -80,10 +95,29 @@ def classify(new: dict, old: dict | None = None) -> list[str]:
     if old is not None and old.get("pairing_pass") == "skipped_no_perturbations":
         classes.append("BASELINE-UNASSESSED")
 
-    if validation.get("stage_b_capped"):
+    # Stage B is symmetric: a paper moves both when it ENTERS the degraded-text
+    # cap and when it LEAVES it. Only the first was checked before, so a cap
+    # release -- `stage_b_capped` True -> False, which is what re-extraction
+    # completing a paper's text looks like -- fell through to UNEXPLAINED and
+    # read as a logic bug. Observed on 10.1126/science.adf5357.
+    old_capped = bool((old or {}).get("validation", {}).get("stage_b_capped")) if old else False
+    new_capped = bool(validation.get("stage_b_capped"))
+    if new_capped:
         classes.append("STAGE-B")
+    elif old_capped:
+        classes.append("STAGE-B-RELEASED")
     if "CC-5" in (validation.get("consistency_flags") or []):
         classes.append("CC-5")
+
+    # v0.0.10: a paper can now move because a candidate was SUPPRESSED rather
+    # than reported. The precise account is a perturbation present in the
+    # baseline that is absent from this run and reappears as a suppressed
+    # candidate, so the match is required rather than assumed -- an unmatched
+    # suppression explains nothing and must not silence UNEXPLAINED.
+    if old is not None:
+        matched = _suppression_matches(new, old)
+        if matched:
+            classes.append("SUPPRESSED")
 
     # A verified quote attributed to a supplementary source is direct evidence
     # that the model used text the main-text-only baseline never had.
@@ -117,6 +151,53 @@ def classify(new: dict, old: dict | None = None) -> list[str]:
             classes.append("ANY-ASSAY-CHANGED")
 
     return classes or ["UNEXPLAINED"]
+
+
+def _tokens(value) -> set[str]:
+    """Content words of an agent/candidate string, for matching across runs.
+
+    Deliberately crude: the two runs describe the same construct in their own
+    words ("SFTPC-GFP reporter line" vs "lentiviral SFTPC-promoter-GFP +
+    EF1a-TagRFP reporter"), so an exact match would never fire. Short and
+    generic words are dropped so "the medium" does not match "the inhibitor".
+    """
+    stop = {"the", "and", "with", "for", "from", "into", "was", "were", "that",
+            "this", "only", "line", "lines", "cell", "cells", "human", "mouse",
+            "sample", "samples", "using", "used", "via", "vs", "versus"}
+    words = re.findall(r"[A-Za-z0-9][A-Za-z0-9\-']{2,}", str(value or "").lower())
+    return {w for w in words if w not in stop}
+
+
+def _suppression_matches(new: dict, old: dict) -> list[tuple[str, str, str]]:
+    """Baseline perturbations that this run records as suppressed candidates.
+
+    Returns [(rule, baseline agent, new candidate)]. Requiring the match is what
+    keeps SUPPRESSED an explanation rather than an excuse: a run that suppressed
+    something unrelated does not account for a paper moving.
+    """
+    supp = [s for s in (new.get("suppressed_candidates") or []) if isinstance(s, dict)]
+    if not supp:
+        return []
+    new_agents = [_tokens(p.get("agent")) for p in (new.get("perturbations") or [])
+                  if isinstance(p, dict)]
+    matches = []
+    for pert in old.get("perturbations") or []:
+        if not isinstance(pert, dict):
+            continue
+        old_toks = _tokens(pert.get("agent"))
+        if not old_toks:
+            continue
+        # Still reported in this run? Then it was not suppressed.
+        if any(len(old_toks & cur) >= 2 or old_toks == cur for cur in new_agents):
+            continue
+        for cand in supp:
+            cand_toks = _tokens(cand.get("candidate"))
+            if len(old_toks & cand_toks) >= 2 or (
+                    old_toks & cand_toks and len(old_toks) <= 2):
+                matches.append((str(cand.get("rule")), str(pert.get("agent")),
+                                str(cand.get("candidate"))))
+                break
+    return matches
 
 
 def _quote_line(entry) -> str:
@@ -227,6 +308,16 @@ def main() -> int:
                          f"{','.join(validation.get('evidence_flags') or [])}")
         lines.append(f"  v0.0.4 had {len(old.get('perturbations') or [])} perturbation(s); "
                      f"v0.0.5 has {len(new.get('perturbations') or [])}")
+        for rule, old_agent, cand in _suppression_matches(new, old):
+            lines.append(f"    SUPPRESSED ({rule}): baseline reported "
+                         f"{old_agent[:60]!r}")
+            lines.append(f"      now recorded as a suppressed candidate: {cand[:80]}")
+        old_cap = bool((old.get("validation") or {}).get("stage_b_capped"))
+        new_cap = bool(validation.get("stage_b_capped"))
+        if old_cap != new_cap:
+            lines.append(f"  Stage B cap: {old_cap} -> {new_cap}"
+                         + ("  (released — the text is no longer degraded)"
+                            if old_cap else "  (entered)"))
         before, after = determination_inputs(old), determination_inputs(new)
         moved = [k for k in before if before[k] != after[k]]
         if moved:

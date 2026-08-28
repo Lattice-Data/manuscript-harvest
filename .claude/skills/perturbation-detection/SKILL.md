@@ -89,17 +89,50 @@ python -m pe.compare --baseline <old_run_dir>   # version-to-version diff
   | priority | meaning |
   |---|---|
   | P1 | `unclear` because the pairing was never stated — most likely to hide a real match, read first |
-  | P2 | `yes` with confidence < 0.6 |
-  | P3 | `unclear` because the text was incomplete — send to re-fetch, do not read |
-  | P4 | `no` but a perturbation exists elsewhere in the paper — the pairing filter fired; sample these |
-  | P5 | any consistency or evidence flag |
+  | P2 | not `yes`, but a suppressed candidate would have paired `yes` — one toggle flips the paper |
+  | P3 | `yes` with confidence < 0.6 |
+  | P4 | `unclear` because the text was incomplete — send to re-fetch, do not read |
+  | P5 | `no` but a perturbation exists elsewhere in the paper — the pairing filter fired; sample these |
+  | P6 | any consistency or evidence flag |
   | P9 | everything else |
+
+  **The ladder renumbered at prompt v0.0.10**, when P2 was inserted: the old
+  P2–P5 are now P3–P6. Do not compare a priority column across prompt versions
+  without checking which one produced it. The list lives in two places on
+  purpose — `prompt.md` step 10 and `pe.summarize.triage_priority` — and they
+  must be changed together.
+
+- **`suppressed_candidates`** (schema 0.0.6, prompt v0.0.10) — one entry per
+  thing the model recognised as a possible perturbation and deliberately did not
+  list, so the NOT list stops being silent. Each entry carries `candidate`,
+  `rule` (a **closed** set of eight values: `reporter_or_marker`,
+  `incidental_clinical_therapy`, `unintended_condition`,
+  `derivation_formulation`, `observational_disease_state`,
+  `sample_handling_protocol`, `readout_reagent`, `routine_processing`), `why`, a
+  verified `evidence_quote`, and `would_have_paired`.
+
+  Two things it buys that a free-text `ambiguities` note could not. A curator can
+  tell **"considered the transgene and excluded it under the reporter rule"**
+  apart from **"never noticed it"** — v0.0.9 could not, and a regression run of
+  `10.1038/s44318-024-00328-6` returned the right answer while never mentioning
+  the SFTPC-GFP reporter at all. And the corpus becomes **countable**: "how many
+  papers did the reporter rule hold back from `yes`?" is now a column
+  (`suppressed_rules`, `n_suppressed`, `suppressed_would_pair_yes`) and a corpus
+  counter, rather than nine papers of hand-reading.
+
+  `rule` is closed because an open string cannot be tallied, which is the whole
+  point. The threshold for an entry is **deliberation, not presence**: a call you
+  actually had to make, not every reagent the Methods name.
 
 - `<corpus>/<paper>/extracted/perturbations.json` — full per-paper result with
   evidence quotes (with `--write-corpus`).
-- `output/review_screen.txt` — Screens A–E: pairing flips, possibly-missed
-  assays, possibly-missed perturbations, incomplete-text papers, and
-  supplementary-only evidence.
+- `output/review_screen.txt` — Screens A–F: pairing flips, possibly-missed
+  assays, possibly-missed perturbations, incomplete-text papers,
+  supplementary-only evidence, and **Screen F, suppressed candidates** — every
+  candidate the NOT list swallowed, `would_have_paired = "yes"` rows first. F is
+  a review of the *rules* rather than of the model's reading: the model named the
+  candidate and judged its pairing, then excluded it. It is also the one screen
+  that is not a keyword grep.
 
 ## Things that will bite you
 
@@ -121,6 +154,20 @@ python -m pe.compare --baseline <old_run_dir>   # version-to-version diff
   dropped entirely; then the paper-level call is recomputed. Both values are
   kept (`perturbation_present_model` vs `..._final`), and a rising gap between
   them is the early warning for fabricated evidence.
+- **A suppressed candidate must never move the determination.** It is not a
+  perturbation, so it never enters `perturbations` and Stage A cannot see it —
+  which is structural, not a convention: `stage_a` reads only
+  `processing_status`, `has_single_cell_assay`,
+  `perturbation_present_any_assay` and the pairings inside `perturbations`. If a
+  suppression ever changes a call, a write escaped `pe.validate._validate_suppressed`.
+  `tests/test_suppressed_candidates.py` asserts this over every Stage A input
+  combination.
+- **An unverifiable suppression quote drops the quote, not the entry.** The
+  suppression still happened; deleting the entry would restore exactly the
+  silence the field was added to remove. Flagged `EV-SUPPRESSED-UNVERIFIED`. A
+  `null` quote is legitimate when the exclusion rests on the *absence* of a
+  statement — the Methods never placing a construct in the sequenced material is
+  not quotable.
 - **Session limits, not papers, are the constraint at scale.** Expect to run a
   large corpus over several sittings, using `pe.pending` between them.
 - `table` blocks are deliberately excluded: a Cell Press KEY RESOURCES TABLE
@@ -132,7 +179,14 @@ python -m pe.compare --baseline <old_run_dir>   # version-to-version diff
 Edit `prompt.md` and bump its `Version:` line — nothing hardcodes the version.
 `pe.validate` mirrors the prompt's stated determination logic in
 `stage_a`/`stage_b`, so if you change that logic, change both and run
-`tests/test_determination_v005.py`. `prompt.md` also has a toggle table at the
+`tests/test_determination_v005.py`. **That filename still says v005 on purpose**
+— Stage A, Stage B and the truth table have not changed since v0.0.5, so
+renaming it to the current prompt version would assert a contract moved when it
+did not. Fields added since have their own files:
+`tests/test_suppressed_candidates.py` covers schema 0.0.6, and its first job is
+to prove the determination logic is unaffected. It also guards the closed `rule`
+set against drift between `prompt.md` and `pe.validate` — v0.0.7's precedence bug
+was one rule stated in three places and changed in two. `prompt.md` also has a toggle table at the
 bottom for the recurring boundary calls (reporter-only genetic edits,
 observational disease states, spot-based spatial assays, degraded-text
 handling).

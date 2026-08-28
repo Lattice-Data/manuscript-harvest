@@ -12,6 +12,13 @@ removal of that quote". Both values are kept -- `perturbation_present_model` and
 `perturbation_present_final` -- and their disagreement rate is the corpus-level
 signal for evidence fabrication.
 
+v0.0.10 adds `suppressed_candidates` (schema 0.0.6). Its quotes are verified
+exactly like the rest -- the field would be worthless if it were the one place a
+quote went unchecked -- but an unverifiable quote drops the QUOTE and keeps the
+ENTRY, because the suppression still happened and deleting the entry restores the
+silence the field exists to remove. Nothing about suppressed candidates reaches
+Stage A or Stage B: see `_validate_suppressed`.
+
 No LLM calls.
 """
 
@@ -42,6 +49,15 @@ CATEGORIES = {
     "chemical", "biologic", "activation_stimulation", "genetic",
     "physical_environmental", "dietary", "other",
 }
+# prompt.md v0.0.10's closed `rule` set. Closed on purpose: the field exists to
+# be tallied ("how many papers did the reporter rule hold back from yes?"), and
+# an open string cannot be. The first four arrived with v0.0.9; the last four are
+# older rules that had always been silent.
+SUPPRESSION_RULES = (
+    "reporter_or_marker", "incidental_clinical_therapy", "unintended_condition",
+    "derivation_formulation", "observational_disease_state",
+    "sample_handling_protocol", "readout_reagent", "routine_processing",
+)
 TRISTATE = ("yes", "no", "unclear")
 PROCESSING_STATUS = ("ok", "partial", "failed")
 TEXT_COMPLETENESS = ("full", "truncated", "methods_missing", "unknown")
@@ -200,6 +216,107 @@ def _normalize_quote_entry(entry, default_source: str = "main") -> tuple[str, st
     return default_source, str(entry or ""), True
 
 
+def _validate_suppressed(result: dict, sources_text: dict[str, str], threshold: float,
+                         issues: list[str], evidence_flags: set[str]) -> tuple[list, int, int, int]:
+    """Verify and normalize `suppressed_candidates` (prompt.md v0.0.10, schema 0.0.6).
+
+    Returns (entries, checked, failed, wrong_source).
+
+    **This function cannot move the determination, and that is structural rather
+    than a convention to be careful about.** `stage_a` reads exactly four things
+    -- `processing_status`, `has_single_cell_assay`,
+    `perturbation_present_any_assay`, and the `single_cell_paired` values inside
+    `perturbations` -- and nothing here writes any of them. A suppressed
+    candidate is by definition not a perturbation, so it is never appended to
+    that array and never promoted out of this one. If a suppressed candidate ever
+    changes a determination, the bug is a write that escaped this function.
+
+    An unverifiable quote drops the quote and keeps the entry (step 6). The
+    alternative -- dropping the entry -- would restore exactly the silence the
+    field was added to remove, and would make a bad quote look like a decision
+    that was never made.
+    """
+    raw = result.get("suppressed_candidates")
+    if raw is None:
+        issues.append(
+            "suppressed_candidates missing; schema 0.0.6 requires it. Use [] when "
+            "nothing was suppressed: a null cannot be told apart from 'the model "
+            "never considered the question', which is the ambiguity this field exists "
+            "to remove")
+        raw = []
+    elif not isinstance(raw, list):
+        issues.append(f"suppressed_candidates={raw!r} is not a list")
+        raw = []
+
+    checked = failed = wrong_source = 0
+    entries: list[dict] = []
+
+    for i, item in enumerate(raw):
+        if not isinstance(item, dict):
+            issues.append(f"suppressed_candidates[{i}] is not an object")
+            continue
+
+        rule = item.get("rule")
+        if rule not in SUPPRESSION_RULES:
+            issues.append(
+                f"suppressed_candidates[{i}].rule={rule!r} is outside the closed set "
+                f"{list(SUPPRESSION_RULES)} — an open value cannot be tallied, which "
+                f"is the whole point of the field")
+        if item.get("would_have_paired") not in TRISTATE:
+            issues.append(f"suppressed_candidates[{i}].would_have_paired="
+                          f"{item.get('would_have_paired')!r} not in yes/no/unclear")
+        if not str(item.get("candidate") or "").strip():
+            issues.append(f"suppressed_candidates[{i}].candidate is empty — the entry "
+                          f"names nothing and cannot be reviewed")
+
+        entry = item.get("evidence_quote")
+        if isinstance(entry, str):
+            issues.append(f"suppressed_candidates[{i}].evidence_quote is a bare string, "
+                          f"expected {{source_id, quote}}")
+            entry = {"source_id": "main", "quote": entry}
+
+        if isinstance(entry, dict) and str(entry.get("quote") or "").strip():
+            quote = str(entry.get("quote"))
+            claimed = str(entry.get("source_id") or "main")
+            outcome = verify_quote_sourced(quote, claimed, sources_text, threshold)
+            checked += 1
+            item["quote_check"] = outcome
+
+            if outcome["status"] == "verified":
+                item["evidence_quote"] = {"source_id": claimed, "quote": quote}
+            elif outcome["status"] in ("wrong_source", "unknown_source"):
+                wrong_source += 1
+                evidence_flags.add("EV-WRONG-SOURCE")
+                item["evidence_quote"] = {"source_id": outcome["source_id"],
+                                          "quote": quote,
+                                          "source_id_corrected_from": claimed}
+                if outcome["status"] == "unknown_source":
+                    evidence_flags.add("CC-7")
+                    issues.append(f"suppressed_candidates[{i}] quote cited unknown source "
+                                  f"{claimed!r}; found in {outcome['source_id']!r} (CC-7)")
+                else:
+                    issues.append(f"suppressed_candidates[{i}] quote attributed to "
+                                  f"{claimed!r} but found in {outcome['source_id']!r} "
+                                  f"(EV-WRONG-SOURCE)")
+            else:
+                failed += 1
+                evidence_flags.add("EV-SUPPRESSED-UNVERIFIED")
+                item["evidence_quote_dropped"] = {"source_id": claimed, "quote": quote}
+                item["evidence_quote"] = None
+                issues.append(
+                    f"suppressed_candidates[{i}] ({str(item.get('candidate'))[:50]!r}) "
+                    f"quote unverifiable in any source (best ratio {outcome['ratio']}) — "
+                    f"quote dropped, ENTRY KEPT (EV-SUPPRESSED-UNVERIFIED)")
+        else:
+            # Legitimate per the prompt: an exclusion resting on the ABSENCE of a
+            # statement has nothing to quote. `why` is expected to say so.
+            item["evidence_quote"] = None
+
+        entries.append(item)
+
+    return entries, checked, failed, wrong_source
+
+
 def validate_result(result: dict, sources_text: dict[str, str], threshold: float,
                     version: str = "unknown", truncated_by_harness: bool = False) -> dict:
     """Verify quotes per source, prune, recompute the determination."""
@@ -221,8 +338,8 @@ def validate_result(result: dict, sources_text: dict[str, str], threshold: float
         issues.append(f"text_completeness={result.get('text_completeness')!r} off-schema")
     if result.get("unresolved_reason") not in UNRESOLVED_REASONS:
         issues.append(f"unresolved_reason={result.get('unresolved_reason')!r} off-schema")
-    if str(result.get("schema_version")) != "0.0.5":
-        issues.append(f"schema_version={result.get('schema_version')!r}, expected '0.0.5'")
+    if str(result.get("schema_version")) != "0.0.6":
+        issues.append(f"schema_version={result.get('schema_version')!r}, expected '0.0.6'")
     if not isinstance(result.get("consistency_flags"), list):
         issues.append("consistency_flags missing or not a list")
 
@@ -393,6 +510,17 @@ def validate_result(result: dict, sources_text: dict[str, str], threshold: float
             sample["perturbation_refs_original"] = refs
             sample["perturbation_refs"] = remapped
 
+    # ---- suppressed candidates (v0.0.10) ----------------------------------
+    # Placed after the perturbation loop so its quotes join the same counters,
+    # and before the recomputation only for readability: it writes nothing the
+    # recomputation reads. See `_validate_suppressed`.
+    suppressed, s_checked, s_failed, s_wrong = _validate_suppressed(
+        result, sources_text, threshold, issues, evidence_flags)
+    result["suppressed_candidates"] = suppressed
+    checked += s_checked
+    failed += s_failed
+    wrong_source += s_wrong
+
     # ---- consistency + recomputation --------------------------------------
     cc_codes = consistency_checks(result)
     if "CC-7" in evidence_flags:
@@ -439,6 +567,15 @@ def validate_result(result: dict, sources_text: dict[str, str], threshold: float
         "quotes_wrong_source": wrong_source,
         "perturbations_kept": len(kept),
         "perturbations_dropped": len(dropped),
+        # v0.0.10: what the NOT list swallowed on this paper. `would_pair_yes` is
+        # the actionable one -- those papers are one toggle from "yes".
+        "n_suppressed": len(suppressed),
+        "suppressed_rules": sorted({str(s.get("rule")) for s in suppressed
+                                    if s.get("rule") in SUPPRESSION_RULES}),
+        "suppressed_would_pair_yes": any(
+            s.get("would_have_paired") == "yes" for s in suppressed),
+        "suppressed_quotes_checked": s_checked,
+        "suppressed_quotes_failed": s_failed,
         "paired_yes": paired_values.count("yes"),
         "paired_no": paired_values.count("no"),
         "paired_unclear": paired_values.count("unclear"),

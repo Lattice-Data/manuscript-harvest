@@ -21,6 +21,13 @@ three, mechanically:
     `perturbation_present_any_assay = no`, grepped for perturbation language.
     This is the pre-v0.0.3 false-negative screen, still useful.
 
+  Screen F — suppressed candidates (v0.0.10). Every candidate the NOT list
+    swallowed, with the `would_have_paired = "yes"` rows first: those are papers
+    where one toggle flips the determination, so they are the review queue for
+    the boundary rules themselves rather than for the model's reading of a paper.
+    Unlike B and C this is not a keyword grep — the model told us it made these
+    calls, which is exactly what v0.0.9 could not do.
+
 All three are SCREENS, not verdicts. A keyword hit is not proof of an error:
 "treated with" also describes routine processing, and "single-cell suspension"
 is a dissociation step, not an assay — the two traps this task turns on.
@@ -142,7 +149,7 @@ def main() -> int:
             loaded.append((doi, json.loads(validated.read_text()), Path(entry["prompt_file"])))
 
     lines: list[str] = []
-    counts = {"A": 0, "B": 0, "C": 0, "D": 0, "E": 0}
+    counts = {"A": 0, "B": 0, "C": 0, "D": 0, "E": 0, "F": 0}
 
     # ---- Screen A: assay-pairing disagreements ------------------------------
     lines.append("=" * 78)
@@ -305,6 +312,67 @@ def main() -> int:
         lines.append("")
         lines.append("  none — no supplementary-only evidence and no misattributed quotes")
 
+    # ---- Screen F: suppressed candidates (v0.0.10) --------------------------
+    lines.append("")
+    lines.append("=" * 78)
+    lines.append("SCREEN F — suppressed candidates: what the NOT list swallowed")
+    lines.append("Rows marked >>> WOULD HAVE PAIRED YES are one toggle from flipping the")
+    lines.append("paper to 'yes'. They are a review of the RULES, not of the reading:")
+    lines.append("the model named the candidate and judged its pairing, then excluded it.")
+    lines.append("=" * 78)
+
+    def _supp_sort_key(item):
+        doi, result, _ = item
+        supp = result.get("suppressed_candidates") or []
+        flips = any(s.get("would_have_paired") == "yes" for s in supp) and \
+            result.get("perturbation_present") != "yes"
+        return (0 if flips else 1, doi)
+
+    rule_tally: dict[str, int] = {}
+    for doi, result, _ in sorted(loaded, key=_supp_sort_key):
+        supp = result.get("suppressed_candidates") or []
+        if not supp:
+            continue
+        counts["F"] += 1
+        present = result.get("perturbation_present")
+        flips = [s for s in supp if s.get("would_have_paired") == "yes"]
+        lines.append("")
+        marker = ("   >>> WOULD HAVE PAIRED YES — one toggle flips this paper"
+                  if flips and present != "yes" else "")
+        lines.append(f"{doi}   present={present}  "
+                     f"{len(supp)} suppressed{marker}")
+        for i, cand in enumerate(supp):
+            rule = str(cand.get("rule"))
+            rule_tally[rule] = rule_tally.get(rule, 0) + 1
+            would = cand.get("would_have_paired")
+            flag = "  <<< would have paired YES" if would == "yes" else ""
+            lines.append(f"    [{i}] {rule}  would_have_paired={would}{flag}")
+            lines.append(f"        candidate: {str(cand.get('candidate'))[:110]}")
+            lines.append(f"        why: {str(cand.get('why') or '(not given)')[:220]}")
+            quote = cand.get("evidence_quote")
+            if isinstance(quote, dict) and str(quote.get("quote") or "").strip():
+                check = cand.get("quote_check") or {}
+                mark = ("  [QUOTE OK]" if check.get("status") == "verified"
+                        else f"  [{str(check.get('status') or 'UNCHECKED').upper()}]")
+                lines.append(f"        quote: [{quote.get('source_id')}] "
+                             f"{str(quote.get('quote')).strip()[:150]}{mark}")
+            elif cand.get("evidence_quote_dropped"):
+                lines.append("        quote: DROPPED as unverifiable — entry kept, "
+                             "because the suppression still happened")
+            else:
+                lines.append("        quote: (none — exclusion rests on the absence "
+                             "of a statement)")
+    if not counts["F"]:
+        lines.append("")
+        lines.append("  none — no paper recorded a suppressed candidate. On a corpus of any")
+        lines.append("  size that is itself suspicious: the NOT list is long, and a run where")
+        lines.append("  nothing was ever excluded more likely means the field is being")
+        lines.append("  skipped than that no paper had a candidate.")
+    else:
+        lines.append("")
+        lines.append("  suppression rules used: "
+                     + ", ".join(f"{k}={v}" for k, v in sorted(rule_tally.items())))
+
     header = [
         f"Review screen — prompt v{prompt_version(Path(args.prompt))} — "
         f"{len(loaded)} paper(s) validated",
@@ -313,6 +381,7 @@ def main() -> int:
         f"  Screen C (possible missed perturbation): {counts['C']}",
         f"  Screen D (capped at unclear by Stage B — re-fetch queue): {counts['D']}",
         f"  Screen E (supplementary-only evidence / attribution): {counts['E']}",
+        f"  Screen F (suppressed candidates — the NOT list's audit trail): {counts['F']}",
         "",
         "Screens, not verdicts. 'treated with' also describes routine processing, and",
         "'single-cell suspension' is a dissociation step rather than an assay.",
@@ -321,7 +390,7 @@ def main() -> int:
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n".join(header + lines) + "\n")
-    print("\n".join(header[:6]))
+    print("\n".join(header[:7]))
     print(f"wrote {out}")
     return 0
 
