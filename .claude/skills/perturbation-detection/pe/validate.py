@@ -58,6 +58,16 @@ SUPPRESSION_RULES = (
     "derivation_formulation", "observational_disease_state",
     "sample_handling_protocol", "readout_reagent", "routine_processing",
 )
+# The subset whose boundary is under active review -- the four v0.0.9 additions.
+# The other four are long-settled toggles, and `observational_disease_state` in
+# particular fires on any tumour-vs-normal or disease-vs-healthy contrast, which
+# is most clinical papers. Triage uses this subset so priority 2 means "a rule
+# we are still arguing about held this paper back" rather than "this paper has a
+# disease contrast", which would drown the tier.
+RULES_UNDER_REVIEW = (
+    "reporter_or_marker", "incidental_clinical_therapy",
+    "unintended_condition", "derivation_formulation",
+)
 TRISTATE = ("yes", "no", "unclear")
 PROCESSING_STATUS = ("ok", "partial", "failed")
 TEXT_COMPLETENESS = ("full", "truncated", "methods_missing", "unknown")
@@ -586,8 +596,14 @@ def validate_result(result: dict, sources_text: dict[str, str], threshold: float
         "n_suppressed": len(suppressed),
         "suppressed_rules": sorted({str(s.get("rule")) for s in suppressed
                                     if s.get("rule") in SUPPRESSION_RULES}),
+        # Both are reported: the raw fact, and the subset triage acts on. A
+        # curator comparing them sees how much of the suppression load comes
+        # from settled toggles rather than from the rules in review.
         "suppressed_would_pair_yes": any(
             s.get("would_have_paired") == "yes" for s in suppressed),
+        "suppressed_would_pair_yes_under_review": any(
+            s.get("would_have_paired") == "yes"
+            and s.get("rule") in RULES_UNDER_REVIEW for s in suppressed),
         "suppressed_quotes_checked": s_checked,
         "suppressed_quotes_failed": s_failed,
         "paired_yes": paired_values.count("yes"),

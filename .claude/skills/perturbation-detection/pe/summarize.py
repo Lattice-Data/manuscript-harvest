@@ -41,6 +41,7 @@ COLUMNS = [
     "categories", "n_samples", "n_samples_perturbed", "n_samples_unclear",
     "n_samples_sc_assay",
     "n_suppressed", "suppressed_rules", "suppressed_would_pair_yes",
+    "suppressed_would_pair_yes_under_review",
     "quotes_checked", "quotes_failed", "quotes_wrong_source",
     "perturbations_dropped", "max_pert_confidence",
     "sources", "perturbation_agents", "n_issues", "chars", "needs_review",
@@ -91,7 +92,11 @@ def triage_priority(result: dict) -> int:
     # NOT-list rule. Ranked below priority 1 because that bucket is an open
     # question a reader must resolve, while this is a settled call to ratify --
     # narrower, but far more actionable.
-    if present != "yes" and validation.get("suppressed_would_pair_yes"):
+    # Restricted to the rules under review (pe.validate.RULES_UNDER_REVIEW). The
+    # unrestricted version put 5 of the 6 regression papers in this tier, because
+    # `observational_disease_state` pairs "yes" on any disease-vs-healthy
+    # contrast; a tier that holds most papers is not a queue.
+    if present != "yes" and validation.get("suppressed_would_pair_yes_under_review"):
         return 2
     if present == "yes" and isinstance(confidence, (int, float)) and confidence < 0.6:
         return 3
@@ -152,6 +157,8 @@ def row_for(doi: str, result: dict, entry: dict) -> dict:
         "n_suppressed": validation.get("n_suppressed", ""),
         "suppressed_rules": "|".join(validation.get("suppressed_rules") or []),
         "suppressed_would_pair_yes": validation.get("suppressed_would_pair_yes", ""),
+        "suppressed_would_pair_yes_under_review": validation.get(
+            "suppressed_would_pair_yes_under_review", ""),
         "quotes_checked": validation.get("quotes_checked", ""),
         "quotes_failed": validation.get("quotes_failed", ""),
         "quotes_wrong_source": validation.get("quotes_wrong_source", ""),
@@ -238,6 +245,13 @@ def _counters(rows: list[dict], results: dict[str, dict]) -> list[str]:
     out.append(f"  {'  ...of which the paper is NOT yes (rule held it back)':<52} "
                f"{len(held)}"
                + (f" -> {', '.join(r['doi'] for r in held)}" if held else ""))
+    # The share that comes from a rule still under review, which is what triage
+    # acts on. The gap against the line above is the settled-toggle load --
+    # mostly `observational_disease_state` on disease-vs-healthy contrasts.
+    review = [r for r in held if r["suppressed_would_pair_yes_under_review"] is True]
+    out.append(f"  {'  ...and under a rule still in review (triage P2)':<52} "
+               f"{len(review)}"
+               + (f" -> {', '.join(r['doi'] for r in review)}" if review else ""))
 
     q_checked = sum(int(r["quotes_checked"] or 0) for r in ok)
     q_failed = sum(int(r["quotes_failed"] or 0) for r in ok)

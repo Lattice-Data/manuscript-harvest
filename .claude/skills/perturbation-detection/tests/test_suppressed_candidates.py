@@ -341,6 +341,33 @@ def test_would_pair_yes_on_an_already_yes_paper_is_not_priority_2():
     assert triage_priority(out) != 2
 
 
+def test_a_settled_toggle_alone_does_not_reach_priority_2():
+    """`observational_disease_state` pairs "yes" on any disease-vs-healthy
+    contrast, i.e. most clinical papers. Unrestricted, this tier held 5 of the 6
+    regression papers, which is not a queue."""
+    out = _scored(suppressed_candidates=[_candidate(
+        candidate="ulcerative colitis vs healthy donor tissue",
+        rule="observational_disease_state", evidence_quote=None,
+        would_have_paired="yes")])
+    v = out["validation"]
+    assert v["suppressed_would_pair_yes"] is True, "the raw fact is still reported"
+    assert v["suppressed_would_pair_yes_under_review"] is False
+    assert triage_priority(out) != 2
+
+
+def test_a_rule_under_review_does_reach_priority_2_alongside_a_settled_one():
+    out = _scored(suppressed_candidates=[
+        _candidate(candidate="ulcerative colitis vs healthy donor tissue",
+                   rule="observational_disease_state", evidence_quote=None,
+                   would_have_paired="yes"),
+        _candidate(candidate="cultures likely became hypoxic",
+                   rule="unintended_condition", evidence_quote=None,
+                   would_have_paired="yes"),
+    ])
+    assert out["validation"]["suppressed_would_pair_yes_under_review"] is True
+    assert triage_priority(out) == 2
+
+
 def test_suppression_without_would_pair_yes_is_not_priority_2():
     out = _scored(suppressed_candidates=[_candidate(would_have_paired="unclear")])
     assert triage_priority(out) != 2
