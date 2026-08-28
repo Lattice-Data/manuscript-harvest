@@ -1,6 +1,13 @@
 """prompt.md v0.0.5 Stage A / Stage B, checked for totality and against the
 prompt's own worked examples.
 
+**The filename still says v005 on purpose.** Stage A, Stage B and the truth table
+have not changed since v0.0.5 -- not in v0.0.6-v0.0.9, and not in v0.0.10, which
+adds a field that cannot reach them. Renaming this file to the current prompt
+version would assert that the determination contract moved when it did not. The
+v0.0.10 field has its own file, tests/test_suppressed_candidates.py, whose first
+job is to prove this file's subject is unaffected.
+
 Run: python -m pytest tests/test_determination_v005.py -q
 """
 from __future__ import annotations
@@ -231,8 +238,15 @@ def test_hallucinated_quote_is_unverified():
 # --------------------------------------------------------------------------
 
 def _v005_result(**over):
+    """A current-schema record carrying v0.0.5 determination inputs.
+
+    The determination fields are the ones this file exercises; the envelope
+    tracks the live schema (0.0.6) so these end-to-end cases keep validating a
+    record shape the pipeline actually accepts, rather than drifting into
+    testing a version `pe.validate` now rejects.
+    """
     base = {
-        "schema_version": "0.0.5",
+        "schema_version": "0.0.6",
         "sources_seen": ["main", "supp1"],
         "processing_status": "ok",
         "text_completeness": "full",
@@ -245,6 +259,7 @@ def _v005_result(**over):
         "consistency_flags": [],
         "perturbations": [],
         "samples": [],
+        "suppressed_candidates": [],
         "ambiguities": "",
     }
     base.update(over)

@@ -35,12 +35,16 @@ from pe.runroot import work_default  # noqa: E402
 ARG_FIELDS = ("doi", "prompt_file", "prompt_lines", "prompt_chars", "chars",
               "raw_file", "source_ids")
 
-# A result must carry these to be a v0.0.5 record at all; anything less is a
-# partial write and gets re-run rather than validated.
+# A result must carry these to be a schema-0.0.6 record at all; anything less is
+# a partial write and gets re-run rather than validated. `suppressed_candidates`
+# is on the list deliberately: v0.0.9 told the model to note its exclusions in
+# `ambiguities` and nothing checked that it had, so the exclusions went
+# unrecorded. Requiring the field here is what makes it enforceable -- a result
+# that omits it is re-run, not silently accepted.
 REQUIRED = ("schema_version", "sources_seen", "processing_status",
             "text_completeness", "has_single_cell_assay", "perturbation_present",
             "perturbation_present_any_assay", "unresolved_reason",
-            "consistency_flags", "perturbations")
+            "consistency_flags", "perturbations", "suppressed_candidates")
 
 
 def status_of(entry: dict, work: Path | None = None) -> tuple[str, str]:

@@ -3,7 +3,8 @@
 
     python -m pe.summarize [--work work/] [--out output/perturbations_summary.csv]
 
-prompt.md v0.0.5 batch spec steps 10 and 11. Step 10 fixes both the column set
+prompt.md v0.0.10 batch spec steps 10 and 11 (priorities renumbered there and
+here together; see `triage_priority`). Step 10 fixes both the column set
 and the row ORDER -- the table is a work queue, not a dump, so rows are sorted by
 the triage priority the prompt defines. Step 11's counters are described there as
 "the acceptance criteria for the version, not decoration", so they are printed
@@ -39,6 +40,8 @@ COLUMNS = [
     "consistency_flags", "evidence_flags",
     "categories", "n_samples", "n_samples_perturbed", "n_samples_unclear",
     "n_samples_sc_assay",
+    "n_suppressed", "suppressed_rules", "suppressed_would_pair_yes",
+    "suppressed_would_pair_yes_under_review",
     "quotes_checked", "quotes_failed", "quotes_wrong_source",
     "perturbations_dropped", "max_pert_confidence",
     "sources", "perturbation_agents", "n_issues", "chars", "needs_review",
@@ -67,10 +70,15 @@ def _join_truncated(items, per_item: int = 60, total: int = 400) -> str:
 
 
 def triage_priority(result: dict) -> int:
-    """prompt.md v0.0.5 step 10's sort order. Lower sorts first.
+    """prompt.md v0.0.10 step 10's sort order. Lower sorts first.
 
-    1 is the bucket most likely to hide a real match; 4 is the one the prompt
-    says to sample rather than read in full. 9 is everything else.
+    1 is the bucket most likely to hide a real match; 5 is the one the prompt
+    says to sample rather than read in full. 9 is everything else, and 0 is
+    reserved by `main` for rows that failed or are still pending.
+
+    **The ladder renumbered at v0.0.10**: priority 2 is new, and the old 2-5
+    shifted to 3-6. prompt.md step 10 carries the same list, and the two must be
+    changed together -- a mismatch would silently mis-sort the curator's queue.
     """
     validation = result.get("validation") or {}
     present = result.get("perturbation_present")
@@ -79,14 +87,25 @@ def triage_priority(result: dict) -> int:
 
     if present == "unclear" and reason == "pairing_not_stated":
         return 1
-    if present == "yes" and isinstance(confidence, (int, float)) and confidence < 0.6:
+    # v0.0.10. One toggle flips these: the candidate is named, its pairing is
+    # already judged "yes", and the only thing between the paper and a "yes" is a
+    # NOT-list rule. Ranked below priority 1 because that bucket is an open
+    # question a reader must resolve, while this is a settled call to ratify --
+    # narrower, but far more actionable.
+    # Restricted to the rules under review (pe.validate.RULES_UNDER_REVIEW). The
+    # unrestricted version put 5 of the 6 regression papers in this tier, because
+    # `observational_disease_state` pairs "yes" on any disease-vs-healthy
+    # contrast; a tier that holds most papers is not a queue.
+    if present != "yes" and validation.get("suppressed_would_pair_yes_under_review"):
         return 2
-    if present == "unclear" and reason == "degraded_text":
+    if present == "yes" and isinstance(confidence, (int, float)) and confidence < 0.6:
         return 3
-    if present == "no" and result.get("perturbation_present_any_assay") == "yes":
+    if present == "unclear" and reason == "degraded_text":
         return 4
-    if validation.get("consistency_flags") or validation.get("evidence_flags"):
+    if present == "no" and result.get("perturbation_present_any_assay") == "yes":
         return 5
+    if validation.get("consistency_flags") or validation.get("evidence_flags"):
+        return 6
     return 9
 
 
@@ -135,6 +154,11 @@ def row_for(doi: str, result: dict, entry: dict) -> dict:
         "n_samples_unclear": sum(1 for s in samples if s.get("perturbed") == "unclear"),
         "n_samples_sc_assay": sum(1 for s in samples
                                   if s.get("is_single_cell_assay") == "yes"),
+        "n_suppressed": validation.get("n_suppressed", ""),
+        "suppressed_rules": "|".join(validation.get("suppressed_rules") or []),
+        "suppressed_would_pair_yes": validation.get("suppressed_would_pair_yes", ""),
+        "suppressed_would_pair_yes_under_review": validation.get(
+            "suppressed_would_pair_yes_under_review", ""),
         "quotes_checked": validation.get("quotes_checked", ""),
         "quotes_failed": validation.get("quotes_failed", ""),
         "quotes_wrong_source": validation.get("quotes_wrong_source", ""),
@@ -203,6 +227,32 @@ def _counters(rows: list[dict], results: dict[str, dict]) -> list[str]:
     out.append(f"  {'mixed no/unclear pairing papers (v0.0.4 gap)':<52} {len(mixed)}"
                + (f" -> {', '.join(mixed)}" if mixed else ""))
 
+    # v0.0.10: what each NOT-list rule cost, corpus-wide. This is the counter
+    # that makes a boundary change arguable from data rather than from
+    # hand-reading -- the measurement v0.0.9 was justified by and did not have.
+    by_rule = Counter(rule for r in ok
+                      for rule in (r["suppressed_rules"] or "").split("|") if rule)
+    n_supp_papers = sum(1 for r in ok if int(r["n_suppressed"] or 0) > 0)
+    n_supp_total = sum(int(r["n_suppressed"] or 0) for r in ok)
+    out.append(f"  {'papers by suppression rule':<52} "
+               + (", ".join(f"{k}={v}" for k, v in sorted(by_rule.items())) or "none"))
+    out.append(f"  {'papers with any suppressed candidate':<52} "
+               f"{n_supp_papers}/{len(ok)} ({n_supp_total} candidate(s) total)")
+    would = [r for r in ok if r["suppressed_would_pair_yes"] is True]
+    held = [r for r in would if r["perturbation_present"] != "yes"]
+    out.append(f"  {'suppressed candidate would have paired yes':<52} {len(would)}"
+               + (f" -> {', '.join(r['doi'] for r in would)}" if would else ""))
+    out.append(f"  {'  ...of which the paper is NOT yes (rule held it back)':<52} "
+               f"{len(held)}"
+               + (f" -> {', '.join(r['doi'] for r in held)}" if held else ""))
+    # The share that comes from a rule still under review, which is what triage
+    # acts on. The gap against the line above is the settled-toggle load --
+    # mostly `observational_disease_state` on disease-vs-healthy contrasts.
+    review = [r for r in held if r["suppressed_would_pair_yes_under_review"] is True]
+    out.append(f"  {'  ...and under a rule still in review (triage P2)':<52} "
+               f"{len(review)}"
+               + (f" -> {', '.join(r['doi'] for r in review)}" if review else ""))
+
     q_checked = sum(int(r["quotes_checked"] or 0) for r in ok)
     q_failed = sum(int(r["quotes_failed"] or 0) for r in ok)
     q_wrong = sum(int(r["quotes_wrong_source"] or 0) for r in ok)
@@ -216,10 +266,11 @@ def _counters(rows: list[dict], results: dict[str, dict]) -> list[str]:
     out.append("triage queue (step 10 priority)")
     for priority, label in (
         (1, "unclear + pairing_not_stated  (may hide a real match — read first)"),
-        (2, "yes with paper_confidence < 0.6"),
-        (3, "unclear + degraded_text       (route to re-fetch, not to reading)"),
-        (4, "no but any_assay=yes          (pairing filter fired — sample it)"),
-        (5, "consistency or evidence flags"),
+        (2, "not yes + a suppressed candidate would have paired yes  (v0.0.10)"),
+        (3, "yes with paper_confidence < 0.6"),
+        (4, "unclear + degraded_text       (route to re-fetch, not to reading)"),
+        (5, "no but any_assay=yes          (pairing filter fired — sample it)"),
+        (6, "consistency or evidence flags"),
         (9, "everything else"),
     ):
         bucket = [r for r in ok if r["triage_priority"] == priority]
