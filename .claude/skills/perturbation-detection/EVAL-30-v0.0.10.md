@@ -66,8 +66,9 @@ material, so `yes` is the correct answer. Where discrimination is possible the
 column delivers it — `reporter_or_marker` 1/3 yes, `incidental_clinical_therapy`
 2/5 yes.
 
-**Two suppressions are wrong, and they are the only two determination changes in
-the run.**
+**Two suppressions were flagged as wrong, and they are the only two determination
+changes in the run. One has since been ruled correct by the curator** — see the
+ruling under case 2.
 
 1. `10.1038/s41467-025-65049-8` — `incidental_clinical_therapy`, v0.0.8 `yes` ->
    v0.0.10 `no`. Structural twin of `10.7554/elife.104978.2`, the case guard 5 was
@@ -85,13 +86,38 @@ the run.**
    the sequenced set." The paper says the opposite: LinPOS organoids are
    maintained in self-renewing medium, alveolar organoids are LinPOS after 7 days
    in AT2 differentiation medium, and the UMAP is "single-cell RNA sequencing
-   profile from LinPOS and alveolar organoids". The cocktail was applied to one
-   sequenced arm and withheld from the other, so v0.0.9 rule 4's own precondition
-   ("given uniformly to every sample") does not hold.
+   profile from LinPOS and alveolar organoids". Relative to the self-renewing
+   medium the comparator arm stayed in, the AT2 medium adds dexamethasone, cAMP,
+   IBMX and DAPT, withdraws EGF, Noggin, FGF10 and FGF7, and raises CHIR99021
+   from 3 µM. So v0.0.9 rule 4's own precondition ("given uniformly to every
+   sample") does not hold.
+
+   **CURATOR RULING, 2026-08-28: `no` is correct.** Differentiating an organoid to
+   a new target cell type is not a perturbation — "different target cell type, not
+   perturbation. I don't really care what has been applied to get to the final
+   diff cell type." The determination stands; what does not stand is the recorded
+   reason, which asserts both sequenced arms "received the same standard
+   differentiation cocktail with no withheld/varied-factor comparator arm within
+   the sequenced set." That is contradicted by the Methods, and a rule that fires
+   on a misreading will fire the same way where the misreading points the other
+   direction.
+
+   The ruling is also broader than rule 4 as written: rule 4 conditions the
+   exclusion on uniformity, and the ruling drops that condition. The
+   disambiguating question becomes v0.0.7-shaped — is the manipulation defining
+   what the cells become, or changing what already-defined cells do? Rewording is
+   NOT done here: dropping a precondition only widens an exclusion, so it can only
+   move papers toward `no`, the lossy direction for a recall-biased task. Blast
+   radius measured on this set is zero (the other three `derivation_formulation`
+   papers were uniform anyway); beyond these 30 it is unmeasured.
 
 The other three P2 papers are correct suppressions, and all three were already
 `no` under v0.0.8 — there the field only made a silent call visible, which is
 what it is for. Every settled-toggle suppression (12 papers) reads correctly.
+
+**Net after the ruling: 37 of 38 entries correct.** One over-suppression survives
+(`s41467-025-65049-8`), and it is the only determination in the run that is still
+disputed. The curator has the T-ALL paper for review.
 
 ## Tooling notes
 
@@ -110,5 +136,7 @@ what it is for. Every settled-toggle suppression (12 papers) reads correctly.
 
 ## No prompt change proposed here
 
-Both wrong suppressions sit inside rules whose criteria are the curator's call.
-Reported as evidence, not acted on.
+The surviving disputed suppression sits inside a rule whose criteria are the
+curator's call. Reported as evidence, not acted on. The 2026-08-28 ruling on
+derivation_formulation is recorded above but deliberately not written into
+prompt.md — it widens an exclusion, and its effect outside these 30 is unmeasured.
