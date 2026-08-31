@@ -30,6 +30,16 @@ run_one() {
   local raw_file="$work/raw/$doi.json"
   local log="$work/logs/$doi.log"
 
+  # An expired session fails every remaining paper identically, and each failure
+  # still costs a process spawn and a round trip. Observed in practice: a 22-paper
+  # run x2 burned ~60 minutes to produce 44 copies of the same 73-byte auth error.
+  # Once one paper has proved the session is dead, the rest abort in milliseconds.
+  # A sentinel file rather than killing xargs: the remaining invocations are
+  # already queued, and a fast no-op is simpler than tearing down the pipeline.
+  if [ -f "$work/.auth-failed" ]; then
+    echo "ABORT $doi (session died earlier this run; re-authenticate and re-run)"
+    return 1
+  fi
   if [ -s "$raw_file" ]; then
     echo "SKIP  $doi (already has a result)"
     return 0
@@ -64,11 +74,22 @@ Reply with only the word DONE when the file is written."
       return 1
     fi
   else
-    echo "FAIL  $doi (claude exited non-zero; see $log)"
+    if is_auth_failure "$log"; then
+      : > "$work/.auth-failed"
+      echo "FAIL  $doi (SESSION EXPIRED -- aborting the rest; see $log)"
+    else
+      echo "FAIL  $doi (claude exited non-zero; see $log)"
+    fi
     return 1
   fi
 }
-export -f run_one
+
+# Shared by the preflight and the per-paper check, so the two cannot disagree
+# about what "the session is dead" looks like.
+is_auth_failure() {
+  grep -qiE 'failed to authenticate|oauth session expired|not logged in|invalid api key|authentication_error' "$1" 2>/dev/null
+}
+export -f run_one is_auth_failure
 
 # "Pending" means the same thing here as in pe.pending: a raw file existing
 # and non-empty is NOT enough -- it must parse and carry every required field.
@@ -97,6 +118,33 @@ if [ -z "$DOIS" ]; then
 fi
 
 COUNT=$(printf '%s\n' "$DOIS" | wc -l | tr -d ' ')
+
+# Preflight. One trivial call before committing to hours of work, because the
+# alternative is finding out per-paper: `claude -p` reports the failure honestly,
+# but only after every paper has spawned and timed out. Runs only when there is
+# work to do, so a fully-cached re-run stays free. PERTURBATION_SKIP_PREFLIGHT=1
+# bypasses it.
+rm -f "$WORK/.auth-failed"          # a previous run's verdict is not this run's
+if [ -z "${PERTURBATION_SKIP_PREFLIGHT:-}" ]; then
+  if ! command -v claude >/dev/null 2>&1; then
+    echo "PREFLIGHT FAILED: no 'claude' on PATH -- stage 2 needs the Claude Code CLI." >&2
+    exit 2
+  fi
+  probe="$WORK/.preflight.log"
+  claude -p 'Reply with only: AUTHOK' --output-format text >"$probe" 2>&1
+  if ! grep -q 'AUTHOK' "$probe"; then
+    echo "PREFLIGHT FAILED -- not running $COUNT paper(s)." >&2
+    echo "  claude -p said: $(head -1 "$probe")" >&2
+    if is_auth_failure "$probe"; then
+      echo "  The logged-in session is dead. Re-authenticate in an interactive" >&2
+      echo "  terminal ('claude', then /login) and re-run this script -- it is" >&2
+      echo "  resumable and will pick up only what is still missing." >&2
+    fi
+    exit 3
+  fi
+  rm -f "$probe"
+fi
+
 echo "running $COUNT paper(s), $JOBS at a time"
 echo
 printf '%s\n' "$DOIS" | xargs -P "$JOBS" -I{} bash -c 'run_one "$@"' _ {} "$WORK"
