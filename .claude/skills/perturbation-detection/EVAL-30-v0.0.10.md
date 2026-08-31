@@ -66,18 +66,35 @@ material, so `yes` is the correct answer. Where discrimination is possible the
 column delivers it — `reporter_or_marker` 1/3 yes, `incidental_clinical_therapy`
 2/5 yes.
 
-**Two suppressions were flagged as wrong, and they are the only two determination
-changes in the run. One has since been ruled correct by the curator** — see the
-ruling under case 2.
+**Two suppressions were flagged as wrong during review. The curator ruled on both,
+and both are correct.** They are the only two determination changes in the run, so
+v0.0.10 is 30/30 on determinations against curator judgment — and both moves off
+v0.0.8 are v0.0.10 *correcting* v0.0.8, not breaking it.
 
 1. `10.1038/s41467-025-65049-8` — `incidental_clinical_therapy`, v0.0.8 `yes` ->
-   v0.0.10 `no`. Structural twin of `10.7554/elife.104978.2`, the case guard 5 was
-   written for. 8 children have **paired day 0 and day 28 scRNA-seq samples**
-   spanning induction chemotherapy; the paper compares "all refractory day 28
-   blasts against all diagnostic blasts". That is an applied therapy with an
-   explicit per-sample tie, both arms sequenced. The model's stated grounds — no
-   named drug, and the axis is response status — do not meet v0.0.9 rule 1, which
-   asks for a tie to the profiled material, not for a named agent.
+   v0.0.10 `no`. 8 children have paired day 0 and day 28 scRNA-seq samples
+   spanning induction chemotherapy, which satisfies v0.0.9 rule 1's per-sample-tie
+   test, and that is why review flagged it.
+
+   **CURATOR RULING, 2026-08-28: `no` is correct.** Chemotherapy for T-ALL is not
+   a perturbation here. "In reality all the kids have been treated, even though as
+   reference point they indeed use day 0... the main point of the paper is to
+   identify mechanism that has not been engaged, despite the treatment — the focus
+   of the study was not to learn how chemo or other treatment makes the cells
+   behave, but to identify the outlier." The paper supports this: the stated axis
+   is responder vs non-responder across "58 children (84 samples) who did, or did
+   not respond to initial treatment"; the payload is a **day-0** biomarker
+   ("at diagnosis, ZBTB16 expression may delineate a blast population that resists
+   induction treatment"), motivated by refractoriness not being predictable at
+   diagnosis; and P058's ZBTB16+ population goes 0.67% at day 0 to 97.6% at day
+   28, which the authors read as selection of a pre-existing clone rather than
+   chemo changing cells. Day-28 samples are 8 of 84 and are confirmatory.
+
+   **The model's recorded reason was sound** — "the paper's own analysis axis is
+   response status (responsive vs induction failure) rather than a named applied
+   therapy" is the curator's own argument, reached independently. Review rejected
+   it by applying rule 1's literal per-sample-tie test; the model was reasoning to
+   the curator's actual line instead, and was right to.
 
 2. `10.1016/j.stem.2022.11.013` — `derivation_formulation`, v0.0.8 `yes` ->
    v0.0.10 `no`. The suppression asserts "both the LinPOS and alveolar-
@@ -115,9 +132,28 @@ The other three P2 papers are correct suppressions, and all three were already
 `no` under v0.0.8 — there the field only made a silent call visible, which is
 what it is for. Every settled-toggle suppression (12 papers) reads correctly.
 
-**Net after the ruling: 37 of 38 entries correct.** One over-suppression survives
-(`s41467-025-65049-8`), and it is the only determination in the run that is still
-disputed. The curator has the T-ALL paper for review.
+**Net after both rulings: 30/30 determinations correct, 38/38 suppressions
+correct.** No over-suppression survives. 37 of 38 rationales are sound; the one
+exception is the AT2 medium claim in case 2, which reaches the right answer on a
+false premise.
+
+**The finding that outlived the two disputes is about the rule text, not the
+model.** In both cases the written operational test pointed the opposite way from
+the curator's actual line — rule 1 asks for a per-sample tie, and day 0/day 28
+supplies one; rule 4 asks for uniformity, and the AT2 cocktail was not uniform.
+The model landed on the curator's answer both times anyway, once by reasoning
+past the rule text (case 1) and once by misstating the paper to satisfy it
+(case 2). Both rulings reduce to a single question that neither rule asks:
+
+> Is the applied thing the study's **variable**, or its **setting**?
+
+Differentiation is setting because it defines what the cells are. Induction
+chemotherapy here is setting because it is the backdrop against which an
+intrinsic property is measured. That question is v0.0.7-shaped (cf. "what is the
+temperature FOR") and would replace both preconditions. It is also a softer test
+than either — intent is less reproducible than structure, and arbitration
+instability is this pipeline's documented failure mode — so it is proposed, not
+written.
 
 ## Tooling notes
 
@@ -136,7 +172,18 @@ disputed. The curator has the T-ALL paper for review.
 
 ## No prompt change proposed here
 
-The surviving disputed suppression sits inside a rule whose criteria are the
-curator's call. Reported as evidence, not acted on. The 2026-08-28 ruling on
-derivation_formulation is recorded above but deliberately not written into
-prompt.md — it widens an exclusion, and its effect outside these 30 is unmeasured.
+Both disputed calls are now settled as correct, so nothing in the output needs
+fixing and nothing in `prompt.md` changes here. What the two rulings expose is a
+rule-text/curator-line mismatch in `incidental_clinical_therapy` (rule 1) and
+`derivation_formulation` (rule 4), documented above as the variable-vs-setting
+question.
+
+Bringing the text into line is a documentation-alignment change, not a bug fix:
+determinations are already right on all 30. It is worth doing so a future reader
+or run is not relying on the model to out-reason the prompt, but it should not be
+written blind. Both edits widen an exclusion, which can only move papers toward
+`no` — the lossy direction for a recall-biased task — and the replacement test is
+softer than the ones it replaces. Sequence: draft, then a determination-only
+acceptance run against the preserved v0.0.10 baseline, twice, on a set that
+includes these two papers plus papers that must NOT move (`s41467-026-69587-7`,
+MC903/dupilumab; `celrep.2019.03.099`, App knock-in).
