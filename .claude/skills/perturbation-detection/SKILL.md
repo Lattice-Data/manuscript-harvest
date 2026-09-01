@@ -219,3 +219,15 @@ handling).
 When re-scoring an existing run under a new prompt version, use `pe.compare`.
 It classifies each changed paper by *which determination input moved*, so
 "unexplained" means a genuine logic bug rather than a matter of opinion.
+
+**Keep a two-run baseline, and pass it as `--baseline2`.** The prompt disagrees
+with itself: at v0.0.12 it returned different determinations on 3 of 50 papers
+across two runs of byte-identical input. Against a single-run baseline a
+one-paper movement is *unattributable* — not "no effect", but "cannot tell" — and
+that is what happened to three of the four movements in the v0.0.12 acceptance
+test. `baseline-v0012-50b/` holds both runs plus `noise-floor.json`;
+`pe.compare --baseline2` reports "changed BEYOND the noise floor" and labels the
+rest `WITHIN-NOISE`. It refuses a version mismatch between the two baseline runs
+and exits 2, because comparing versions there reports a real effect as variance —
+the inversion the flag exists to prevent, and a mistake its author made on first
+use.

@@ -29,6 +29,11 @@ reading as logic bugs:
     `suppressed_candidates` instead of `perturbations`. The class only fires when
     a baseline perturbation can actually be matched to a new suppressed
     candidate; an unmatched suppression explains nothing.
+  WITHIN-NOISE — the paper also disagrees with ITSELF across two runs of the
+    baseline prompt over byte-identical input, so this "change" is not evidence of
+    one. Needs --baseline2. Added after the v0.0.12 acceptance test, where 3 of 4
+    apparent movements turned out to be run-to-run variance and the single-run
+    baseline could not say so: attribution was impossible, not negative.
 """
 
 from __future__ import annotations
@@ -57,6 +62,7 @@ CLASS_LABELS = {
     "PERT-SET-CHANGED": "full re-extraction produced a different perturbation set than the baseline's reused v0.0.2 list",
     "ASSAY-CHANGED": "has_single_cell_assay differs between the two runs",
     "ANY-ASSAY-CHANGED": "perturbation_present_any_assay differs between the two runs",
+    "WITHIN-NOISE": "the baseline disagrees with itself on this paper across two runs — not evidence of a change",
     "UNEXPLAINED": "*** outside every expected class — investigate before the corpus run",
 }
 
@@ -203,6 +209,27 @@ def _looks_like_same_thing(a: set[str], b: set[str]) -> bool:
     return any(len(word) >= 8 for word in shared)
 
 
+def noise_floor(pairs: list[tuple[str, dict, dict]]) -> tuple[set[str], str | None]:
+    """Papers two runs of the SAME prompt disagree about, plus a refusal reason.
+
+    `pairs` is [(doi, run_a, run_b)]. Returns (unstable dois, error) -- error is a
+    message when the two runs are not the same prompt version, in which case the
+    caller must refuse rather than report a version diff as variance. That
+    inversion would launder a real effect into "nothing moved", which is the
+    opposite of what the floor is for, and it is checked because the flag's author
+    made exactly that mistake on first use.
+    """
+    if not pairs:
+        return set(), "no overlapping papers"
+    va = {str((a.get("validation") or {}).get("prompt_version")) for _, a, _ in pairs}
+    vb = {str((b.get("validation") or {}).get("prompt_version")) for _, _, b in pairs}
+    if va != vb:
+        return set(), (f"second run is prompt v{'/'.join(sorted(vb))} but the first is "
+                       f"v{'/'.join(sorted(va))}; a noise floor needs the same prompt")
+    return ({doi for doi, a, b in pairs
+             if a.get("perturbation_present") != b.get("perturbation_present")}, None)
+
+
 def _suppression_matches(new: dict, old: dict) -> list[tuple[str, str, str]]:
     """Baseline perturbations that this run records as suppressed candidates.
 
@@ -249,6 +276,10 @@ def main() -> int:
     parser.add_argument("--work", default=str(work_default()))
     parser.add_argument("--baseline", required=True,
                         help="directory with validated/<doi>.json from the earlier run")
+    parser.add_argument("--baseline2", default=None,
+                        help="second run of the SAME baseline prompt. Papers where the "
+                             "two baseline runs disagree are the noise floor, and a "
+                             "change confined to them is not evidence of an effect.")
     parser.add_argument("--out", default=str(output_default("v004_vs_v005.txt")))
     args = parser.parse_args()
 
@@ -267,6 +298,32 @@ def main() -> int:
             continue
         rows.append((doi, json.loads(old_file.read_text()),
                      json.loads(new_file.read_text()), entry))
+
+    # Papers the baseline cannot even agree with itself about. Anything confined
+    # to this set is variance, not an effect -- the distinction the v0.0.12
+    # acceptance test needed and a single-run baseline structurally cannot make.
+    noise: set[str] = set()
+    noise_available = False
+    if args.baseline2:
+        b2 = Path(args.baseline2)
+        pairs = []
+        for doi, old, _, _ in rows:
+            f2 = b2 / "validated" / f"{doi}.json"
+            if not f2.exists():
+                f2 = b2 / "r2" / "validated" / f"{doi}.json"
+            if f2.exists():
+                pairs.append((doi, old, json.loads(f2.read_text())))
+        # A noise floor is the disagreement between two runs of the SAME prompt.
+        # Handing this flag a different VERSION computes a version diff and calls
+        # it variance, which would launder a real effect into "nothing moved" --
+        # the exact inversion this flag exists to prevent. So it is checked, not
+        # documented. (Caught by making this mistake on first use.)
+        noise, err = noise_floor(pairs)
+        if err:
+            print(f"--baseline2: {err}. Comparing versions here would report a real "
+                  f"effect as variance. Refusing.", file=sys.stderr)
+            return 2
+        noise_available = True
 
     matrix = Counter((old.get("perturbation_present"), new.get("perturbation_present"))
                      for _, old, new, _ in rows)
@@ -303,14 +360,32 @@ def main() -> int:
     lines.append("")
     lines.append(f"unchanged: {len(rows) - len(changed)}/{len(rows)}    "
                  f"changed: {len(changed)}")
+    if noise_available:
+        in_noise = [doi for doi, _, _, _ in changed if doi in noise]
+        real = len(changed) - len(in_noise)
+        lines.append(f"noise floor: the baseline disagrees with itself on "
+                     f"{len(noise)}/{len(rows)} paper(s)")
+        lines.append(f"changed BEYOND the noise floor: {real}"
+                     + (f"   (within noise: {', '.join(in_noise)})" if in_noise else ""))
+        if not real and changed:
+            lines.append("  -> every apparent change is run-to-run variance. Nothing "
+                         "is shown to have moved.")
 
-    class_counts = Counter(c for _, old, new, _ in changed for c in classify(new, old))
+    if not noise_available and changed:
+        lines.append("noise floor: NOT AVAILABLE -- the baseline has only one run, so a "
+                     "single-paper movement cannot be told from run-to-run variance. "
+                     "Pass --baseline2 with a second run of the same prompt.")
+
+    class_counts = Counter(c for doi, old, new, _ in changed
+                           for c in (["WITHIN-NOISE"] if doi in noise
+                                     else classify(new, old)))
     lines.append("")
     lines.append("change classes (a paper can fall in more than one)")
     for code, label in CLASS_LABELS.items():
         if class_counts.get(code):
             lines.append(f"  {code:<15} {class_counts[code]:>3}   {label}")
-    unexplained = [doi for doi, old, new, _ in changed if classify(new, old) == ["UNEXPLAINED"]]
+    unexplained = [doi for doi, old, new, _ in changed
+                   if doi not in noise and classify(new, old) == ["UNEXPLAINED"]]
     if unexplained:
         lines.append("")
         lines.append(f"  !! {len(unexplained)} UNEXPLAINED change(s): {', '.join(unexplained)}")

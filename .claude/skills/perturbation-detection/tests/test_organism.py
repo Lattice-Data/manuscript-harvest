@@ -236,3 +236,38 @@ def test_normalise_and_is_human():
     assert is_human("Human") and is_human("homo sapiens") and is_human("9606")
     assert not is_human("mouse")
     assert not is_human(None), "unknown must not read as human"
+
+
+# --------------------------------------------------------------------------
+# pe.compare's noise floor (added alongside v0.0.12).
+# --------------------------------------------------------------------------
+
+def test_noise_floor_finds_self_disagreement():
+    from pe.compare import noise_floor
+    def r(call, ver="0.0.12"):
+        return {"perturbation_present": call, "validation": {"prompt_version": ver}}
+    pairs = [("stable", r("yes"), r("yes")),
+             ("wobbly", r("yes"), r("no")),
+             ("also_stable", r("no"), r("no"))]
+    unstable, err = noise_floor(pairs)
+    assert err is None
+    assert unstable == {"wobbly"}
+
+
+def test_noise_floor_refuses_a_version_mismatch():
+    """Handing the flag a different VERSION would report a real effect as
+    variance -- the exact inversion the floor exists to prevent."""
+    from pe.compare import noise_floor
+    pairs = [("p", {"perturbation_present": "yes",
+                    "validation": {"prompt_version": "0.0.11"}},
+                   {"perturbation_present": "no",
+                    "validation": {"prompt_version": "0.0.12"}})]
+    unstable, err = noise_floor(pairs)
+    assert unstable == set()
+    assert err and "same prompt" in err
+
+
+def test_noise_floor_refuses_an_empty_overlap():
+    from pe.compare import noise_floor
+    unstable, err = noise_floor([])
+    assert unstable == set() and err
