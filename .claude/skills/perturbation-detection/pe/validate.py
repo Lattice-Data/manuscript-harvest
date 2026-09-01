@@ -68,6 +68,30 @@ RULES_UNDER_REVIEW = (
     "reporter_or_marker", "incidental_clinical_therapy",
     "unintended_condition", "derivation_formulation",
 )
+# prompt.md v0.0.12: `organism` / `paired_organism` are OPEN values -- a closed set
+# would have to enumerate every model organism in advance, and killifish is the
+# case that breaks such a list. So the harness normalises for counting only and
+# never rejects an unrecognised species. `None` is legitimate: an unstated
+# organism is unstated, and the prompt forbids guessing it.
+HUMAN_SYNONYMS = frozenset({
+    "human", "humans", "homo sapiens", "h. sapiens", "hsapiens", "patient",
+    "human (patient)", "9606",
+})
+
+
+def normalise_organism(value) -> str | None:
+    """Lowercased, stripped organism string; None for absent/blank/non-string."""
+    if not isinstance(value, str):
+        return None
+    cleaned = " ".join(value.strip().lower().split())
+    return cleaned or None
+
+
+def is_human(value) -> bool:
+    """Whether a recorded organism denotes human. Unknown is NOT human."""
+    return normalise_organism(value) in HUMAN_SYNONYMS
+
+
 TRISTATE = ("yes", "no", "unclear")
 PROCESSING_STATUS = ("ok", "partial", "failed")
 TEXT_COMPLETENESS = ("full", "truncated", "methods_missing", "unknown")
@@ -402,6 +426,13 @@ def validate_result(result: dict, sources_text: dict[str, str], threshold: float
         if pert.get("category") not in CATEGORIES:
             issues.append(f"perturbations[{i}].category={pert.get('category')!r} off-schema")
 
+        # v0.0.12. Type only; the value set is open. Never rejected for being an
+        # unusual species, never inferred when absent.
+        if not (pert.get("paired_organism") is None
+                or isinstance(pert.get("paired_organism"), str)):
+            issues.append(f"perturbations[{i}].paired_organism="
+                          f"{pert.get('paired_organism')!r} must be a string or null")
+
         paired = pert.get("single_cell_paired")
         if paired not in TRISTATE:
             issues.append(
@@ -517,6 +548,11 @@ def validate_result(result: dict, sources_text: dict[str, str], threshold: float
         if sample.get("is_single_cell_assay") not in TRISTATE:
             issues.append(f"samples[{j}].is_single_cell_assay="
                           f"{sample.get('is_single_cell_assay')!r} not in yes/no/unclear")
+        # v0.0.12. Type only -- the value set is open by design, so an
+        # unrecognised species is not an error. A non-string, non-null value is.
+        if not (sample.get("organism") is None or isinstance(sample.get("organism"), str)):
+            issues.append(f"samples[{j}].organism={sample.get('organism')!r} must be a "
+                          f"string or null")
         # Reindex refs onto the pruned array so they never dangle.
         refs = sample.get("perturbation_refs") or []
         remapped = []
@@ -606,6 +642,26 @@ def validate_result(result: dict, sources_text: dict[str, str], threshold: float
             and s.get("rule") in RULES_UNDER_REVIEW for s in suppressed),
         "suppressed_quotes_checked": s_checked,
         "suppressed_quotes_failed": s_failed,
+        # v0.0.12: WHOSE sample the `yes` pairings refer to. Descriptive only --
+        # nothing here feeds stage_a/stage_b, and test_organism.py asserts that
+        # over every Stage A input combination. The curation scope is applied
+        # downstream by a person, because the corpus is human-primarily but not
+        # human-only and the paper often cannot say which species was deposited.
+        "paired_organisms": sorted({
+            o for o in (normalise_organism(p.get("paired_organism"))
+                        for p in kept if p.get("single_cell_paired") == "yes") if o}),
+        "n_paired_yes_human": sum(
+            1 for p in kept
+            if p.get("single_cell_paired") == "yes" and is_human(p.get("paired_organism"))),
+        # true / false / None: None means no `yes` pairing names an organism at
+        # all, which is different from naming a non-human one. Kept tri-state so
+        # an unknown never reads as a confident "not human".
+        "paired_organism_human": (
+            None if not any(p.get("single_cell_paired") == "yes"
+                            and normalise_organism(p.get("paired_organism"))
+                            for p in kept)
+            else any(p.get("single_cell_paired") == "yes"
+                     and is_human(p.get("paired_organism")) for p in kept)),
         "paired_yes": paired_values.count("yes"),
         "paired_no": paired_values.count("no"),
         "paired_unclear": paired_values.count("unclear"),

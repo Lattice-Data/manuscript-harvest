@@ -42,6 +42,8 @@ COLUMNS = [
     "n_samples_sc_assay",
     "n_suppressed", "suppressed_rules", "suppressed_would_pair_yes",
     "suppressed_would_pair_yes_under_review",
+    # v0.0.12: whose sample the `yes` pairings refer to. Reported, never acted on.
+    "paired_organisms", "paired_organism_human", "n_paired_yes_human",
     "quotes_checked", "quotes_failed", "quotes_wrong_source",
     "perturbations_dropped", "max_pert_confidence",
     "sources", "perturbation_agents", "n_issues", "chars", "needs_review",
@@ -79,6 +81,10 @@ def triage_priority(result: dict) -> int:
     **The ladder renumbered at v0.0.10**: priority 2 is new, and the old 2-5
     shifted to 3-6. prompt.md step 10 carries the same list, and the two must be
     changed together -- a mismatch would silently mis-sort the curator's queue.
+
+    **v0.0.12 did NOT renumber.** Its tier took the unused slot 7, so a priority
+    column from v0.0.10 or v0.0.11 stays comparable to a v0.0.12 one for tiers
+    1-6.
     """
     validation = result.get("validation") or {}
     present = result.get("perturbation_present")
@@ -106,6 +112,14 @@ def triage_priority(result: dict) -> int:
         return 5
     if validation.get("consistency_flags") or validation.get("evidence_flags"):
         return 6
+    # v0.0.12. A `yes` carried entirely by a non-human model. Tiers 1-6 flag
+    # uncertainty or defect; this one flags a determination that is probably
+    # CORRECT under these rules and may still be out of curation scope -- a
+    # different kind of thing, so it sits below them rather than near the top.
+    # It takes the previously-unused slot 7 precisely so 1-6 do not renumber;
+    # the v0.0.10 renumber is a documented trap and is not repeated.
+    if present == "yes" and validation.get("paired_organism_human") is False:
+        return 7
     return 9
 
 
@@ -159,6 +173,12 @@ def row_for(doi: str, result: dict, entry: dict) -> dict:
         "suppressed_would_pair_yes": validation.get("suppressed_would_pair_yes", ""),
         "suppressed_would_pair_yes_under_review": validation.get(
             "suppressed_would_pair_yes_under_review", ""),
+        "paired_organisms": "|".join(validation.get("paired_organisms") or []),
+        # "" rather than False when unknown: an organism nobody stated must not
+        # read as a confident "not human".
+        "paired_organism_human": ("" if validation.get("paired_organism_human") is None
+                                  else validation.get("paired_organism_human")),
+        "n_paired_yes_human": validation.get("n_paired_yes_human", ""),
         "quotes_checked": validation.get("quotes_checked", ""),
         "quotes_failed": validation.get("quotes_failed", ""),
         "quotes_wrong_source": validation.get("quotes_wrong_source", ""),
@@ -253,6 +273,24 @@ def _counters(rows: list[dict], results: dict[str, dict]) -> list[str]:
                f"{len(review)}"
                + (f" -> {', '.join(r['doi'] for r in review)}" if review else ""))
 
+    # v0.0.12: the counter the curator otherwise runs a regex for. "yes carried
+    # entirely by a non-human model" is the largest measured false-positive class
+    # (5 of 15 positives on the 50-paper v0.0.11 run), and it is a SCOPE question,
+    # so it is reported rather than acted on.
+    by_org = Counter(o for r in ok
+                     for o in (r["paired_organisms"] or "").split("|") if o)
+    out.append(f"  {'organisms of yes-paired perturbations':<52} "
+               + (", ".join(f"{k}={v}" for k, v in sorted(by_org.items())) or "none"))
+    nonhuman = [r for r in ok
+                if r["perturbation_present"] == "yes" and r["paired_organism_human"] is False]
+    unknown = [r for r in ok
+               if r["perturbation_present"] == "yes" and r["paired_organism_human"] == ""]
+    out.append(f"  {'yes with NO human paired organism (triage P7)':<52} "
+               f"{len(nonhuman)}/{sum(1 for r in ok if r['perturbation_present'] == 'yes')}"
+               + (f" -> {', '.join(r['doi'] for r in nonhuman)}" if nonhuman else ""))
+    out.append(f"  {'  ...and yes with organism unstated (not a P7)':<52} {len(unknown)}"
+               + (f" -> {', '.join(r['doi'] for r in unknown)}" if unknown else ""))
+
     q_checked = sum(int(r["quotes_checked"] or 0) for r in ok)
     q_failed = sum(int(r["quotes_failed"] or 0) for r in ok)
     q_wrong = sum(int(r["quotes_wrong_source"] or 0) for r in ok)
@@ -271,6 +309,7 @@ def _counters(rows: list[dict], results: dict[str, dict]) -> list[str]:
         (4, "unclear + degraded_text       (route to re-fetch, not to reading)"),
         (5, "no but any_assay=yes          (pairing filter fired — sample it)"),
         (6, "consistency or evidence flags"),
+        (7, "yes carried only by a non-human model — scope call  (v0.0.12)"),
         (9, "everything else"),
     ):
         bucket = [r for r in ok if r["triage_priority"] == priority]
