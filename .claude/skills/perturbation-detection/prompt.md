@@ -1,8 +1,12 @@
 # Perturbation Detection for Paper Curation — Extraction Prompt + Schema
 
-Version: 0.0.11
+Version: 0.0.12
 
 ## Changelog
+
+- **v0.0.12: the record says WHOSE sample was perturbed. `schema_version` 0.0.6 -> 0.0.7, two new fields, and NO determination-logic change.** Stage A, Stage B and the truth table are untouched, so `pe.validate`'s mirror and `tests/test_determination_v005.py` remain valid unchanged. Curator rulings of 2026-08-31 (`CURATOR-RULINGS.md` 4 and 5). `perturbation_present` asked whether a perturbed sample was profiled by a qualifying assay; it never asked **whose** sample. So a paper could be `yes` on the strength of an animal model while the human data — the material that actually reaches the curated deposit — was purely observational. Measured on the 50-paper v0.0.11 run: **5 of 15 positives rest on an animal-only pairing, ~10% of a random sample**, the largest single source of false positives found in any run. Two were ruled `no`: `10.1038/s41586-022-05060-x` (`yes` from surgical LAD ligation in mice; the human snRNA-seq/snATAC-seq/Visium cohort is naturally occurring infarction) and `10.1126/science.aay3224` (`yes` from a Rag1 knockout **mouse**; the paper is a human thymus atlas). Both had been independently flagged in review as the least trustworthy calls in the set without the reviewer identifying the common cause — one gap, not two judgments. New: `paired_organism` on each perturbation, `organism` on each sample group. Triage gains tier **7** in the previously-unused slot, so **tiers 1-6 do not renumber**.
+  **The field is recorded and deliberately NOT acted on**, per the curator: the corpus is "human primarily, but... we SHOULD NOT limit to human only. The paper could be mice, or zebrafish or killifish, or some other specie", and the instruction was to add the column "but not call on it — leaving it to the human interpreter." Two reasons that is the right place for the line rather than mere caution. (i) **A non-human dataset can be a valid curation target**, and hard-coding human into the determination would drop it silently — the worst direction for a task that is deliberately recall-biased. (ii) **The paper usually cannot say which species was deposited.** `s41586-022-05060-x` contains both human and mouse single-cell data and nothing in the text says which reached CellxGene; that is knowledge about the deposit, not the publication. Recording is answerable, filtering is not. The value is an OPEN string, unlike `rule`, because a closed set would have to enumerate every model organism in advance and killifish is exactly the case that breaks such a list.
+  **Guards, written from the two previous field additions rather than discovered again.** Both `suppressed_candidates` (v0.0.10) and the v0.0.9 boundary rules moved determinations nobody intended, so: precedence is stated FIRST and says recording an organism must never shorten `perturbations`, never change a `single_cell_paired` value, and never change `perturbation_present` — a mouse perturbation paired to mouse scRNA-seq is still `"yes"` on both counts; `null` is declared legitimate, common, and **not to be guessed** from the journal, the authors, the cell-line name or the base rate; the per-perturbation scope is stated explicitly, because collapsing a human-plus-mouse paper to one organism is the specific failure the field exists to prevent; and the xenograft case is named (the organism of the PROFILED cells, so human cells in a mouse host are `"human"`). `pe.validate` additionally raises an issue if a species-only difference ever coincides with a determination change, and `tests/test_organism.py` asserts over every Stage A input combination that it cannot.
 
 - **v0.0.11: Two boundary rules whose written test pointed away from the curator's line, plus the precedence gap between them.** Curator rulings of 2026-08-28, taken after the 30-paper v0.0.10 evaluation (`EVAL-30-v0.0.10.md`). **No schema change and no determination-logic change** — Stage A, Stage B and the truth table are untouched, `schema_version` stays `0.0.6`, and `pe.validate`'s mirror plus `tests/test_determination_v005.py` remain valid unchanged. Nothing in `pe/` encodes these criteria, so the change is confined to this file. Two rules and one bug:
   1. **Directed differentiation is a target cell type, not a perturbation — the uniformity precondition is dropped.** v0.0.9 rule 4 excluded a derivation cocktail only when "given uniformly to every sample". On `10.1016/j.stem.2022.11.013` it was not uniform: LinPOS organoids sat in self-renewing medium while alveolar organoids got 7 days of AT2 differentiation medium (+ dexamethasone, cAMP, IBMX, DAPT; − EGF, Noggin, FGF10, FGF7; CHIR99021 raised from 3 µM), and **both arms were sequenced**. The precondition therefore failed and the rule should not have fired — yet the extraction reached the curator's answer anyway, by asserting in `why` that both arms "received the same standard differentiation cocktail", which the Methods contradict. Right answer, false premise. The curator's ruling is that the answer is right for a different reason: "different target cell type, not perturbation... I don't really care what has been applied to get to the final diff cell type." The test is now **what the manipulation is FOR** — a different target cell IDENTITY is the model; a named factor varied while identity is held fixed is a perturbation. The v0.0.6 carve-out is untouched, because it was always about a contrast in a *factor*, never in cell identity.
@@ -210,7 +214,45 @@ For EACH perturbation identified in Step 2, determine whether the sample(s) it w
 - **"no"** — the text indicates the perturbed sample was assayed by something other than a qualifying single-cell/nucleus method (bulk RNA-seq, qPCR, Western, flow, ELISA, functional/behavioral assay, histology), OR the single-cell/nucleus assay in the paper is explicitly performed on a different, unperturbed sample set.
 - **"unclear"** — a qualifying single-cell/nucleus assay exists in the paper and a perturbation exists in the paper, but the text does not make clear whether they were applied to the same sample/group (e.g., separate figures/sections that never state whether the scRNA-seq cohort included treated samples).
 
-Do this per perturbation, and per sample group in the "samples" array (add `assay` and `is_single_cell_assay` there too — see schema). Different perturbations in the same paper can have different pairings (e.g., a genetic knockout validated by scRNA-seq = paired; a separate pharmacologic rescue experiment in the same paper validated only by qPCR = not paired).
+Do this per perturbation, and per sample group in the "samples" array (add `assay` and `is_single_cell_assay` there too — see schema).
+
+### Organism of the paired material (schema 0.0.7, prompt v0.0.12)
+
+**Record the organism. Never call on it.** `paired_organism` on each perturbation
+and `organism` on each sample group are descriptive fields for a human
+interpreter. They are stated FIRST because the precedence matters more than the
+field: recording an organism **must not** remove a perturbation from
+`perturbations`, must not change any `single_cell_paired` value, and must not
+change `perturbation_present`. A mouse perturbation paired to mouse scRNA-seq is
+still `single_cell_paired: "yes"` and still makes the paper `perturbation_present:
+"yes"`. If filling these fields shortened your `perturbations` array or flipped a
+pairing, you have made an error, not a finer distinction. The curation scope is
+applied downstream, by a person, not here — the corpus is human-primarily but
+**not** human-only, and a mouse, zebrafish or killifish dataset can be a
+legitimate curation target.
+
+- **Use the paper's own word**, lowercased: `"human"`, `"mouse"`, `"rat"`,
+  `"zebrafish"`, `"killifish"`, `"macaque"`, `"pig"`. This is an OPEN value, not a
+  closed set — new model organisms appear faster than this prompt is revised, so
+  do not force an unusual species into a nearby bucket.
+- **`null` is a legitimate and common answer, and must not be guessed.** If the
+  text does not state the organism for that specific material, the value is
+  `null`. Do NOT infer it from the journal, the authors, the cell-line name, or
+  the fact that most papers are human. An unstated organism is unstated. Do not
+  write `"human"` because a study is clinical unless the text says so for the
+  material in question.
+- **One value per perturbation, not per paper.** A paper with human patient
+  scRNA-seq and a mouse model has TWO pairings with two different
+  `paired_organism` values, and both must be reported. Collapsing them to whichever
+  you noticed first is the specific failure this field exists to prevent.
+- **Cell lines take the organism of origin**, not of the lab: a human cell line
+  is `"human"`, a murine line is `"mouse"`. A human xenograft in a mouse host is
+  the organism of the PROFILED cells — human cells implanted into a mouse are
+  `"human"`; the mouse stroma sequenced alongside is `"mouse"`. Say which in
+  `reasoning` when the text makes this ambiguous.
+- No quote is required for this field. It is a descriptive attribute rather than a
+  claim about whether a perturbation exists, so it does not carry its own
+  `evidence_quote`. Reflect genuine uncertainty by using `null`, not by guessing. Different perturbations in the same paper can have different pairings (e.g., a genetic knockout validated by scRNA-seq = paired; a separate pharmacologic rescue experiment in the same paper validated only by qPCR = not paired).
 
 ## Evidence rules
 - Every perturbation you report MUST be supported by at least one VERBATIM quote copied exactly from the paper text. Do not paraphrase quotes. Do not invent text.
@@ -320,7 +362,7 @@ PAPER_TEXT:
 
 ```json
 {
-  "schema_version": "0.0.6",
+  "schema_version": "0.0.7",
   "paper_id": "string (echo of PAPER_ID)",
   "sources_seen": ["main", "supp1"],
   "processing_status": "ok | partial | failed",
@@ -345,6 +387,7 @@ PAPER_TEXT:
       ],
       "assay_applied": "assay used on this perturbation's sample(s), as stated in the paper, else empty string",
       "single_cell_paired": "yes | no | unclear",
+      "paired_organism": "organism of the material this pairing refers to, as the paper names it, or null if the text does not say",
       "assay_evidence": {"source_id": "main", "quote": "verbatim span tying this perturbation's sample to the assay"},
       "confidence": 0.0,
       "reasoning": "one sentence: why this is a perturbation and not routine processing/readout, AND why it is/isn't paired with a single-cell/nucleus assay"
@@ -353,6 +396,7 @@ PAPER_TEXT:
   "samples": [
     {
       "label": "group/condition label as named in the paper",
+      "organism": "organism of this sample group as the paper names it (e.g. \"human\", \"mouse\", \"zebrafish\", \"killifish\"), or null if the text does not say",
       "perturbed": "true | false | \"unclear\"",
       "perturbation_refs": [0],
       "assay": "assay used for this sample group, else empty string",
@@ -490,7 +534,7 @@ One JSONL line per paper: the model object, plus a `run` block.
     "run_id": "2026-08-19T10:00:00Z_cxg800",
     "model_id": "...",
     "prompt_version": "0.0.10",
-    "schema_version": "0.0.6",
+    "schema_version": "0.0.7",
     "assembled_text_sha256": "...",
     "input_tokens": 0,
     "perturbation_present_model": "yes",
@@ -510,10 +554,11 @@ Flatten to one row per paper for curator review, sorted by this priority:
 4. `perturbation_present = "unclear"` and `unresolved_reason = "degraded_text"` (route to re-fetch, not to reading).
 5. `perturbation_present = "no"` with `perturbation_present_any_assay = "yes"` (the v0.0.3 filter doing its job; sample it, do not read all of it).
 6. Any row with a non-empty `consistency_flags` or `evidence_flags`.
+7. `perturbation_present = "yes"` and no `single_cell_paired = "yes"` perturbation has `paired_organism` naming the organism curation is scoped to — in practice, **`yes` carried entirely by a non-human model** (**new in v0.0.12**). Two of five such papers in the 50-paper v0.0.11 run were ruled `no` by the curator on exactly this basis (`CURATOR-RULINGS.md` 4 and 5): a mouse perturbation paired to mouse scRNA-seq while the human cohort was observational. It sits at 7 rather than near the top for a reason of KIND, not convenience: tiers 1-6 flag uncertainty or defect, whereas this tier flags a determination that is probably **correct under these rules** and may still be out of curation scope. It is a scope filter, and the scope belongs to a person. **Placing it in the previously-unused slot 7 also means tiers 1-6 do NOT renumber** — the v0.0.10 renumber is a documented trap and is not repeated.
 
-**The ladder renumbered at v0.0.10.** Old 2-5 became 3-6 to make room for the suppression tier. Do not compare a priority column across versions without checking which prompt version produced it; `pe.summarize.triage_priority` and this list must be changed together, and priority 0 remains reserved for rows that failed or are still pending.
+**The ladder renumbered at v0.0.10.** Old 2-5 became 3-6 to make room for the suppression tier. **v0.0.12 did NOT renumber**: its new tier took the unused slot 7. Do not compare a priority column across versions without checking which prompt version produced it; `pe.summarize.triage_priority` and this list must be changed together, and priority 0 remains reserved for rows that failed or are still pending.
 
-Columns: `paper_id`, `doi`, `perturbation_present`, `perturbation_present_any_assay`, `has_single_cell_assay`, `paper_confidence`, `unresolved_reason`, `n_perturbations`, `processing_status`, `text_completeness`, `consistency_flags`, `evidence_flags`, `perturbation_agents` (semicolon-joined), `single_cell_assay_types`, and — new in v0.0.10 — `n_suppressed`, `suppressed_rules` (`|`-joined set of the `rule` values used), `suppressed_would_pair_yes` (boolean).
+Columns: `paper_id`, `doi`, `perturbation_present`, `perturbation_present_any_assay`, `has_single_cell_assay`, `paper_confidence`, `unresolved_reason`, `n_perturbations`, `processing_status`, `text_completeness`, `consistency_flags`, `evidence_flags`, `perturbation_agents` (semicolon-joined), `single_cell_assay_types`, and — new in v0.0.10 — `n_suppressed`, `suppressed_rules` (`|`-joined set of the `rule` values used), `suppressed_would_pair_yes` (boolean); and — new in v0.0.12 — `paired_organisms` (`|`-joined distinct `paired_organism` values over the `single_cell_paired = "yes"` perturbations), `paired_organism_human` (`true`/`false`/empty when unknown) and `n_paired_yes_human`.
 
 ### 11. Corpus-level counters
 Emit these per run. They are the acceptance criteria for the version, not decoration.
