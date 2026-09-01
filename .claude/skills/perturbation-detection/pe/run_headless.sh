@@ -7,6 +7,10 @@
 # same logged-in Claude Code session as the interactive app. There is no
 # ANTHROPIC_API_KEY anywhere in this path, and none is needed.
 #
+# Model is pinned to claude-opus-5 (see MODEL below), not left to the CLI's
+# /model default, so results are attributable to one model across machines and
+# across time. Override with PERTURBATION_MODEL=<id> for a one-off run.
+#
 # Reads work/manifest.json, skips papers that already have a result, and runs the
 # rest. Safe to re-run: it is the same idempotency rule `pe.pending` uses.
 set -uo pipefail
@@ -19,6 +23,13 @@ WORK="${1:-$RUN_ROOT/work}"
 JOBS="${2:-3}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY="${PY:-$(command -v python3 || command -v python)}"
+
+# Pinned rather than left to the CLI's default: `claude -p` otherwise picks up
+# whatever /model is set to on the machine running this script, which drifts
+# between machines and between sessions on the same machine. Override with
+# PERTURBATION_MODEL for a one-off run on a different model.
+MODEL="${PERTURBATION_MODEL:-claude-opus-5}"
+export MODEL
 
 cd "$ROOT" || exit 1
 mkdir -p "$WORK/logs"
@@ -64,6 +75,7 @@ source_id must name the <<<SOURCE>>> block you actually copied it from. \
 Reply with only the word DONE when the file is written."
 
   if claude -p "$task" \
+       --model "$MODEL" \
        --permission-mode acceptEdits \
        --allowedTools Read Write Bash Grep \
        --output-format text >"$log" 2>&1; then
@@ -131,7 +143,7 @@ if [ -z "${PERTURBATION_SKIP_PREFLIGHT:-}" ]; then
     exit 2
   fi
   probe="$WORK/.preflight.log"
-  claude -p 'Reply with only: AUTHOK' --output-format text >"$probe" 2>&1
+  claude -p 'Reply with only: AUTHOK' --model "$MODEL" --output-format text >"$probe" 2>&1
   if ! grep -q 'AUTHOK' "$probe"; then
     echo "PREFLIGHT FAILED -- not running $COUNT paper(s)." >&2
     echo "  claude -p said: $(head -1 "$probe")" >&2
