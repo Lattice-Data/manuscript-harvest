@@ -193,6 +193,14 @@ python -m pe.compare --baseline <old_run_dir>   # version-to-version diff
 
 ## Changing the criteria
 
+**Read `CURATOR-RULINGS.md` first.** It records every determination the curator
+made by reading the paper, with the reasoning. Check whether a ruling already
+constrains the criterion you are about to edit, and use those papers as the first
+acceptance-set candidates. Where a ruling and `prompt.md` disagree, that is a bug
+in the prompt — twice the written rule has pointed the opposite way from the
+curator while the extraction reached the right answer anyway, which is not a
+property to rely on.
+
 Edit `prompt.md` and bump its `Version:` line — nothing hardcodes the version.
 `pe.validate` mirrors the prompt's stated determination logic in
 `stage_a`/`stage_b`, so if you change that logic, change both and run
