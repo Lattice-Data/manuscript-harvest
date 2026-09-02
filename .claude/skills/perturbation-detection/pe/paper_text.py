@@ -149,6 +149,22 @@ def prompt_version(prompt_md: Path) -> str:
     return match.group(1) if match else "unknown"
 
 
+def schema_version(prompt_md: Path) -> str:
+    """Read `schema_version` out of prompt.md's "Constants for a run" table.
+
+    The same contract the `Version:` line has, extended to the one constant that
+    did not have it. `pe.validate` compared each record against a literal
+    `"0.0.6"` while the prompt had moved to 0.0.7 at v0.0.12, so every paper the
+    model scored correctly was filed with a `schema_version=... expected '0.0.6'`
+    issue -- 386 of the 392 corpus records carried it, diluting the list where
+    real problems appear. A version read from the file it is declared in cannot
+    drift from that file.
+    """
+    match = re.search(r"^\|\s*`schema_version`\s*\|\s*`([^`]+)`",
+                      prompt_md.read_text(), re.MULTILINE)
+    return match.group(1) if match else "unknown"
+
+
 # ---------------------------------------------------------------------------
 # v0.0.5: multi-source assembly
 #

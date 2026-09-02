@@ -241,12 +241,14 @@ def _v005_result(**over):
     """A current-schema record carrying v0.0.5 determination inputs.
 
     The determination fields are the ones this file exercises; the envelope
-    tracks the live schema (0.0.6) so these end-to-end cases keep validating a
+    tracks the live schema (0.0.7) so these end-to-end cases keep validating a
     record shape the pipeline actually accepts, rather than drifting into
-    testing a version `pe.validate` now rejects.
+    testing a version `pe.validate` now rejects. The literal is the one thing
+    here that has to be edited on a schema bump; `tests/test_schema_version.py`
+    is what notices if it is not.
     """
     base = {
-        "schema_version": "0.0.6",
+        "schema_version": "0.0.7",
         "sources_seen": ["main", "supp1"],
         "processing_status": "ok",
         "text_completeness": "full",

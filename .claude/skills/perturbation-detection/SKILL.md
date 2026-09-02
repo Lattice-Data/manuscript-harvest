@@ -77,7 +77,7 @@ Faster and gives per-paper progress, but needs an interactive session.
 Then review:
 
 ```bash
-python -m pe.audit       # five targeted review screens
+python -m pe.audit       # six targeted review screens (A–F)
 python -m pe.compare --baseline <old_run_dir>   # version-to-version diff
 ```
 
@@ -102,7 +102,7 @@ python -m pe.compare --baseline <old_run_dir>   # version-to-version diff
   purpose — `prompt.md` step 10 and `pe.summarize.triage_priority` — and they
   must be changed together.
 
-- **`suppressed_candidates`** (schema 0.0.6, prompt v0.0.10) — one entry per
+- **`suppressed_candidates`** (added in schema 0.0.6, prompt v0.0.10) — one entry per
   thing the model recognised as a possible perturbation and deliberately did not
   list, so the NOT list stops being silent. Each entry carries `candidate`,
   `rule` (a **closed** set of eight values: `reporter_or_marker`,
@@ -202,13 +202,20 @@ curator while the extraction reached the right answer anyway, which is not a
 property to rely on.
 
 Edit `prompt.md` and bump its `Version:` line — nothing hardcodes the version.
+The same now goes for `schema_version`: `pe.validate` reads the expected value
+out of the **Constants for a run** table, so bumping the schema means editing
+that row, the "Echo `schema_version` as" instruction, the schema example and
+the JSONL record — all four in prompt.md, and `tests/test_schema_version.py` fails
+if they disagree. Leaving one behind is what put a spurious issue on 386 of the
+392 corpus records at v0.0.12.
 `pe.validate` mirrors the prompt's stated determination logic in
 `stage_a`/`stage_b`, so if you change that logic, change both and run
 `tests/test_determination_v005.py`. **That filename still says v005 on purpose**
 — Stage A, Stage B and the truth table have not changed since v0.0.5, so
 renaming it to the current prompt version would assert a contract moved when it
 did not. Fields added since have their own files:
-`tests/test_suppressed_candidates.py` covers schema 0.0.6, and its first job is
+`tests/test_suppressed_candidates.py` covers the schema 0.0.6 addition, and its
+first job is
 to prove the determination logic is unaffected. It also guards the closed `rule`
 set against drift between `prompt.md` and `pe.validate` — v0.0.7's precedence bug
 was one rule stated in three places and changed in two. `prompt.md` also has a toggle table at the

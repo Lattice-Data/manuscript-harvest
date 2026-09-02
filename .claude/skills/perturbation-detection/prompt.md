@@ -42,8 +42,8 @@ Constants for a run:
 
 | Constant | Value |
 |---|---|
-| `schema_version` | `0.0.6` (v0.0.10 adds `suppressed_candidates`; the determination fields are unchanged) |
-| `prompt_version` | `0.0.10` (read from the `Version:` line above — nothing hardcodes it) |
+| `schema_version` | `0.0.7` (v0.0.12 adds `organism` / `paired_organism`; the determination fields are unchanged) |
+| `prompt_version` | `0.0.12` (read from the `Version:` line above — nothing hardcodes it) |
 | temperature | `0` |
 | calls per paper | 1 (plus at most 1 JSON-repair retry) |
 
@@ -346,7 +346,7 @@ These combinations indicate a mistake somewhere upstream, not a determination to
 - **CC-7.** A quote whose `source_id` is not one of the `<<<SOURCE>>>` ids you were given. Re-attribute it or drop the quote.
 
 ## Output
-Return ONLY a single JSON object, no prose, no markdown fences, matching the schema below. Echo `schema_version` as "0.0.6".
+Return ONLY a single JSON object, no prose, no markdown fences, matching the schema below. Echo `schema_version` as "0.0.7".
 
 PAPER_ID: {{PAPER_ID}}
 
@@ -434,6 +434,8 @@ Notes on fields:
 - **A suppressed candidate is not a perturbation.** It never enters `perturbations`, never receives a `perturbation_refs` index, and cannot affect Stage A, Stage B or `perturbation_present_any_assay`. If recording one changes a determination, that is a bug in the harness, not a judgment call.
 - `sources_seen` should echo the ids in the `<<<SOURCE>>>` markers. A mismatch against the manifest means the assembly step dropped a file.
 - Run metadata (`model_id`, `prompt_version`, timestamps, token counts, source checksums) is added by the harness, not by the model. See the JSONL record in the batch spec.
+
+**New in schema 0.0.7 (v0.0.12):** `paired_organism` on each perturbation and `organism` on each sample group, both OPEN strings and both nullable. Nothing else changed, and no determination field moved — the fields are recorded and deliberately not acted on, so a 0.0.6 consumer that ignores the new keys reads a 0.0.7 record correctly.
 
 **New in schema 0.0.6 (v0.0.10):** `suppressed_candidates` is a new required field (empty array when nothing was suppressed). Nothing else changed, and no determination field moved — a 0.0.5 consumer that ignores the new key reads a 0.0.6 record correctly.
 
@@ -533,7 +535,7 @@ One JSONL line per paper: the model object, plus a `run` block.
   "run": {
     "run_id": "2026-08-19T10:00:00Z_cxg800",
     "model_id": "...",
-    "prompt_version": "0.0.10",
+    "prompt_version": "0.0.12",
     "schema_version": "0.0.7",
     "assembled_text_sha256": "...",
     "input_tokens": 0,
