@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
 from collections import Counter
 import sys
 from pathlib import Path
@@ -23,6 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from pe.runroot import work_default, output_default  # noqa: E402
+from pe.runstate import RunError, load_validated  # noqa: E402
 
 # prompt.md v0.0.5 step 10's column list, plus the pairing/quote counts the
 # curator needs to act on a row without opening the JSON.
@@ -71,6 +71,14 @@ def _join_truncated(items, per_item: int = 60, total: int = 400) -> str:
     return joined
 
 
+# The `unresolved_reason` values a tier above P6 already accounts for. Anything
+# else on an `unclear` paper -- including "none", null, and an off-enum string --
+# leaves the paper with no stated reason to be unclear.
+UNRESOLVED_REASONS_TRIAGED = ("pairing_not_stated", "degraded_text",
+                              "assay_type_unconfirmed", "perturbation_role_unclear",
+                              "contradiction_unresolved")
+
+
 def triage_priority(result: dict) -> int:
     """prompt.md v0.0.10 step 10's sort order. Lower sorts first.
 
@@ -110,7 +118,17 @@ def triage_priority(result: dict) -> int:
         return 4
     if present == "no" and result.get("perturbation_present_any_assay") == "yes":
         return 5
-    if validation.get("consistency_flags") or validation.get("evidence_flags"):
+    # P6 is "the record has a defect", and an `unclear` carrying no usable reason
+    # is one: `pe.validate` says so in `issues` ("the unclear bucket is not
+    # triageable without a reason"), yet the paper used to fall past every tier
+    # into P9, the bottom of the queue. No renumbering -- this widens an existing
+    # tier rather than inserting one. Measured on the 392-paper v0.0.12 run: it
+    # moves 0 papers, because no record currently hits it. It exists so that if
+    # one ever does, the paper surfaces instead of sinking.
+    untriageable_unclear = (present == "unclear"
+                            and reason not in UNRESOLVED_REASONS_TRIAGED)
+    if (validation.get("consistency_flags") or validation.get("evidence_flags")
+            or untriageable_unclear):
         return 6
     # v0.0.12. A `yes` carried entirely by a non-human model. Tiers 1-6 flag
     # uncertainty or defect; this one flags a determination that is probably
@@ -197,7 +215,7 @@ def row_for(doi: str, result: dict, entry: dict) -> dict:
 
 
 def _counters(rows: list[dict], results: dict[str, dict]) -> list[str]:
-    """prompt.md v0.0.5 step 11."""
+    """prompt.md step 11's corpus counters, over the rows this run produced."""
     ok = [r for r in rows if r["status"] == "ok"]
     out: list[str] = []
 
@@ -206,8 +224,11 @@ def _counters(rows: list[dict], results: dict[str, dict]) -> list[str]:
         out.append(f"  {label:<52} "
                    + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())))
 
+    versions = sorted({str((r.get("validation") or {}).get("prompt_version") or "?")
+                       for r in results.values()}) or ["?"]
     out.append("")
-    out.append("corpus counters (prompt.md v0.0.5 step 11 — acceptance criteria)")
+    out.append(f"corpus counters (prompt.md step 11 — acceptance criteria) "
+               f"— prompt v{'/'.join(versions)}")
     tally("papers by processing_status", lambda r: r["processing_status"])
     tally("papers by text_completeness", lambda r: r["text_completeness"])
     tally("papers by perturbation_present", lambda r: r["perturbation_present"])
@@ -323,26 +344,36 @@ def main() -> int:
     parser.add_argument("--out", default=str(output_default("perturbations_summary.csv")))
     args = parser.parse_args()
 
-    work = Path(args.work)
-    manifest = json.loads((work / "manifest.json").read_text())
+    run = load_validated(Path(args.work))
+    # A CSV of 392 blank rows is not a summary of anything, and it used to be
+    # written with exit 0. Every other tool now refuses the same way.
+    run.require_papers("pe.summarize")
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
 
+    unreadable = dict(run.unreadable)
     rows, results = [], {}
-    for entry in manifest:
+    for entry in run.manifest:
         doi = entry["doi"]
         blank = {c: "" for c in COLUMNS}
         if "error" in entry:
             rows.append({**blank, "triage_priority": 0, "doi": doi, "paper_id": doi,
                          "status": entry["error"], "needs_review": True})
             continue
-        validated = work / "validated" / f"{doi}.json"
-        if not validated.exists():
+        if doi in unreadable:
+            # Previously an uncaught JSONDecodeError here produced no CSV at all,
+            # so one corrupt record cost the whole table. The row says what
+            # happened instead.
+            rows.append({**blank, "triage_priority": 0, "doi": doi, "paper_id": doi,
+                         "status": f"unreadable: {unreadable[doi]}",
+                         "chars": entry.get("chars", ""), "needs_review": True})
+            continue
+        result = run.records.get(doi)
+        if result is None:
             rows.append({**blank, "triage_priority": 0, "doi": doi, "paper_id": doi,
                          "status": "pending", "chars": entry.get("chars", ""),
                          "needs_review": True})
             continue
-        result = json.loads(validated.read_text())
         results[doi] = result
         rows.append(row_for(doi, result, entry))
 
@@ -354,11 +385,15 @@ def main() -> int:
         writer.writerows(rows)
 
     ok = [r for r in rows if r["status"] == "ok"]
+    print(run.coverage())
     print(f"wrote {out}  ({len(rows)} rows, {len(ok)} complete)")
-    if ok:
-        print("\n".join(_counters(rows, results)))
+    print("\n".join(_counters(rows, results)))
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except RunError as exc:
+        print(f"pe.summarize: {exc}", file=sys.stderr)
+        raise SystemExit(2) from None

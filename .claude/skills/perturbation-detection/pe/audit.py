@@ -3,8 +3,10 @@
 
     python -m pe.audit [--work work/] [--out output/review_screen.txt]
 
-prompt.md's validation loop (added in v0.0.3) asks for three things. This produces all
-three, mechanically:
+prompt.md's validation loop (added in v0.0.3) asks for three things. This produces
+those three as Screens A, B and C, plus three more that later versions needed --
+D (Stage-B caps), E (supplementary-only evidence and quote attribution) and
+F (suppressed candidates). Six in total; all of them mechanical.
 
   Screen A — assay-pairing disagreements. Papers where
     `perturbation_present_any_assay = yes` but `perturbation_present` is
@@ -28,7 +30,7 @@ three, mechanically:
     Unlike B and C this is not a keyword grep — the model told us it made these
     calls, which is exactly what v0.0.9 could not do.
 
-All three are SCREENS, not verdicts. A keyword hit is not proof of an error:
+All six are SCREENS, not verdicts. A keyword hit is not proof of an error:
 "treated with" also describes routine processing, and "single-cell suspension"
 is a dissociation step, not an assay — the two traps this task turns on.
 """
@@ -36,16 +38,16 @@ is a dissociation step, not an assay — the two traps this task turns on.
 from __future__ import annotations
 
 import argparse
-import json
 import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from pe.paper_text import prompt_version  # noqa: E402
+from pe.paper_text import entry_paths, prompt_version  # noqa: E402
 from pe.validate import RULES_UNDER_REVIEW, paper_text_from_prompt  # noqa: E402
 
 from pe.runroot import work_default, output_default  # noqa: E402
+from pe.runstate import RunError, load_validated  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -132,6 +134,20 @@ def screen(text: str, compiled: dict[str, list[re.Pattern]]) -> dict[str, dict]:
     return found
 
 
+def _paper_text(prompt_file: Path) -> tuple[str, str | None]:
+    """The assembled paper text for a screen, or a note saying why not.
+
+    Screens B and C grep the text. A prompt file that has been moved or deleted
+    is a fact about the run directory, not a reason to lose the other screens --
+    and a screen that silently greps an empty string would report "no qualifying
+    assay language found", which reads as evidence FOR the model's answer.
+    """
+    try:
+        return paper_text_from_prompt(prompt_file), None
+    except (FileNotFoundError, ValueError) as exc:
+        return "", f"paper text unavailable ({type(exc).__name__}: {prompt_file})"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--work", default=str(work_default()))
@@ -139,14 +155,20 @@ def main() -> int:
     parser.add_argument("--prompt", default=str(ROOT / "prompt.md"))
     args = parser.parse_args()
 
-    work = Path(args.work)
-    manifest = {e["doi"]: e for e in json.loads((work / "manifest.json").read_text())}
+    run = load_validated(Path(args.work))
+    run.require_papers("pe.audit")
 
-    loaded: list[tuple[str, dict, Path]] = []
-    for doi, entry in manifest.items():
-        validated = work / "validated" / f"{doi}.json"
-        if "error" not in entry and validated.exists():
-            loaded.append((doi, json.loads(validated.read_text()), Path(entry["prompt_file"])))
+    # entry_paths, not entry["prompt_file"]. Screens B and C grep the paper text,
+    # so reading it from the manifest's recorded string means a run directory that
+    # was copied -- which the acceptance protocol does, `baseline-v0012-50b`'s
+    # manifest still points into `work-accept-v0012-r1/` -- greps a DIFFERENT
+    # run's assembly, or crashes if that directory is gone. Deriving from
+    # (work, doi) is what makes a manifest portable and is what pe.pending and
+    # pe.validate already do.
+    loaded: list[tuple[str, dict, Path]] = [
+        (entry["doi"], run.records[entry["doi"]], entry_paths(entry, run.work)[0])
+        for entry in run.entries if entry["doi"] in run.records
+    ]
 
     lines: list[str] = []
     counts = {"A": 0, "B": 0, "C": 0, "D": 0, "E": 0, "F": 0}
@@ -198,13 +220,16 @@ def main() -> int:
     for doi, result, prompt_file in loaded:
         if result.get("has_single_cell_assay") == "yes":
             continue
-        text = paper_text_from_prompt(prompt_file)
+        text, unavailable = _paper_text(prompt_file)
         found = screen(text, COMPILED_ASSAY)
         traps = len(SUSPENSION_TRAP.findall(text))
         lines.append("")
         lines.append(f"{doi}   has_single_cell_assay={result.get('has_single_cell_assay')} "
                      f"present={result.get('perturbation_present')}")
-        if not found:
+        if unavailable:
+            counts["B"] += 1
+            lines.append(f"  NOT SCREENED -- {unavailable}")
+        elif not found:
             lines.append("  no qualifying-assay language found — 'no' looks well supported")
         else:
             counts["B"] += 1
@@ -224,12 +249,15 @@ def main() -> int:
     for doi, result, prompt_file in loaded:
         if result.get("perturbation_present_any_assay") != "no":
             continue
-        text = paper_text_from_prompt(prompt_file)
+        text, unavailable = _paper_text(prompt_file)
         found = screen(text, COMPILED_PERT)
         total = sum(g["count"] for g in found.values())
         lines.append("")
         lines.append(f"{doi}   any_assay=no conf={result.get('paper_confidence')} hits={total}")
-        if not found:
+        if unavailable:
+            counts["C"] += 1
+            lines.append(f"  NOT SCREENED -- {unavailable}")
+        elif not found:
             lines.append("  no perturbation language found — 'no' looks well supported")
         else:
             counts["C"] += 1
@@ -245,7 +273,7 @@ def main() -> int:
     lines.append("")
     lines.append("=" * 78)
     lines.append("SCREEN D — capped at 'unclear' by Stage B (degraded/incomplete text)")
-    lines.append("prompt.md step 10 priority 3: these go to the re-fetch queue, not to a reader")
+    lines.append("prompt.md step 10 priority 4: these go to the re-fetch queue, not to a reader")
     lines.append("=" * 78)
     for doi, result, _ in loaded:
         validation = result.get("validation") or {}
@@ -387,6 +415,7 @@ def main() -> int:
                      + ", ".join(f"{k}={v}" for k, v in sorted(rule_tally.items())))
 
     header = [
+        run.coverage(),
         f"Review screen — prompt v{prompt_version(Path(args.prompt))} — "
         f"{len(loaded)} paper(s) validated",
         f"  Screen A (assay-pairing flipped the call): {counts['A']}",
@@ -400,13 +429,23 @@ def main() -> int:
         "'single-cell suspension' is a dissociation step rather than an assay.",
         "",
     ]
+    if not run.complete:
+        # Said twice on purpose -- in the file and on stdout. A short review
+        # screen and a clean one look identical, and the whole point of this
+        # pipeline is that emptiness has to account for itself.
+        header.insert(1, f"  INCOMPLETE RUN: {run.expected - run.loaded} paper(s) have "
+                         f"no validated record; the screens below cover the rest.")
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n".join(header + lines) + "\n")
-    print("\n".join(header[:7]))
+    print("\n".join(header[:9]))
     print(f"wrote {out}")
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except RunError as exc:
+        print(f"pe.audit: {exc}", file=sys.stderr)
+        raise SystemExit(2) from None

@@ -43,6 +43,7 @@ except ImportError:
     yaml = None
 
 from pe.runroot import work_default  # noqa: E402
+from pe.runstate import RunError, load_manifest, resolve_run_dir  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 PROMPT_MD = ROOT / "prompt.md"
@@ -159,8 +160,15 @@ def stage_b(stage_a_result: str | None, processing_status: str,
     can hide the sentence that would have paired a perturbation to a single-cell
     assay, but it cannot invent one, so only "no" is capped.
     """
-    degraded = processing_status == "partial" or (
-        text_completeness in TEXT_COMPLETENESS and text_completeness != "full")
+    # prompt.md: cap when `text_completeness` is "anything other than 'full'".
+    # The membership guard this replaced -- `text_completeness in
+    # TEXT_COMPLETENESS and != "full"` -- made the cap fail OPEN on exactly the
+    # values it should trust least: None, "", "Full" and "truncated " all skipped
+    # it and kept the "no", so an honest "unknown" was treated MORE
+    # conservatively than a malformed one. `validate_result` still raises the
+    # off-schema issue separately; this decides the determination, and a
+    # safety cap that can be switched off by a typo is not one.
+    degraded = processing_status == "partial" or text_completeness != "full"
     if degraded and stage_a_result == "no":
         return "unclear", True
     return stage_a_result, False
@@ -714,25 +722,35 @@ def main() -> int:
                         help="overrides config.yaml fuzzy_match.threshold")
     parser.add_argument("--config", default=str(ROOT / "config.yaml"))
     parser.add_argument("--prompt", default=str(ROOT / "prompt.md"))
-    parser.add_argument("--corpus", default="./corpus",
-                        help="directory of <paper_id>/extracted/blocks.jsonl")
+    parser.add_argument("--corpus", default=None,
+                        help="overrides config.yaml corpus_dir (default ./corpus)")
     parser.add_argument("--write-corpus", action="store_true",
                         help="also write corpus/<doi>/extracted/perturbations.json")
     args = parser.parse_args()
 
+    config = {}
+    if yaml and Path(args.config).exists():
+        config = yaml.safe_load(Path(args.config).read_text()) or {}
     threshold = args.threshold
     if threshold is None:
-        config = {}
-        if yaml and Path(args.config).exists():
-            config = yaml.safe_load(Path(args.config).read_text()) or {}
         threshold = (config.get("fuzzy_match") or {}).get("threshold", 0.85)
+    # Read the same key pe.prepare reads. This used to be a hardcoded "./corpus"
+    # while prepare honoured `corpus_dir`, so a config pointing anywhere else made
+    # prepare read the right tree and --write-corpus mkdir a wrong one beside the
+    # cwd -- which is how the 382 stale v0.0.8 records under
+    # .claude/skills/perturbation-detection/corpus/ came to exist.
+    corpus = Path(args.corpus or config.get("corpus_dir") or "./corpus")
 
     version = prompt_version(Path(args.prompt)) if Path(args.prompt).exists() else "unknown"
     expected_schema = expected_schema_version(Path(args.prompt))
 
-    work = Path(args.work)
-    manifest = json.loads((work / "manifest.json").read_text())
+    work = resolve_run_dir(Path(args.work))
+    manifest = load_manifest(work)
     (work / "validated").mkdir(parents=True, exist_ok=True)
+    if args.write_corpus:
+        # Named before the first write, not after. --write-corpus creates
+        # directories, so a wrong corpus root is silent unless it is announced.
+        print(f"--write-corpus: {corpus.resolve()}")
 
     done = missing = broken = 0
     for entry in manifest:
@@ -753,7 +771,18 @@ def main() -> int:
             continue
 
         result.setdefault("paper_id", doi)
-        paper_text = paper_text_from_prompt(prompt_file)
+        try:
+            paper_text = paper_text_from_prompt(prompt_file)
+        except (FileNotFoundError, ValueError) as exc:
+            # Unguarded, this aborted the entire run on the FIRST such paper and
+            # wrote nothing to validated/ -- including for every paper already
+            # verified. The raw-JSON read beside it had always degraded politely;
+            # this one had not. A quote cannot be verified against text nobody
+            # has, so the paper is skipped and named, not scored.
+            print(f"  NO PROMPT {doi}: {type(exc).__name__} {prompt_file} — cannot "
+                  f"verify quotes without the text the model was shown")
+            broken += 1
+            continue
         sources_text = split_assembled(paper_text)
         # The manifest records the version the prompts were built from; prefer it
         # over whatever prompt.md says right now.
@@ -766,7 +795,7 @@ def main() -> int:
         payload = json.dumps(result, indent=2)
         (work / "validated" / f"{doi}.json").write_text(payload)
         if args.write_corpus:
-            corpus_out = Path(args.corpus) / doi / "extracted" / "perturbations.json"
+            corpus_out = corpus / doi / "extracted" / "perturbations.json"
             corpus_out.parent.mkdir(parents=True, exist_ok=True)
             corpus_out.write_text(payload)
         done += 1
@@ -801,4 +830,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except RunError as exc:
+        print(f"pe.validate: {exc}", file=sys.stderr)
+        raise SystemExit(2) from None

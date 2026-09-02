@@ -48,6 +48,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from pe.runroot import work_default, output_default  # noqa: E402
+from pe.runstate import RunError, load_manifest, resolve_run_dir  # noqa: E402
 
 ORDER = ["yes", "unclear", "no"]
 
@@ -280,24 +281,51 @@ def main() -> int:
                         help="second run of the SAME baseline prompt. Papers where the "
                              "two baseline runs disagree are the noise floor, and a "
                              "change confined to them is not evidence of an effect.")
-    parser.add_argument("--out", default=str(output_default("v004_vs_v005.txt")))
+    # Not "v004_vs_v005.txt": that default outlived the versions in its own name by
+    # seven releases. The versions are in the report's first line, read from the
+    # records.
+    parser.add_argument("--out", default=str(output_default("version_diff.txt")))
     args = parser.parse_args()
 
-    work, baseline = Path(args.work), Path(args.baseline)
-    manifest = json.loads((work / "manifest.json").read_text())
+    work = resolve_run_dir(Path(args.work))
+    # `--baseline` takes r1 and `--baseline2` takes r2 when handed a two-run
+    # baseline directory, which is the only reading of that pair that makes sense:
+    # the first run IS the baseline and the second is what its self-disagreement
+    # is measured against. Before this, only --baseline2 knew about the layout, so
+    # `--baseline <that dir>` found no validated/, matched zero papers, and printed
+    # "every change is accounted for" over an empty set.
+    baseline = resolve_run_dir(Path(args.baseline), prefer="r1")
+    manifest = load_manifest(work)
 
     rows = []
+    missing_new, missing_old = [], []
     for entry in manifest:
+        if "error" in entry:
+            continue
         doi = entry["doi"]
         new_file = work / "validated" / f"{doi}.json"
-        # The baseline's validated/ is the scored v0.0.4 object.
         old_file = baseline / "validated" / f"{doi}.json"
         if not old_file.exists():
             old_file = baseline / "raw" / f"{doi}.json"
-        if not (new_file.exists() and old_file.exists()):
+        if not new_file.exists():
+            missing_new.append(doi)
+            continue
+        if not old_file.exists():
+            missing_old.append(doi)
             continue
         rows.append((doi, json.loads(old_file.read_text()),
                      json.loads(new_file.read_text()), entry))
+
+    # The rule this module exists to stop breaking. A verdict over zero papers
+    # reads exactly like a clean one, and this is the acceptance gate for a prompt
+    # version -- so it refuses rather than reporting.
+    if not rows:
+        raise RunError(
+            f"no paper appears in BOTH runs. {work} has "
+            f"{len(manifest) - len(missing_new)} validated record(s) of "
+            f"{len(manifest)}; {baseline} supplied none of them "
+            f"({len(missing_old)} missing there). Refusing to report a comparison "
+            f"over an empty set -- it is indistinguishable from 'nothing changed'.")
 
     # Papers the baseline cannot even agree with itself about. Anything confined
     # to this set is variance, not an effect -- the distinction the v0.0.12
@@ -305,12 +333,10 @@ def main() -> int:
     noise: set[str] = set()
     noise_available = False
     if args.baseline2:
-        b2 = Path(args.baseline2)
+        b2 = resolve_run_dir(Path(args.baseline2), prefer="r2")
         pairs = []
         for doi, old, _, _ in rows:
             f2 = b2 / "validated" / f"{doi}.json"
-            if not f2.exists():
-                f2 = b2 / "r2" / "validated" / f"{doi}.json"
             if f2.exists():
                 pairs.append((doi, old, json.loads(f2.read_text())))
         # A noise floor is the disagreement between two runs of the SAME prompt.
@@ -334,6 +360,13 @@ def main() -> int:
                      for _, old, _, _ in rows} or {"?"}
     lines.append(f"baseline v{'/'.join(sorted(base_versions))} -> "
                  f"v{'/'.join(sorted(versions))} comparison over {len(rows)} paper(s)")
+    covered = f"coverage: {len(rows)}/{len(manifest)} manifest paper(s) compared"
+    if missing_new or missing_old:
+        covered += (f"; {len(missing_new)} not validated in {work.name}"
+                    f", {len(missing_old)} absent from {baseline.name}")
+    lines.append(covered)
+    lines.append(f"  new:      {work}")
+    lines.append(f"  baseline: {baseline}")
     lines.append("")
     lines.append("Both columns are the assay-paired `perturbation_present`, so this is a")
     lines.append("like-for-like diff of the primary curation field. Check whether the two")
@@ -393,7 +426,8 @@ def main() -> int:
                      "before the corpus run.")
     else:
         lines.append("")
-        lines.append("  every change is accounted for by a known v0.0.5 mechanism.")
+        lines.append("  every change is accounted for by a known mechanism "
+                     f"(see the class list above) over {len(rows)} compared paper(s).")
 
     lines.append("")
     lines.append("=" * 78)
@@ -418,8 +452,13 @@ def main() -> int:
         if validation.get("consistency_flags") or validation.get("evidence_flags"):
             lines.append(f"  flags: {','.join(validation.get('consistency_flags') or [])} "
                          f"{','.join(validation.get('evidence_flags') or [])}")
-        lines.append(f"  v0.0.4 had {len(old.get('perturbations') or [])} perturbation(s); "
-                     f"v0.0.5 has {len(new.get('perturbations') or [])}")
+        # Versions read off the records, not written in. These two were literal
+        # "v0.0.4"/"v0.0.5" strings, so every run since v0.0.5 has mislabelled
+        # both columns of its own diff.
+        old_v = str((old.get("validation") or {}).get("prompt_version") or "?")
+        new_v = str((new.get("validation") or {}).get("prompt_version") or "?")
+        lines.append(f"  v{old_v} had {len(old.get('perturbations') or [])} perturbation(s); "
+                     f"v{new_v} has {len(new.get('perturbations') or [])}")
         for rule, old_agent, cand in _suppression_matches(new, old):
             lines.append(f"    SUPPRESSED ({rule}): baseline reported "
                          f"{old_agent[:60]!r}")
@@ -480,4 +519,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except RunError as exc:
+        print(f"pe.compare: {exc}", file=sys.stderr)
+        raise SystemExit(2) from None
