@@ -35,6 +35,7 @@ from pe.paper_text import (  # noqa: E402
     entry_paths, prompt_version, split_assembled,
     verify_quote_sourced,
 )
+from pe.paper_text import schema_version as prompt_schema_version  # noqa: E402
 
 try:
     import yaml
@@ -44,6 +45,7 @@ except ImportError:
 from pe.runroot import work_default  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
+PROMPT_MD = ROOT / "prompt.md"
 DOWNGRADE_CONFIDENCE = 0.2
 CATEGORIES = {
     "chemical", "biologic", "activation_stimulation", "genetic",
@@ -273,7 +275,7 @@ def _validate_suppressed(result: dict, sources_text: dict[str, str], threshold: 
     raw = result.get("suppressed_candidates")
     if raw is None:
         issues.append(
-            "suppressed_candidates missing; schema 0.0.6 requires it. Use [] when "
+            "suppressed_candidates missing; the schema requires it. Use [] when "
             "nothing was suppressed: a null cannot be told apart from 'the model "
             "never considered the question', which is the ambiguity this field exists "
             "to remove")
@@ -365,8 +367,22 @@ def _validate_suppressed(result: dict, sources_text: dict[str, str], threshold: 
     return entries, checked, failed, wrong_source
 
 
+def expected_schema_version(prompt_md: Path | None = None) -> str:
+    """The `schema_version` a record must echo, read from prompt.md.
+
+    Deliberately NOT taken from the manifest the way `prompt_version` is. The two
+    answer different questions: `prompt_version` records what the extraction ran
+    under and must stay pinned to that history, while this asks whether the record
+    in hand matches the schema the harness expects *now* -- so re-validating a
+    superseded record should say so rather than quietly grade it on its own curve.
+    """
+    path = PROMPT_MD if prompt_md is None else prompt_md
+    return prompt_schema_version(path) if path.exists() else "unknown"
+
+
 def validate_result(result: dict, sources_text: dict[str, str], threshold: float,
-                    version: str = "unknown", truncated_by_harness: bool = False) -> dict:
+                    version: str = "unknown", truncated_by_harness: bool = False,
+                    expected_schema: str | None = None) -> dict:
     """Verify quotes per source, prune, recompute the determination."""
     issues: list[str] = []
     evidence_flags: set[str] = set()
@@ -386,8 +402,15 @@ def validate_result(result: dict, sources_text: dict[str, str], threshold: float
         issues.append(f"text_completeness={result.get('text_completeness')!r} off-schema")
     if result.get("unresolved_reason") not in UNRESOLVED_REASONS:
         issues.append(f"unresolved_reason={result.get('unresolved_reason')!r} off-schema")
-    if str(result.get("schema_version")) != "0.0.6":
-        issues.append(f"schema_version={result.get('schema_version')!r}, expected '0.0.6'")
+    expected = expected_schema or expected_schema_version()
+    if expected == "unknown":
+        # Never skip silently: a check that quietly stops firing is worse than one
+        # that complains, because the record then looks clean for the wrong reason.
+        issues.append("schema_version not checked — prompt.md's 'Constants for a "
+                      "run' table declares no schema_version")
+    elif str(result.get("schema_version")) != expected:
+        issues.append(f"schema_version={result.get('schema_version')!r}, "
+                      f"expected {expected!r}")
     if not isinstance(result.get("consistency_flags"), list):
         issues.append("consistency_flags missing or not a list")
 
@@ -705,6 +728,7 @@ def main() -> int:
         threshold = (config.get("fuzzy_match") or {}).get("threshold", 0.85)
 
     version = prompt_version(Path(args.prompt)) if Path(args.prompt).exists() else "unknown"
+    expected_schema = expected_schema_version(Path(args.prompt))
 
     work = Path(args.work)
     manifest = json.loads((work / "manifest.json").read_text())
@@ -736,7 +760,8 @@ def main() -> int:
         entry_version = entry.get("prompt_version") or version
         result = validate_result(
             result, sources_text, threshold, entry_version,
-            truncated_by_harness=bool(entry.get("truncation", {}).get("truncated")))
+            truncated_by_harness=bool(entry.get("truncation", {}).get("truncated")),
+            expected_schema=expected_schema)
 
         payload = json.dumps(result, indent=2)
         (work / "validated" / f"{doi}.json").write_text(payload)
