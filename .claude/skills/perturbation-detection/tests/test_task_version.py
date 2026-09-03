@@ -37,7 +37,7 @@ from pe.prepare import build_template  # noqa: E402
 from pe.validate import (  # noqa: E402
     LEGACY_VERSION_FIELD, expected_task_version, record_version, validate_result,
 )
-from task import PackError, TaskPack, load as load_pack, pack_files, pack_sha256  # noqa: E402
+from pe.pack import PackError, TaskPack, load as load_pack, pack_files, pack_sha256  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 SEMVER = re.compile(r"\b\d+\.\d+\.\d+\b")

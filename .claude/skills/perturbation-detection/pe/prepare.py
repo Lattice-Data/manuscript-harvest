@@ -33,7 +33,7 @@ except ImportError:  # config is optional; defaults live in paper_text.py
     yaml = None
 
 from pe.runroot import work_default  # noqa: E402
-from task import PackError, load as load_pack  # noqa: E402
+from pe.pack import PackError, load as load_pack  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 

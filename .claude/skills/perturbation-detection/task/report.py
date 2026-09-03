@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from collections import Counter
 
-from task import tables
+from pe.pack import tables
 from task.rules import is_human, normalise_organism  # noqa: F401
 
 _REP = tables()["report"]

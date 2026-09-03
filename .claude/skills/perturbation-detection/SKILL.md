@@ -28,10 +28,21 @@ explains how to run it.
                                  labelled text with provenance
 ```
 
-`pe/` is 1,517 lines that name this task **nowhere in code**, and
+`pe/` is 1,697 lines that name this task **nowhere in code**, and
 `tests/test_seam.py` holds that line by tokenising every module and rejecting a
 task word in any identifier, string or key. Swap `task/` and the same machinery
-answers a different question.
+answers a different question — which has been done: a second pack answering
+"which tissue did the sequenced material come from?" runs through a
+byte-identical `pe/`.
+
+`task/` has **no `__init__.py`**. It is a namespace package, like `pe/`, and holds
+nothing but the spec, the four tables and the four rule modules. The loader that
+reads a pack is `pe/pack.py`, because it is machinery no pack owns: it spent one
+version inside `task/__init__.py`, and the second pack had to copy all 232 lines
+of it verbatim. The dependency therefore runs pack → harness, which looks
+backwards for a moment and is the ordinary plugin shape — the harness must never
+import a task's vocabulary, while a task reading the harness's loader is fine,
+and `test_seam.py` enforces exactly that asymmetry.
 
 | table | holds |
 |---|---|

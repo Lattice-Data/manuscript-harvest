@@ -1199,7 +1199,7 @@ The skill is split so the judgment can be swapped without touching the machinery
                         verify every quote, prune, recompute, tabulate, diff
     TEXT       manuscript_harvest   this package
 
-`pe/` is 1,517 lines that name the task **nowhere in code**, and
+`pe/` is 1,697 lines that name the task **nowhere in code**, and
 `tests/test_seam.py` holds that line by tokenising every module and rejecting a
 task word in any identifier, string or key. It was not always so: `pe/` was
 1,038 task lines against 1,185 generic ones, interleaved inside four files.
@@ -1207,6 +1207,12 @@ Moving them out changed nothing measurable — all 392 records re-validated with
 zero differing beyond the pack hash, and three text outputs came out
 byte-identical — which is the only evidence that a refactor of that size was a
 refactor.
+
+**The seam has been tested by swapping.** A second pack answering "which tissue
+did the sequenced material come from?" runs on this corpus through a
+byte-identical `pe/`, for 1,022 lines of pack against 1,697 of harness it does not
+touch. The first attempt did not run at all, and the five fixes it forced are the
+reason the claim is worth anything.
 
 The pack also carries **one version**. `prompt_version` and `schema_version`
 collapsed into `task_version`, declared once in `task/task.yaml` and spliced into

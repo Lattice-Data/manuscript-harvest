@@ -41,7 +41,7 @@ ARG_FIELDS = ("doi", "prompt_file", "prompt_lines", "prompt_chars", "chars",
 # only if its result parses, carries every required field, and its `sources_seen`
 # matches the manifest, so a partial write is re-run rather than silently
 # accepted.
-from task import tables  # noqa: E402
+from pe.pack import tables  # noqa: E402
 
 _REC = tables()["record"]
 REQUIRED = tuple(_REC["required_fields"])

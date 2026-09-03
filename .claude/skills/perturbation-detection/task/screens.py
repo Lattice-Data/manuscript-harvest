@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import re
 
-from task import tables
+from pe.pack import tables
 from task.rules import RULES_UNDER_REVIEW
 
 _REP = tables()["report"]

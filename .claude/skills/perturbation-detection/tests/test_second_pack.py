@@ -55,7 +55,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from task import tables  # noqa: E402
+from pe.pack import tables  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 yaml = pytest.importorskip("yaml")
@@ -231,11 +231,11 @@ def _minimal_pack(base: Path) -> None:
         "match": {"min_shared_words": 2, "standalone_word_length": 8,
                   "stopwords": ["the"]},
     }, sort_keys=False))
-    for name in ("__init__.py",):
-        (base / "task" / name).write_text((ROOT / "task" / name).read_text())
+    # No `task/__init__.py`: the loader is `pe/pack.py`, which arrives with the
+    # harness. Copying it per pack is what this move removed.
     # The four rule modules, minimal.
     (base / "task" / "rules.py").write_text('''
-from task import tables
+from pe.pack import tables
 _REC = tables()["record"]
 _PATH = _REC["item_array"]["path"]
 
@@ -280,7 +280,7 @@ def progress_line(doi, record):
 CC_TEXT = {}
 ''')
     (base / "task" / "report.py").write_text('''
-from task import tables
+from pe.pack import tables
 COLUMNS = list(tables()["report"]["columns"])
 TIERS = [(9, "everything")]
 
@@ -302,7 +302,7 @@ def counters(rows, results):
     return ["", f"{len(rows)} row(s)"]
 ''')
     (base / "task" / "screens.py").write_text('''
-from task import tables
+from pe.pack import tables
 SCREENS = {s["id"]: s for s in tables()["report"]["screens"]}
 
 
@@ -313,7 +313,7 @@ def render(loaded, text_for):
     return [], {"A": 0}
 ''')
     (base / "task" / "change.py").write_text('''
-from task import tables
+from pe.pack import tables
 _T = tables()
 ORDER = list(_T["change"]["order"])
 CLASS_LABELS = dict(_T["change"]["classes"])
