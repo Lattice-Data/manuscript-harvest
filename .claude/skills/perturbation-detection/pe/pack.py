@@ -26,6 +26,7 @@ set of rule-bearing files really did change.
 from __future__ import annotations
 
 import hashlib
+import re
 from pathlib import Path
 
 try:
@@ -37,6 +38,35 @@ except ImportError:  # pragma: no cover - yaml is a package requirement
 #: the move -- this file went from `task/__init__.py` to `pe/pack.py`, and
 #: `parent.parent` is the same directory from either.
 ROOT = Path(__file__).resolve().parent.parent
+
+def read_back_marker(root: Path | None = None) -> str:
+    """The line `pe.validate` searches for, backwards, to recover the paper text.
+
+    Read from the pack, cached, because it is needed once per paper. `pe.prepare`
+    writes the marker and `pe.validate` reads it back, so the two must agree
+    about it -- which is exactly why it is declared once, in `task.yaml`, rather
+    than written as a literal at each end.
+    """
+    return load(root).read_back_marker
+
+
+def spec_version_line(spec_md: Path) -> str:
+    """Whatever the spec's `Version:` line says. Named for what it returns.
+
+    It was `pe.paper_text.prompt_version`, and that name is now a lie: since
+    0.0.13 the spec carries `{{TASK_VERSION}}` there, so this returns the
+    PLACEHOLDER, not a version. Its only caller is `pe.prepare`, which uses it to
+    assert the substitution has something to substitute -- a spec that hardcoded
+    a version instead would be the drift 0.0.13 removed, and `pe.prepare` says so
+    when it finds one.
+
+    The version a run is graded against is `TaskPack.version`, from task.yaml.
+    Reading the spec is this module's job, which is why the function lives here
+    rather than beside the source assembly it had drifted into.
+    """
+    match = re.search(r"^Version:\s*(\S+)", spec_md.read_text(), re.MULTILINE)
+    return match.group(1) if match else "unknown"
+
 
 #: Files whose contents define the answer, and therefore the pack hash.
 #:

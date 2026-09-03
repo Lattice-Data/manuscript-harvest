@@ -32,7 +32,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pe.paper_text import prompt_version  # noqa: E402
+from pe.pack import spec_version_line  # noqa: E402
 from pe.prepare import build_template  # noqa: E402
 from pe.validate import (  # noqa: E402
     LEGACY_VERSION_FIELD, expected_task_version, record_version, validate_result,
@@ -124,10 +124,13 @@ def test_prepare_substitutes_the_version_the_pack_declares(pack, tmp_path):
 
 
 def test_the_version_line_reader_still_works(pack):
-    """`pe.paper_text.prompt_version` reads the `Version:` line, and pe.prepare
-    uses it to assert the substitution happened. A regex that silently stopped
-    matching would return "unknown" and disable that assertion."""
-    assert prompt_version(pack.spec_path) == pack.placeholders["task_version"]
+    """`pe.pack.spec_version_line` reads the `Version:` line, and pe.prepare uses
+    it to assert the substitution has something to substitute. A regex that
+    silently stopped matching would return "unknown" and disable that assertion.
+
+    Named for what it returns: since 0.0.13 that line holds the PLACEHOLDER, so
+    the old name `prompt_version` promised a version and delivered `{{...}}`."""
+    assert spec_version_line(pack.spec_path) == pack.placeholders["task_version"]
 
 
 # --------------------------------------------------------------------------

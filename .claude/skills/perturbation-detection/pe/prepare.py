@@ -24,7 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pe.paper_text import (  # noqa: E402
     EXCLUDE_SECTIONS, INCLUDE_KINDS, assemble_paper_text, build_sources,
-    prompt_version, read_blocks_jsonl,
+    read_blocks_jsonl,
 )
 
 try:
@@ -33,7 +33,7 @@ except ImportError:  # config is optional; defaults live in paper_text.py
     yaml = None
 
 from pe.runroot import work_default  # noqa: E402
-from pe.pack import PackError, load as load_pack  # noqa: E402
+from pe.pack import PackError, load as load_pack, spec_version_line  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -199,7 +199,7 @@ def main() -> int:
     built_version = stamp["task_version"]
     # The spec's own `Version:` line is a placeholder now, so this asserts the
     # substitution below actually happened rather than reading a stale literal.
-    declared = prompt_version(pack.spec_path)
+    declared = spec_version_line(pack.spec_path)
     if declared != pack.placeholders["task_version"]:
         raise PackError(
             f"{pack.spec_path.name}'s `Version:` line reads {declared!r}, but the "

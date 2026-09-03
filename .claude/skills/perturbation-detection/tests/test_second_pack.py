@@ -128,6 +128,73 @@ def test_the_diff_preamble_is_the_packs_not_the_harnesss():
     assert DIFF_PREAMBLE and all(isinstance(line, str) for line in DIFF_PREAMBLE)
 
 
+def test_no_key_in_the_harness_contract_is_read_by_nothing():
+    """A key nobody reads looks like it works and does not.
+
+    `spec.read_back_marker` was exactly that: `task.yaml` declared it, `pack.py`
+    parsed it into `TaskPack.read_back_marker`, and **nothing read it** --
+    `paper_text_from_prompt` hardcoded the string. A pack declaring any other
+    marker was silently ignored, and the recovered "paper text" would have been
+    the whole prompt file including the instructions, so every quote would verify
+    against the spec as readily as against the paper. That is the pack-side twin
+    of `test_no_config_key_is_read_by_nothing`, which exists because five
+    `config.yaml` keys had rotted the same way.
+
+    **Scoped to `task.yaml`**, which is the contract between the pack and the
+    HARNESS -- the relationship where a mismatch is silent and expensive, because
+    the two sides ship separately and neither can see the other's literals.
+
+    The four tables are deliberately out of scope, and not because they are
+    clean. Two sets of keys in them are read by nothing today:
+
+      report.yaml   `blurb`, `empty`, `grep` -- this pack's `screens.py` emits
+                    its blurbs and empty-notes as literals, because the screen
+                    bodies were moved verbatim rather than parameterised.
+      record.yaml   `item_array.quotes_field`, `name_field`,
+                    `secondary_quote_field`, `secondary_downgrades`,
+                    `drop_when_no_verified_quote`, and the `ref_arrays` /
+                    `secondary_arrays` shape keys -- `rules.py` hardcodes
+                    `"evidence_quotes"`, `"assay_evidence"` and `"agent"`.
+
+    Those are documentation pretending to be configuration, and worth fixing --
+    but they are a pack talking to its OWN rule modules, both of which ship
+    together, so an author who edits one and not the other breaks their own pack
+    and finds out at once. Recorded here rather than suppressed in an allow-list,
+    so the finding survives whether or not anyone acts on it.
+    """
+    source = "\n".join(
+        p.read_text() for p in
+        sorted((ROOT / "pe").glob("*.py")) + sorted((ROOT / "task").glob("*.py")))
+    contract = yaml.safe_load((ROOT / "task" / "task.yaml").read_text()) or {}
+
+    #: Read via the parent mapping rather than by name, or written for a human.
+    UNREAD = {
+        "spec", "anchors", "placeholders", "outputs",   # read as whole mappings
+        "question",                                      # prose for a pack author
+    }
+    dead = sorted(k for k in _all_keys(contract)
+                  if k not in UNREAD
+                  and f'"{k}"' not in source and f"'{k}'" not in source)
+    assert not dead, (
+        f"task.yaml declares {dead} and nothing in pe/ or task/ reads them. Wire "
+        f"the key up, delete it, or add it to UNREAD with a reason. "
+        f"`spec.read_back_marker` sat dead for a whole version, and a pack that "
+        f"changed it was silently ignored.")
+
+
+def _all_keys(node, out=None) -> set[str]:
+    """Every mapping key, at any depth."""
+    out = set() if out is None else out
+    if isinstance(node, dict):
+        for key, value in node.items():
+            out.add(str(key))
+            _all_keys(value, out)
+    elif isinstance(node, list):
+        for value in node:
+            _all_keys(value, out)
+    return out
+
+
 # --------------------------------------------------------------------------
 # LEAK 1: a pack with no secondary array
 # --------------------------------------------------------------------------
