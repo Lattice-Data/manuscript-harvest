@@ -299,22 +299,17 @@ def test_a_single_yes_is_not_flagged():
 
 
 # --------------------------------------------------------------------------
-# The closed set must not drift between prompt.md and the harness.
+# The closed set must not drift between prompt.md and the pack.
+#
+# `test_prompt_and_code_agree_on_the_closed_rule_set` lived here and is now
+# `tests/test_prompt_pack_agree.py`, alongside the other eight sets it was the
+# only guard for. It is not merely moved: it located its input with a `next()`
+# over lines containing two substrings, which raises StopIteration if the schema
+# block is ever reformatted -- a guard that stops firing rather than complaining,
+# which is the failure it was written to prevent. The replacement asserts it
+# found something before asserting agreement, and covers order as well as
+# membership.
 # --------------------------------------------------------------------------
-
-def test_prompt_and_code_agree_on_the_closed_rule_set():
-    """prompt.md is the source of truth; `pe.validate` mirrors it. v0.0.7's
-    precedence bug was one rule stated in three places and changed in two."""
-    prompt = (ROOT / "prompt.md").read_text()
-    schema_line = next(line for line in prompt.splitlines()
-                       if '"rule":' in line and "reporter_or_marker" in line)
-    declared = {tok.strip().strip('",')
-                for tok in schema_line.split('"rule":')[1].split("|")}
-    declared = {d for d in declared if d.replace("_", "").isalpha()}
-    assert declared == set(SUPPRESSION_RULES), (
-        f"prompt.md declares {sorted(declared)}, pe.validate has "
-        f"{sorted(SUPPRESSION_RULES)}")
-
 
 # --------------------------------------------------------------------------
 # Triage: the new tier, and that it stays out of the way when it should.
