@@ -95,7 +95,8 @@ def triage_priority(result: dict) -> int:
     # NOT-list rule. Ranked below priority 1 because that bucket is an open
     # question a reader must resolve, while this is a settled call to ratify --
     # narrower, but far more actionable.
-    # Restricted to the rules under review (pe.validate.RULES_UNDER_REVIEW). The
+    # Restricted to the rules under review (task.rules.RULES_UNDER_REVIEW, from
+    # `record.yaml: secondary_arrays[0].reasons_under_review`). The
     # unrestricted version put 5 of the 6 regression papers in this tier, because
     # `observational_disease_state` pairs "yes" on any disease-vs-healthy
     # contrast; a tier that holds most papers is not a queue.

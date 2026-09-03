@@ -161,7 +161,7 @@ python -m pe.compare --baseline <old_run_dir>   # version-to-version diff
   | priority | meaning |
   |---|---|
   | P1 | `unclear` because the pairing was never stated — most likely to hide a real match, read first |
-  | P2 | not `yes`, but a suppressed candidate would have paired `yes` — one toggle flips the paper |
+  | P2 | not `yes`, but a suppressed candidate **under one of the four rules still in review** would have paired `yes` — one toggle flips the paper. Restricted on purpose: `observational_disease_state` pairs `yes` on any disease-vs-healthy contrast, and a tier holding most papers is not a queue |
   | P3 | `yes` with confidence < 0.6 |
   | P4 | `unclear` because the text was incomplete — send to re-fetch, do not read |
   | P5 | `no` but a perturbation exists elsewhere in the paper — the pairing filter fired; sample these |

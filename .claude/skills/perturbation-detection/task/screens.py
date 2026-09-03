@@ -38,8 +38,8 @@ ASSAY_SIGNALS: dict[str, list[str]] = dict(_REP["signals"]["assay"])
 #: Screen B rather than left to read as an assay hit.
 SUSPENSION_TRAP = re.compile(_REP["traps"]["suspension"], re.IGNORECASE)
 
-#: Titles and blurbs, keyed by screen id, so a heading cannot go stale the way
-#: Screen D's tier number did.
+#: Titles, blurbs and empty-notes, keyed by screen id, so a heading cannot go
+#: stale the way Screen D's tier number did.
 SCREENS = {str(s["id"]): s for s in _REP["screens"]}
 
 #: The caveat printed under the screen summary.
@@ -49,8 +49,40 @@ def _compile(groups: dict[str, list[str]]) -> dict[str, list[re.Pattern]]:
     return {g: [re.compile(p, re.IGNORECASE) for p in pats] for g, pats in groups.items()}
 
 
-COMPILED_PERT = _compile(PERTURBATION_SIGNALS)
-COMPILED_ASSAY = _compile(ASSAY_SIGNALS)
+#: Every keyword bank, keyed by its name in `report.yaml: signals`. A screen
+#: names the bank it wants with its own `grep` key rather than the module
+#: picking one, so adding a seventh screen with a third bank needs no code here.
+COMPILED = {str(name): _compile(dict(bank)) for name, bank in _REP["signals"].items()}
+
+COMPILED_PERT = COMPILED["perturbation"]
+COMPILED_ASSAY = COMPILED["assay"]
+
+
+def _bank(sid: str) -> dict[str, list[re.Pattern]]:
+    """The compiled keyword bank this screen's `grep` key names."""
+    return COMPILED[str(SCREENS[sid]["grep"])]
+
+
+def _blurb(sid: str) -> list[str]:
+    """The screen's explanation of itself, PRINTED from the table not restated.
+
+    These lines existed twice -- here as literals and in `report.yaml` -- which
+    is the shape that let Screen D's header say "priority 3" for four versions
+    after the renumber. A screen with no blurb (B and C, which lead with their
+    keyword hits) contributes no lines.
+    """
+    text = SCREENS[sid].get("blurb")
+    return str(text).rstrip("\n").splitlines() if text else []
+
+
+def _empty(sid: str) -> list[str]:
+    """What to print when a screen selected no papers, indented as a note.
+
+    Never silently nothing: "no papers matched" and "no papers were looked at"
+    have to read differently, which is why every screen declares this string.
+    """
+    text = SCREENS[sid].get("empty")
+    return ["", *(f"  {ln}" for ln in str(text).rstrip("\n").splitlines())] if text else []
 
 
 def screen(text: str, compiled: dict[str, list[re.Pattern]]) -> dict[str, dict]:
@@ -86,7 +118,7 @@ def render(loaded, text_for) -> tuple[list[str], dict[str, int]]:
     # ---- Screen A: assay-pairing disagreements ------------------------------
     lines.append("=" * 78)
     lines.append(f"SCREEN A — {SCREENS['A']['title']}")
-    lines.append("perturbation_present_any_assay = yes, but perturbation_present = no/unclear")
+    lines.extend(_blurb("A"))
     lines.append("=" * 78)
     for doi, result, _ in loaded:
         if not (result.get("validation") or {}).get("assay_filtered"):
@@ -119,8 +151,7 @@ def render(loaded, text_for) -> tuple[list[str], dict[str, int]]:
                 lines.append(f"        NOTE: pairing downgraded from "
                              f"{pert['pairing_downgraded_from']!r} — assay_evidence unverifiable")
     if not counts["A"]:
-        lines.append("")
-        lines.append("  none — the assay-pairing requirement changed no determinations")
+        lines.extend(_empty("A"))
 
     # ---- Screen B: possible missed single-cell assay ------------------------
     lines.append("")
@@ -131,7 +162,7 @@ def render(loaded, text_for) -> tuple[list[str], dict[str, int]]:
         if result.get("has_single_cell_assay") == "yes":
             continue
         text, unavailable = text_for(prompt_file)
-        found = screen(text, COMPILED_ASSAY)
+        found = screen(text, _bank("B"))
         traps = len(SUSPENSION_TRAP.findall(text))
         lines.append("")
         lines.append(f"{doi}   has_single_cell_assay={result.get('has_single_cell_assay')} "
@@ -160,7 +191,7 @@ def render(loaded, text_for) -> tuple[list[str], dict[str, int]]:
         if result.get("perturbation_present_any_assay") != "no":
             continue
         text, unavailable = text_for(prompt_file)
-        found = screen(text, COMPILED_PERT)
+        found = screen(text, _bank("C"))
         total = sum(g["count"] for g in found.values())
         lines.append("")
         lines.append(f"{doi}   any_assay=no conf={result.get('paper_confidence')} hits={total}")
@@ -183,7 +214,7 @@ def render(loaded, text_for) -> tuple[list[str], dict[str, int]]:
     lines.append("")
     lines.append("=" * 78)
     lines.append(f"SCREEN D — {SCREENS['D']['title']}")
-    lines.append("prompt.md step 10 priority 4: these go to the re-fetch queue, not to a reader")
+    lines.extend(_blurb("D"))
     lines.append("=" * 78)
     for doi, result, _ in loaded:
         validation = result.get("validation") or {}
@@ -200,16 +231,13 @@ def render(loaded, text_for) -> tuple[list[str], dict[str, int]]:
         if note:
             lines.append(f"  model's note: {note[:300]}")
     if not counts["D"]:
-        lines.append("")
-        lines.append("  none — no paper's negative rested on degraded text")
+        lines.extend(_empty("D"))
 
     # ---- Screen E: the multi-source path (validation loop step 4) -----------
     lines.append("")
     lines.append("=" * 78)
     lines.append(f"SCREEN E — {SCREENS['E']['title']}")
-    lines.append("prompt.md validation loop step 4: the one behaviour a main-text-only")
-    lines.append("sample cannot check. A perturbation resting ONLY on a supplementary")
-    lines.append("quote is one the v0.0.4 main-text-only run could not have found.")
+    lines.extend(_blurb("E"))
     lines.append("=" * 78)
     for doi, result, _ in loaded:
         perts = result.get("perturbations") or []
@@ -247,19 +275,13 @@ def render(loaded, text_for) -> tuple[list[str], dict[str, int]]:
             for quote in (pert.get("evidence_quotes") or [])[:1]:
                 lines.append(f"        {str(quote.get('quote'))[:160]}")
     if not counts["E"]:
-        lines.append("")
-        lines.append("  none — no supplementary-only evidence and no misattributed quotes")
+        lines.extend(_empty("E"))
 
     # ---- Screen F: suppressed candidates (v0.0.10) --------------------------
     lines.append("")
     lines.append("=" * 78)
     lines.append(f"SCREEN F — {SCREENS['F']['title']}")
-    lines.append("Rows marked >>> WOULD HAVE PAIRED YES are one toggle from flipping the")
-    lines.append("paper to 'yes'. They are a review of the RULES, not of the reading:")
-    lines.append("the model named the candidate and judged its pairing, then excluded it.")
-    lines.append("The paper-level marker counts only rules still under review, matching")
-    lines.append("triage P2; a settled toggle pairing 'yes' is annotated but not flagged,")
-    lines.append("since observational disease state alone would mark most clinical papers.")
+    lines.extend(_blurb("F"))
     lines.append("=" * 78)
 
     def _supp_sort_key(item):
@@ -314,11 +336,7 @@ def render(loaded, text_for) -> tuple[list[str], dict[str, int]]:
                 lines.append("        quote: (none — exclusion rests on the absence "
                              "of a statement)")
     if not counts["F"]:
-        lines.append("")
-        lines.append("  none — no paper recorded a suppressed candidate. On a corpus of any")
-        lines.append("  size that is itself suspicious: the NOT list is long, and a run where")
-        lines.append("  nothing was ever excluded more likely means the field is being")
-        lines.append("  skipped than that no paper had a candidate.")
+        lines.extend(_empty("F"))
     else:
         lines.append("")
         lines.append("  suppression rules used: "

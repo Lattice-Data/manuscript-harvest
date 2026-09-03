@@ -26,12 +26,19 @@
 
 name: perturbation-detection
 
-# 0.0.13 continues the prompt's own series rather than restarting, so a record
+# This continues the prompt's own series rather than restarting, so a record
 # from this pack stays comparable to the 392 scored under 0.0.12. The repo's
 # release tag is a separate number on purpose: fold them together and every
 # unrelated fetch-layer fix marks 392 stored records as wrong-version and
 # demands a re-score, which is the opposite of what a release should cost.
-version: 0.0.13
+#
+# 0.0.14 is the first bump since 0.0.12 to change a CRITERION: worked example 5
+# was re-decided under the third clinical-therapy condition it predated, so
+# determinations are expected to move on the incidental_clinical_therapy
+# boundary. The rest of 0.0.14 resolves places where the spec said two different
+# things -- a change in what the spec MEANS, even where a careful reader would
+# already have done the right thing.
+version: 0.0.14
 
 # What the model is asked, in one line, for a reader deciding whether this pack
 # is the one they want. The criteria live in prompt.md and nowhere else.

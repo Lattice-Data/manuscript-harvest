@@ -255,3 +255,70 @@ def test_the_low_confidence_threshold_matches_the_spec(spec, pack):
     assert f"< {threshold}" in step or f"<{threshold}" in step, (
         f"report.yaml says paper_confidence < {threshold} but the spec's step 10 "
         f"does not state that number")
+
+
+def _exclusion_table(spec: str) -> dict[str, str]:
+    """The eight-row table under "Recording an exclusion", as {rule: promotion}.
+
+    v0.0.14 made this table the single owner of the eight exclusion reasons'
+    SCOPES, which the prompt previously stated twice with an overlap: the
+    `routine_processing` paragraph and the `sample_handling_protocol` rule both
+    claimed a media-brand comparison, a storage-duration series and a
+    dissociation-enzyme benchmark, with no tiebreak -- so one population was
+    splitting across two buckets run to run (63 papers against 27 on the corpus).
+
+    Owning the scopes means restating the eight NAMES, which is a third
+    declaration site beside `record.yaml: reasons` and the schema block's `rule`
+    enum. This repo has been burned twice by a value stated in N places and
+    changed in fewer, so the duplication is guarded rather than tolerated.
+    """
+    heading = "**Recording an exclusion from this list.**"
+    assert heading in spec, (
+        "the spec no longer has the 'Recording an exclusion' section that owns "
+        "the eight exclusion reasons; this parser found nothing")
+    body = spec[spec.index(heading):]
+    rows: dict[str, str] = {}
+    in_body = False             # rows only count after the |---|---| separator,
+    for line in body.splitlines():  # or the header's own `rule` cell reads as one
+        if re.fullmatch(r"\|[\s\-:|]+\|", line):
+            in_body = True
+            continue
+        if not in_body:
+            continue
+        if not line.startswith("|"):
+            break               # table ended
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        name = re.fullmatch(r"`([a-z_]+)`", cells[0])
+        if name:
+            rows[name.group(1)] = cells[-1]
+    assert rows, "found the exclusion section but parsed no `rule` rows out of it"
+    return rows
+
+
+def test_the_exclusion_table_covers_exactly_the_closed_rule_set(spec, pack):
+    """One row per reason, no extras, or a rule has no stated scope again."""
+    declared = _exclusion_table(spec)
+    reasons = list(pack["record"]["secondary_arrays"][0]["reasons"])
+    assert sorted(declared) == sorted(reasons), (
+        f"exclusion-table drift:\n  table rows: {sorted(declared)}\n"
+        f"  record.yaml reasons: {sorted(reasons)}\n"
+        f"A reason with no row has no stated scope, which is the overlap "
+        f"v0.0.14 removed; a row with no reason cannot be tallied.")
+
+
+def test_every_exclusion_reason_states_whether_promotion_reaches_it(spec):
+    """The 1b fix, held.
+
+    The NOT-list heading used to carry a blanket "unless the paper makes the item
+    the manipulated variable", and four of the eight rules under it were flat
+    exclusions with no exception -- only ONE of which said so. A paper whose
+    studied variable was a reporter construct had the heading and the rule
+    pointing opposite ways. Each row now answers the question, so a ninth rule
+    added without an answer fails here rather than inheriting a blanket clause
+    that v0.0.5 already shipped as a bug.
+    """
+    for rule, verdict in _exclusion_table(spec).items():
+        assert re.match(r"\*\*(Yes|No)\.?\*\*", verdict), (
+            f"{rule}: the promotion column says {verdict[:60]!r}, which does not "
+            f"start with a bolded Yes or No. Every reason must state whether a "
+            f"biological-variable role can promote it out of the NOT list.")

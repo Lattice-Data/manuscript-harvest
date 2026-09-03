@@ -144,23 +144,18 @@ def test_no_key_in_the_harness_contract_is_read_by_nothing():
     HARNESS -- the relationship where a mismatch is silent and expensive, because
     the two sides ship separately and neither can see the other's literals.
 
-    The four tables are deliberately out of scope, and not because they are
-    clean. Two sets of keys in them are read by nothing today:
+    The four tables were once out of scope here, and not because they were
+    clean: `report.yaml`'s `blurb`/`empty`/`grep` and about fifteen `record.yaml`
+    shape keys were read by nothing, because the screen bodies and the pruning
+    logic had been moved VERBATIM rather than parameterised -- a deliberate
+    trade, since a verbatim move can be verified byte-for-byte where a rewrite
+    cannot. v0.0.14 wired them up and proved it byte-for-byte anyway. Two of
+    those keys turned out to be the harness-contract severity after all, not the
+    pack's own business: `reason_rules.none_value` and `required_when` are read
+    by `pe/validate.py`, so a pack changing either was silently ignored.
 
-      report.yaml   `blurb`, `empty`, `grep` -- this pack's `screens.py` emits
-                    its blurbs and empty-notes as literals, because the screen
-                    bodies were moved verbatim rather than parameterised.
-      record.yaml   `item_array.quotes_field`, `name_field`,
-                    `secondary_quote_field`, `secondary_downgrades`,
-                    `drop_when_no_verified_quote`, and the `ref_arrays` /
-                    `secondary_arrays` shape keys -- `rules.py` hardcodes
-                    `"evidence_quotes"`, `"assay_evidence"` and `"agent"`.
-
-    Those are documentation pretending to be configuration, and worth fixing --
-    but they are a pack talking to its OWN rule modules, both of which ship
-    together, so an author who edits one and not the other breaks their own pack
-    and finds out at once. Recorded here rather than suppressed in an allow-list,
-    so the finding survives whether or not anyone acts on it.
+    `test_no_key_in_a_pack_TABLE_is_read_by_nothing` below now covers all four,
+    with an allow-list that has to state a reason per key.
     """
     source = "\n".join(
         p.read_text() for p in
@@ -193,6 +188,40 @@ def _all_keys(node, out=None) -> set[str]:
         for value in node:
             _all_keys(value, out)
     return out
+
+
+def _keys_with_parents(node, parent, out) -> None:
+    """Every mapping key with the key it hangs under, for the table guard."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            out.setdefault(str(key), set()).add(parent)
+            _keys_with_parents(value, str(key), out)
+    elif isinstance(node, list):
+        for value in node:
+            _keys_with_parents(value, parent, out)
+
+
+#: Mappings whose CHILD keys are content rather than field names -- a bank name,
+#: a class name, a species -- reached by iterating the parent or by looking up a
+#: value read from elsewhere. A child here is legitimately absent from the
+#: source; a `blurb` under `screens` was not, which is the distinction this set
+#: draws and the reason it is a list of parents rather than of keys.
+CONTENT_PARENTS = {
+    "signals", "perturbation", "assay",     # keyword banks, and each bank's groups
+    "classes",                              # change-class names, looked up by value
+    "enums", "run_states", "open_fields",   # value sets and the fields they cover
+    "normalisers", "field_checks", "checks",
+    "column_limits", "single_cell_assay_types",   # {per_item, total} splatted as kwargs
+}
+
+#: Keys read by nothing ON PURPOSE, each with the reason. The point of the guard
+#: is that this list has to be written, not that it stays empty.
+TABLE_KEYS_FOR_A_HUMAN = {
+    "renumbered_at": "the version at which the ladder renumbered -- provenance for "
+                     "a reader, like task.yaml's `question`",
+    "inputs_from": "names the table `inputs` mirrors, so a reader can check the "
+                   "pair by hand",
+}
 
 
 # --------------------------------------------------------------------------
@@ -485,3 +514,44 @@ def test_run_headless_refuses_when_the_pending_list_cannot_be_computed(tmp_path)
         "a run whose pending list could not be computed exited 0 -- "
         "indistinguishable from a finished run")
     assert "NOT an empty queue" in probe.stderr + probe.stdout
+
+
+@pytest.mark.parametrize("table", ["record", "report", "decide", "change"])
+def test_no_key_in_a_pack_table_is_read_by_nothing(table):
+    """The finding this file used to merely record, now enforced.
+
+    `spec.read_back_marker` was the harness-contract case: declared, parsed, and
+    read by nothing, so a pack changing it was silently ignored and every quote
+    would have verified against the spec as readily as against the paper. The
+    four tables had the same rot in fifteen-odd places, and it was written off as
+    lower severity because a pack talking to its own rule modules fails loudly.
+
+    Two of them were not that at all. `reason_rules.none_value` and
+    `required_when` are read by `pe/validate.py` -- pack-to-HARNESS keys, across
+    the shipping boundary, where a mismatch is exactly as silent as
+    `read_back_marker`'s was. The severity argument was wrong on the facts, which
+    is the argument for testing rather than triaging.
+
+    A key that is genuinely for a human goes in `TABLE_KEYS_FOR_A_HUMAN` with its
+    reason. A mapping whose children are content goes in `CONTENT_PARENTS`. What
+    is not allowed is a field name nothing reads.
+    """
+    source = "\n".join(
+        p.read_text() for p in
+        sorted((ROOT / "pe").glob("*.py")) + sorted((ROOT / "task").glob("*.py")))
+    doc = yaml.safe_load((ROOT / "task" / f"{table}.yaml").read_text()) or {}
+
+    parents: dict[str, set[str]] = {}
+    _keys_with_parents(doc, f"<{table}>", parents)
+
+    dead = sorted(
+        key for key, ancestors in parents.items()
+        if f'"{key}"' not in source and f"'{key}'" not in source
+        and key not in TABLE_KEYS_FOR_A_HUMAN
+        and not (ancestors & CONTENT_PARENTS))
+    assert not dead, (
+        f"task/{table}.yaml declares {dead} and nothing in pe/ or task/ reads "
+        f"them. Wire the key up, delete it, or add it to TABLE_KEYS_FOR_A_HUMAN "
+        f"with a reason. A key nobody reads looks like it works and does not: "
+        f"`cap.reason` sat beside `reason_rules.cap_reason` holding the same "
+        f"value, with only the second one wired.")

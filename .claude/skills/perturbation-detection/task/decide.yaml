@@ -31,7 +31,11 @@ cap:
   when_completeness_not: full
   from: "no"
   to: unclear
-  reason: degraded_text
+  # No `reason:` here. It said `degraded_text`, which is what
+  # `reason_rules.cap_reason` below says and what the harness actually reads --
+  # one value stated twice in one file, and only one of them wired. That is the
+  # v0.0.7 shape in miniature, so the unread copy is gone rather than kept for
+  # symmetry.
 
 # CC-1 .. CC-6 are computed from the record; CC-7 is raised by the harness during
 # quote checking, when a quote cites a source_id that was never supplied. The

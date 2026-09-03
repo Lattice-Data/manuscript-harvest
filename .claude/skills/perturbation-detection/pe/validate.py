@@ -337,16 +337,25 @@ def validate_result(result: dict, sources_text: dict[str, str], threshold: float
 
     # unresolved_reason: "none" unless the final call is unclear; Stage B owns
     # the degraded_text case outright.
+    # `none_value` and `required_when` are read rather than restated: they were
+    # declared in the pack and hardcoded here, which is the `read_back_marker`
+    # shape -- a pack-to-HARNESS key that nothing read, so a pack changing it was
+    # silently ignored. `cap_reason` beside them was always read.
+    no_reason = REASON_RULES["none_value"]
+    needs_reason = REASON_RULES["required_when"]
     if capped:
         result["unresolved_reason"] = REASON_RULES["cap_reason"]
-    elif result[PRIMARY_FIELD] != "unclear" and result.get("unresolved_reason") != "none":
+    elif result[PRIMARY_FIELD] != needs_reason \
+            and result.get("unresolved_reason") != no_reason:
         issues.append(f"unresolved_reason={result.get('unresolved_reason')!r} but "
                       f"{PRIMARY_FIELD}={result[PRIMARY_FIELD]!r}; "
-                      f"forcing 'none'")
-        result["unresolved_reason"] = "none"
-    elif result[PRIMARY_FIELD] == "unclear" and result.get("unresolved_reason") in (None, "none"):
-        issues.append(f"{PRIMARY_FIELD}='unclear' with unresolved_reason='none'; "
-                      "the unclear bucket is not triageable without a reason")
+                      f"forcing {no_reason!r}")
+        result["unresolved_reason"] = no_reason
+    elif result[PRIMARY_FIELD] == needs_reason \
+            and result.get("unresolved_reason") in (None, no_reason):
+        issues.append(f"{PRIMARY_FIELD}={needs_reason!r} with "
+                      f"unresolved_reason={no_reason!r}; "
+                      f"the {needs_reason} bucket is not triageable without a reason")
 
     if final is not None and model_present != final:
         issues.append(
