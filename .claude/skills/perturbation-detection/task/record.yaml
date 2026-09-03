@@ -11,8 +11,12 @@
 # drift guard against prompt.md before now -- `suppression.rules` -- and that one
 # existed because v0.0.7 stated a rule in three places and changed it in two.
 
-# The classification's own values. Also `compare.ORDER`'s reading order, and the
-# enum three fields are checked against.
+# The classification's own values, and the enum three fields are checked against.
+# NOT the confusion matrix's reading order: `change.py` reads that from
+# `change.yaml: order`, which is deliberately a different sequence (yes/unclear/no
+# -- unclear sits between the two calls it lies between). Reordering this list
+# will not move that matrix, and the comment that said it would sent a
+# maintainer to the wrong file.
 # QUOTED, and the loader rejects an unquoted form. YAML 1.1 parses bare `yes`
 # and `no` as booleans, so `[yes, no, unclear]` loads as `[True, False,
 # 'unclear']` and every tri-state comparison in the harness silently stops
@@ -180,9 +184,15 @@ secondary_arrays:
 
 # Values counted as the same thing when tallying an open field. Used for
 # reporting only -- an organism never reaches the determination.
+#
+# There is deliberately no `field:` key here any more. It said `organism`, which
+# is the sample-level field, while the human tally reads the perturbation-level
+# `paired_organism` -- so the key named one of the two fields the normaliser is
+# applied to and could not drive either. `is_human(value)` takes a VALUE, not a
+# field: the caller decides what to normalise, which is why nothing read this and
+# why wiring it up would have been inventing a contract rather than honouring one.
 normalisers:
   human:
-    field: organism
     synonyms: [human, humans, homo sapiens, "h. sapiens", hsapiens, patient,
                "human (patient)", "9606"]
 

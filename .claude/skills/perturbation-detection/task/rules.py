@@ -44,21 +44,82 @@ PROCESSING_STATUS = tuple(_REC["run_states"]["processing_status"])
 TEXT_COMPLETENESS = tuple(_REC["run_states"]["text_completeness"])
 UNRESOLVED_REASONS = tuple(_REC["unresolved_reasons"])
 
+# The record's shape, READ rather than restated. These names were hardcoded here
+# while `record.yaml` declared them beside this file, which is documentation
+# pretending to be configuration -- the same rot that left five `config.yaml`
+# keys and `spec.read_back_marker` dead. A pack talking to its own rule modules
+# fails loudly rather than silently, which is why this was a lower-priority
+# finding than the harness contract, not why it was acceptable.
 _ITEMS = _REC["item_array"]
 _ITEM_PATH = _ITEMS["path"]
 _ITEM_LABEL = _ITEMS["label_field"]
+_ITEM_NAME = _ITEMS["name_field"]
+_ITEM_QUOTES = _ITEMS["quotes_field"]
+_ITEM_QUOTE_2 = _ITEMS["secondary_quote_field"]
+#: Which sub-field a failed secondary quote downgrades. The same field as
+#: `label_field` in this pack; a pack could name a different one.
+_ITEM_QUOTE_2_DOWNGRADES = _ITEMS["secondary_downgrades"]
+_ITEM_DROP_UNQUOTED = bool(_ITEMS["drop_when_no_verified_quote"])
+#: Fields checked for TYPE and never for value: a closed set would have to
+#: enumerate every model organism in advance.
+_ITEM_OPEN_FIELDS = dict(_ITEMS.get("open_fields") or {})
 CATEGORIES = set(_ITEMS["enums"]["category"])
+
+_REFS = _REC["ref_arrays"][0]
+_REF_PATH = _REFS["path"]
+_REF_FIELD = _REFS["ref_field"]
+_REF_POINTS_AT = _REFS["points_at"]
+_REF_TRISTATE_BOOLS = tuple(_REFS["tristate_bool_fields"])
+_REF_OPEN_FIELDS = dict(_REFS.get("open_fields") or {})
 
 _SUPP = _REC["secondary_arrays"][0]
 _SUPP_PATH = _SUPP["path"]
+_SUPP_NAME = _SUPP["name_field"]
+_SUPP_REASON = _SUPP["reason_field"]
+_SUPP_QUOTE = _SUPP["quote_field"]
+_SUPP_PAIRING = _SUPP["pairing_field"]
+_SUPP_KEEP_ON_QUOTE_FAILURE = bool(_SUPP["keep_entry_on_quote_failure"])
+_SUPP_QUOTE_OPTIONAL = bool(_SUPP["quote_optional"])
+_SUPP_UNVERIFIED_FLAG = _SUPP["unverified_flag"]
 SUPPRESSION_RULES = tuple(_SUPP["reasons"])
 RULES_UNDER_REVIEW = tuple(_SUPP["reasons_under_review"])
 
 HUMAN_SYNONYMS = frozenset(str(s) for s in _REC["normalisers"]["human"]["synonyms"])
 
+# Reindexing a ref array onto a pruned item array only means anything if the two
+# are the same array. Declared in the table, so it is checked here rather than
+# assumed: a pack that mismatches them gets a messaged failure at load instead of
+# refs silently remapped onto the wrong list.
+if _REF_POINTS_AT != _ITEM_PATH:
+    raise ValueError(
+        f"record.yaml: ref_arrays[0].points_at is {_REF_POINTS_AT!r} but the pruned "
+        f"item_array is {_ITEM_PATH!r}; references would be remapped onto a different "
+        f"array than the one being pruned")
+
+
 CC_TEXT = dict(_DEC["checks"])
 _CAP = _DEC["cap"]
 _DOWNGRADE = _REC["downgrade_confidence"]
+
+
+def _open_field_issues(obj: dict, prefix: str, declared: dict) -> list[str]:
+    """Type-check the fields the table declares OPEN, never their values.
+
+    A closed set would have to enumerate every model organism in advance, and
+    killifish is the case that breaks such a list -- so an unrecognised species
+    is not an error and a non-string, non-null value is. Driven off
+    `open_fields` rather than one `if` per field, which is how `paired_organism`
+    came to be checked while the declaration sat unread beside it.
+    """
+    out: list[str] = []
+    for name, kind in declared.items():
+        value = obj.get(name)
+        if kind != "string_or_null":
+            out.append(f"{prefix}.{name} declares open-field kind {kind!r}, which this "
+                       f"pack's rules do not know how to check")
+        elif not (value is None or isinstance(value, str)):
+            out.append(f"{prefix}.{name}={value!r} must be a string or null")
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -254,22 +315,23 @@ def validate_secondary(result: dict, verify, issues: list[str],
             issues.append(f"suppressed_candidates[{i}] is not an object")
             continue
 
-        rule = item.get("rule")
+        quote_failed = False
+        rule = item.get(_SUPP_REASON)
         if rule not in SUPPRESSION_RULES:
             issues.append(
-                f"suppressed_candidates[{i}].rule={rule!r} is outside the closed set "
-                f"{list(SUPPRESSION_RULES)} — an open value cannot be tallied, which "
-                f"is the whole point of the field")
-        if item.get("would_have_paired") not in TRISTATE:
-            issues.append(f"suppressed_candidates[{i}].would_have_paired="
-                          f"{item.get('would_have_paired')!r} not in yes/no/unclear")
-        if not str(item.get("candidate") or "").strip():
-            issues.append(f"suppressed_candidates[{i}].candidate is empty — the entry "
+                f"suppressed_candidates[{i}].{_SUPP_REASON}={rule!r} is outside the "
+                f"closed set {list(SUPPRESSION_RULES)} — an open value cannot be "
+                f"tallied, which is the whole point of the field")
+        if item.get(_SUPP_PAIRING) not in TRISTATE:
+            issues.append(f"suppressed_candidates[{i}].{_SUPP_PAIRING}="
+                          f"{item.get(_SUPP_PAIRING)!r} not in yes/no/unclear")
+        if not str(item.get(_SUPP_NAME) or "").strip():
+            issues.append(f"suppressed_candidates[{i}].{_SUPP_NAME} is empty — the entry "
                           f"names nothing and cannot be reviewed")
 
-        entry = item.get("evidence_quote")
+        entry = item.get(_SUPP_QUOTE)
         if isinstance(entry, str):
-            issues.append(f"suppressed_candidates[{i}].evidence_quote is a bare string, "
+            issues.append(f"suppressed_candidates[{i}].{_SUPP_QUOTE} is a bare string, "
                           f"expected {{source_id, quote}}")
             entry = {"source_id": "main", "quote": entry}
 
@@ -281,13 +343,13 @@ def validate_secondary(result: dict, verify, issues: list[str],
             item["quote_check"] = outcome
 
             if outcome["status"] == "verified":
-                item["evidence_quote"] = {"source_id": claimed, "quote": quote}
+                item[_SUPP_QUOTE] = {"source_id": claimed, "quote": quote}
             elif outcome["status"] in ("wrong_source", "unknown_source"):
                 wrong_source += 1
                 flags.add("EV-WRONG-SOURCE")
-                item["evidence_quote"] = {"source_id": outcome["source_id"],
-                                          "quote": quote,
-                                          "source_id_corrected_from": claimed}
+                item[_SUPP_QUOTE] = {"source_id": outcome["source_id"],
+                                     "quote": quote,
+                                     "source_id_corrected_from": claimed}
                 if outcome["status"] == "unknown_source":
                     flags.add("CC-7")
                     issues.append(f"suppressed_candidates[{i}] quote cited unknown source "
@@ -298,18 +360,31 @@ def validate_secondary(result: dict, verify, issues: list[str],
                                   f"(EV-WRONG-SOURCE)")
             else:
                 failed += 1
-                flags.add("EV-SUPPRESSED-UNVERIFIED")
+                quote_failed = True
+                flags.add(_SUPP_UNVERIFIED_FLAG)
+                # A harness-derived annotation, not a declared field: `screens.py`
+                # and `report.py` read this and the other `*_check` keys by the
+                # same literal, so it is deliberately not derived from the table.
                 item["evidence_quote_dropped"] = {"source_id": claimed, "quote": quote}
-                item["evidence_quote"] = None
+                item[_SUPP_QUOTE] = None
+                kept_note = ("quote dropped, ENTRY KEPT"
+                             if _SUPP_KEEP_ON_QUOTE_FAILURE else "ENTRY DROPPED")
                 issues.append(
-                    f"suppressed_candidates[{i}] ({str(item.get('candidate'))[:50]!r}) "
+                    f"suppressed_candidates[{i}] ({str(item.get(_SUPP_NAME))[:50]!r}) "
                     f"quote unverifiable in any source (best ratio {outcome['ratio']}) — "
-                    f"quote dropped, ENTRY KEPT (EV-SUPPRESSED-UNVERIFIED)")
+                    f"{kept_note} ({_SUPP_UNVERIFIED_FLAG})")
         else:
             # Legitimate per the prompt: an exclusion resting on the ABSENCE of a
             # statement has nothing to quote. `why` is expected to say so.
-            item["evidence_quote"] = None
+            if not _SUPP_QUOTE_OPTIONAL:
+                issues.append(f"suppressed_candidates[{i}].{_SUPP_QUOTE} is absent, and "
+                              f"this pack does not allow a quoteless entry")
+            item[_SUPP_QUOTE] = None
 
+        if quote_failed and not _SUPP_KEEP_ON_QUOTE_FAILURE:
+            # Not this pack: dropping the entry would restore exactly the silence
+            # the field was added to remove. Honoured so the declaration is real.
+            continue
         entries.append(item)
 
     # `would_have_paired` is held to Step 3's evidence standard, not used as an
@@ -319,9 +394,9 @@ def validate_secondary(result: dict, verify, issues: list[str],
     # 10.1038/s41586-024-07571-1 and 10.7554/elife.104978.2, both moved yes ->
     # no by a wrongly-suppressed clinical therapy). Mechanically checkable, so it
     # is checked. This raises an issue only: judgment stays in the prompt.
-    if len(entries) >= 2 and all(e.get("would_have_paired") == "yes" for e in entries):
+    if len(entries) >= 2 and all(e.get(_SUPP_PAIRING) == "yes" for e in entries):
         issues.append(
-            f"all {len(entries)} suppressed candidates have would_have_paired='yes'; "
+            f"all {len(entries)} suppressed candidates have {_SUPP_PAIRING}='yes'; "
             f"the column has stopped discriminating. Check that none of them is "
             f"actually a perturbation under a Step 2 report rule — filling "
             f"suppressed_candidates must not shorten the perturbations array")
@@ -386,16 +461,16 @@ def metrics(result: dict, ctx: dict) -> dict:
         # What the NOT list swallowed on this paper. `would_pair_yes` is the
         # actionable one -- those papers are one toggle from "yes".
         "n_suppressed": len(suppressed),
-        "suppressed_rules": sorted({str(s.get("rule")) for s in suppressed
-                                    if s.get("rule") in SUPPRESSION_RULES}),
+        "suppressed_rules": sorted({str(s.get(_SUPP_REASON)) for s in suppressed
+                                    if s.get(_SUPP_REASON) in SUPPRESSION_RULES}),
         # Both are reported: the raw fact, and the subset triage acts on. A
         # curator comparing them sees how much of the suppression load comes from
         # settled toggles rather than from the rules in review.
         "suppressed_would_pair_yes": any(
-            s.get("would_have_paired") == "yes" for s in suppressed),
+            s.get(_SUPP_PAIRING) == "yes" for s in suppressed),
         "suppressed_would_pair_yes_under_review": any(
-            s.get("would_have_paired") == "yes"
-            and s.get("rule") in RULES_UNDER_REVIEW for s in suppressed),
+            s.get(_SUPP_PAIRING) == "yes"
+            and s.get(_SUPP_REASON) in RULES_UNDER_REVIEW for s in suppressed),
         "suppressed_quotes_checked": ctx["secondary_checked"],
         "suppressed_quotes_failed": ctx["secondary_failed"],
         # WHOSE sample the `yes` pairings refer to. Descriptive only -- nothing
@@ -474,17 +549,14 @@ def validate_items(result: dict, verify, issues: list[str],
 
         # v0.0.12. Type only; the value set is open. Never rejected for being an
         # unusual species, never inferred when absent.
-        if not (pert.get("paired_organism") is None
-                or isinstance(pert.get("paired_organism"), str)):
-            issues.append(f"perturbations[{i}].paired_organism="
-                          f"{pert.get('paired_organism')!r} must be a string or null")
+        issues.extend(_open_field_issues(pert, f"{_ITEM_PATH}[{i}]", _ITEM_OPEN_FIELDS))
 
         paired = pert.get("single_cell_paired")
         if paired not in TRISTATE:
             issues.append(
                 f"perturbations[{i}].single_cell_paired={paired!r} not in yes/no/unclear")
 
-        raw_quotes = pert.get("evidence_quotes") or []
+        raw_quotes = pert.get(_ITEM_QUOTES) or []
         if isinstance(raw_quotes, (str, dict)):
             raw_quotes = [raw_quotes]
 
@@ -521,11 +593,11 @@ def validate_items(result: dict, verify, issues: list[str],
                               f"(best ratio {outcome['ratio']}) — dropped")
 
         pert["quote_checks"] = quote_checks
-        pert["evidence_quotes"] = verified_quotes
+        pert[_ITEM_QUOTES] = verified_quotes
         pert["quotes_validated"] = bool(verified_quotes)
 
         # assay_evidence: object or null in v0.0.5.
-        assay_ev = pert.get("assay_evidence")
+        assay_ev = pert.get(_ITEM_QUOTE_2)
         if isinstance(assay_ev, str):
             issues.append(f"perturbations[{i}].assay_evidence is a bare string "
                           f"(v0.0.4 assay_evidence_quote shape)")
@@ -538,7 +610,7 @@ def validate_items(result: dict, verify, issues: list[str],
             if outcome["status"] == "unverified":
                 failed += 1
                 if paired in ("yes", "no"):
-                    pert["single_cell_paired"] = "unclear"
+                    pert[_ITEM_QUOTE_2_DOWNGRADES] = "unclear"
                     pert["pairing_downgraded_from"] = paired
                     paired = "unclear"
                     flags.add("EV-PAIRING-DOWNGRADED")
@@ -552,7 +624,7 @@ def validate_items(result: dict, verify, issues: list[str],
                 flags.add("EV-WRONG-SOURCE")
                 assay_ev = dict(assay_ev, source_id=outcome["source_id"],
                                 source_id_corrected_from=assay_ev.get("source_id"))
-                pert["assay_evidence"] = assay_ev
+                pert[_ITEM_QUOTE_2] = assay_ev
         elif paired in ("yes", "no"):
             # Legitimate per the prompt (an inferred pairing), but recorded so a
             # curator can see the pairing is not quoted.
@@ -560,12 +632,12 @@ def validate_items(result: dict, verify, issues: list[str],
                 f"perturbations[{i}].single_cell_paired={paired!r} asserted with no "
                 f"assay_evidence (pairing is inferred, not quoted)")
 
-        if not verified_quotes:
+        if not verified_quotes and _ITEM_DROP_UNQUOTED:
             # batch spec step 6: zero verified quotes -> drop the perturbation.
             flags.add("EV-PERT-DROPPED")
             issues.append(
-                f"perturbations[{i}] ({pert.get('agent')!r}) DROPPED: no evidence quote "
-                f"could be verified against any source")
+                f"perturbations[{i}] ({pert.get(_ITEM_NAME)!r}) DROPPED: no evidence "
+                f"quote could be verified against any source")
             pert["dropped_reason"] = "no verifiable evidence quote"
             pert["confidence_original"] = pert.get("confidence")
             pert["confidence"] = _DOWNGRADE
@@ -582,41 +654,40 @@ def validate_items(result: dict, verify, issues: list[str],
         result[f"{_ITEM_PATH}_dropped"] = dropped
 
     # ---- samples ----------------------------------------------------------
-    for j, sample in enumerate(result.get("samples") or []):
+    for j, sample in enumerate(result.get(_REF_PATH) or []):
         if not isinstance(sample, dict):
-            issues.append(f"samples[{j}] is not an object")
+            issues.append(f"{_REF_PATH}[{j}] is not an object")
             continue
         # v0.0.5 curator ruling: true | false | "unclear" are all schema-legal,
         # so "unclear" is no longer an issue. Only pe.summarize's `is true` test
         # decides what counts as perturbed.
-        if sample.get("perturbed") not in (True, False, "unclear"):
-            issues.append(
-                f"samples[{j}].perturbed={sample.get('perturbed')!r} not in "
-                f"true/false/'unclear'")
+        for field in _REF_TRISTATE_BOOLS:
+            if sample.get(field) not in (True, False, "unclear"):
+                issues.append(
+                    f"{_REF_PATH}[{j}].{field}={sample.get(field)!r} not in "
+                    f"true/false/'unclear'")
         if sample.get("is_single_cell_assay") not in TRISTATE:
             issues.append(f"samples[{j}].is_single_cell_assay="
                           f"{sample.get('is_single_cell_assay')!r} not in yes/no/unclear")
         # v0.0.12. Type only -- the value set is open by design, so an
         # unrecognised species is not an error. A non-string, non-null value is.
-        if not (sample.get("organism") is None or isinstance(sample.get("organism"), str)):
-            issues.append(f"samples[{j}].organism={sample.get('organism')!r} must be a "
-                          f"string or null")
+        issues.extend(_open_field_issues(sample, f"{_REF_PATH}[{j}]", _REF_OPEN_FIELDS))
         # Reindex refs onto the pruned array so they never dangle.
-        refs = sample.get("perturbation_refs") or []
+        refs = sample.get(_REF_FIELD) or []
         remapped = []
         for ref in refs:
             if not isinstance(ref, int) or ref not in index_map:
                 if isinstance(ref, int) and 0 <= ref < len(perturbations):
-                    issues.append(f"samples[{j}].perturbation_refs -> {ref} pointed at a "
+                    issues.append(f"{_REF_PATH}[{j}].{_REF_FIELD} -> {ref} pointed at a "
                                   f"dropped perturbation; reference removed")
                 else:
-                    issues.append(f"samples[{j}].perturbation_refs contains invalid "
+                    issues.append(f"{_REF_PATH}[{j}].{_REF_FIELD} contains invalid "
                                   f"index {ref!r}")
                 continue
             remapped.append(index_map[ref])
         if remapped != refs:
-            sample["perturbation_refs_original"] = refs
-            sample["perturbation_refs"] = remapped
+            sample[f"{_REF_FIELD}_original"] = refs
+            sample[_REF_FIELD] = remapped
     return {"kept": kept, "dropped": dropped, "index_map": index_map,
             "checked": checked, "failed": failed, "wrong_source": wrong_source}
 

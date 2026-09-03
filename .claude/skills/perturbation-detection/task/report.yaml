@@ -33,7 +33,7 @@ tiers:
   - n: 1
     label: "unclear + pairing_not_stated  (may hide a real match — read first)"
   - n: 2
-    label: "not yes + a suppressed candidate would have paired yes  (v0.0.10)"
+    label: "not yes + a suppressed candidate under a rule IN REVIEW would have paired yes"
   - n: 3
     label: "yes with paper_confidence < 0.6"
   - n: 4
@@ -300,5 +300,25 @@ signals:
     - \bXenium\b
     - \bCosMx\b
     - \bSTARmap\b
+    # v0.0.8 made spatial qualify in ALL its forms, segmentation not required,
+    # and this bank still held only the imaging-resolution assays -- so on a
+    # Visium- or Slide-seq-only paper Screen B printed "no qualifying-assay
+    # language found, 'no' looks well supported". A screen that reassures because
+    # it cannot see is worse than no screen.
+    spatial_spot_or_bead:
+    - \bVisium\b
+    - \bSlide[- ]seq(?:V2)?\b
+    - \bSlide[- ]tags\b
+    - \bSlide[- ]TCR[- ]seq\b
+    - \bGeoMx\b
+    - \bspatial transcriptomics?\b
+    # Single-cell V(D)J qualifies and BULK repertoire sequencing does not, so
+    # these are anchored to the single-cell forms. Nothing in the bank matched
+    # them at all before, which is the same blind spot as the spatial one.
+    immune_repertoire:
+    - \bsingle[- ]cell (?:TCR|BCR|V\(D\)J)\b
+    - \bsc(?:TCR|BCR)[- ]?seq\b
+    - \bImmune Profiling\b
+    - \bV\(D\)J (?:profiling|sequencing|enrichment)\b
     single_cell_dna:
     - \bsingle[- ]cell (?:DNA|whole[- ]genome|exome)\b
