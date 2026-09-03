@@ -77,7 +77,12 @@ HARNESS_RAISED_CHECKS = tuple(_DEC.get("harness_raised_checks") or ())
 #: Post-conditions on the reason an `unclear` gives for itself.
 REASON_RULES = dict(_DEC["reason_rules"])
 #: The non-determinative array's name, for the one write-back the harness makes.
-SECONDARY_PATH = _REC["secondary_arrays"][0]["path"]
+#: None when the pack declares none -- a "considered and rejected" array is one
+#: task's answer to keeping its exclusions visible, not a requirement of the
+#: shape. Indexing [0] unconditionally made it one, and a pack without it died at
+#: IMPORT with `IndexError: list index out of range`.
+_SECONDARY = _REC.get("secondary_arrays") or []
+SECONDARY_PATH = _SECONDARY[0]["path"] if _SECONDARY else None
 
 
 def _field_checks() -> list[dict]:
@@ -285,7 +290,8 @@ def validate_result(result: dict, sources_text: dict[str, str], threshold: float
     # recomputation reads. See `_validate_suppressed`.
     suppressed, s_checked, s_failed, s_wrong = validate_secondary(
         result, verify, issues, evidence_flags)
-    result[SECONDARY_PATH] = suppressed
+    if SECONDARY_PATH:
+        result[SECONDARY_PATH] = suppressed
     checked += s_checked
     failed += s_failed
     wrong_source += s_wrong

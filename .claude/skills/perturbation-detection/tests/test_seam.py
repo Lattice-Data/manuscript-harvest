@@ -22,6 +22,7 @@ Run: python -m pytest tests/test_seam.py -q
 """
 from __future__ import annotations
 
+import ast
 import io
 import sys
 import tokenize
@@ -100,30 +101,59 @@ def test_runroot_takes_its_names_from_the_pack_with_no_fallback():
         output_name("a_key_no_pack_declares")
 
 
-def test_the_pack_supplies_everything_the_harness_asks_of_it():
-    """The interface, asserted as a list rather than discovered by a crash.
+def _harness_imports() -> dict[str, set[str]]:
+    """What `pe/` actually imports from the pack, read out of the source.
 
-    This is the checklist a second pack has to satisfy, so it is stated in one
-    place and tested. A pack missing any of these fails at import today; the
-    point of naming them is that a pack AUTHOR can read the requirement without
-    running anything.
+    Derived, not listed. This test used to carry a hand-written checklist of the
+    interface, and running a second pack found it was missing FIVE symbols the
+    harness genuinely imports -- `CC_TEXT`, `PRIMARY_FIELD_GLOSS`, `FOOTER`,
+    `DIFF_PREAMBLE`, `NOISE_CLASS`. A hand-maintained list of what the interface
+    is, is exactly the duplication this whole split was about, and it drifted the
+    same way everything else did.
     """
-    import task.change as change
-    import task.report as report
-    import task.rules as rules
-    import task.screens as screens
+    required: dict[str, set[str]] = {}
+    for path in HARNESS:
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("task"):
+                required.setdefault(node.module, set()).update(
+                    alias.name for alias in node.names)
+    return required
 
-    for module, names in (
-        (rules, ("decide", "checks", "metrics", "validate_items",
-                 "validate_secondary", "extra_field_issues", "progress_line")),
-        (report, ("COLUMNS", "TIERS", "triage_priority", "row_for", "counters")),
-        (screens, ("SCREENS", "render")),
-        (change, ("ORDER", "CLASS_LABELS", "UNEXPLAINED", "PRIMARY_FIELD",
-                  "classify", "determination_inputs", "render_paper",
-                  "render_unchanged")),
-    ):
-        missing = [n for n in names if not hasattr(module, n)]
-        assert not missing, f"{module.__name__} is missing {missing}"
+
+def test_the_pack_supplies_everything_the_harness_asks_of_it():
+    """Every name `pe/` imports from the pack must exist.
+
+    A pack missing one fails at import today; the point of checking it here is
+    that a pack AUTHOR gets a list rather than a traceback, and that the list is
+    computed from the harness rather than remembered.
+    """
+    import importlib
+
+    required = _harness_imports()
+    assert required, "no `from task...` imports found in pe/ -- parser broken"
+    missing: dict[str, list[str]] = {}
+    for module_name, names in sorted(required.items()):
+        module = importlib.import_module(module_name)
+        absent = sorted(n for n in names if not hasattr(module, n))
+        if absent:
+            missing[module_name] = absent
+    assert not missing, f"the pack does not supply {missing}"
+
+
+def test_the_interface_is_small_enough_to_be_written_down():
+    """A soft ceiling, and a deliberate one.
+
+    The interface is what a second pack must implement, so its size is the cost
+    of asking a different question. Twenty-five names across four modules is
+    already more than anyone will hold in their head; if it grows much past this,
+    the harness is asking the pack to do its thinking and the split needs
+    revisiting rather than the number.
+    """
+    total = sum(len(v) for k, v in _harness_imports().items() if k != "task")
+    assert total <= 30, (
+        f"the pack interface is now {total} names. Every one is something a "
+        f"second pack must supply, so growth here is a real cost -- check "
+        f"whether the harness should be reading data instead.")
 
 
 def test_all_four_tables_exist_and_are_named_for_what_they_hold():

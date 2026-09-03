@@ -55,8 +55,8 @@ from pe.runstate import RunError, load_manifest, resolve_run_dir  # noqa: E402
 # the confusion matrix, computes the noise floor and warns about UNEXPLAINED --
 # none of which knows what a perturbation is.
 from task.change import (  # noqa: E402
-    CLASS_LABELS, ORDER, PRIMARY_FIELD, PRIMARY_FIELD_GLOSS, UNEXPLAINED, classify,
-    render_paper, render_unchanged,
+    CLASS_LABELS, DIFF_PREAMBLE, NOISE_CLASS, ORDER, PRIMARY_FIELD,
+    PRIMARY_FIELD_GLOSS, UNEXPLAINED, classify, render_paper, render_unchanged,
 )
 
 
@@ -178,10 +178,12 @@ def main() -> int:
     lines.append(f"  baseline: {baseline}")
     lines.append("")
     lines.append(f"Both columns are {PRIMARY_FIELD_GLOSS}, so this is a")
-    lines.append("like-for-like diff of the primary curation field. Check whether the two")
-    lines.append("runs saw the same input scope: a baseline built before supplementary")
-    lines.append("sources were included is not comparable on evidence alone, and the")
-    lines.append("SUPP-EVIDENCE class below flags papers where that mattered.")
+    lines.append("like-for-like diff of the primary curation field.")
+    # The rest of this preamble is the PACK's, because the caveat worth printing
+    # depends on the question. This block used to end by telling every reader to
+    # check the SUPP-EVIDENCE class -- a change class only one pack declares, so
+    # a second pack's report pointed at a class absent from its own table.
+    lines.extend(DIFF_PREAMBLE)
     lines.append("")
     b_lbl = "/".join(sorted(base_versions))
     n_lbl = "/".join(sorted(versions))
@@ -219,7 +221,7 @@ def main() -> int:
                      "Pass --baseline2 with a second run of the same prompt.")
 
     class_counts = Counter(c for doi, old, new, _ in changed
-                           for c in (["WITHIN-NOISE"] if doi in noise
+                           for c in ([NOISE_CLASS] if doi in noise
                                      else classify(new, old)))
     lines.append("")
     lines.append("change classes (a paper can fall in more than one)")

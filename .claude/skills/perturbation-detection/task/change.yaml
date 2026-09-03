@@ -60,6 +60,13 @@ classes:
 # file is kept short.
 unexplained_class: UNEXPLAINED
 
+# The class the HARNESS assigns, for a paper that also disagrees with itself
+# across two runs of the baseline. The harness computes the noise floor so it
+# owns the concept, but the label is rendered from `classes` above -- so the name
+# has to live here, or a pack omitting the key has papers counted into a class
+# that is never printed. Found by running a second pack.
+noise_class: WITHIN-NOISE
+
 # Matching the same construct across two runs, for the SUPPRESSED class. The two
 # runs describe it in their own words -- "SFTPC-GFP reporter line" against
 # "lentiviral SFTPC-promoter-GFP + EF1a-TagRFP reporter" -- so an exact match
