@@ -130,3 +130,29 @@ mixed-species and xenograft cases, and does not move determinations.
 
 Not licensed: the `null` rate, above. And this is 50 papers — the corpus is 392,
 and 342 of them have never been scored under v0.0.12.
+
+## The protocol this was run against
+
+Carried over from `PROPOSAL-organism.md`, which shipped as v0.0.12 and is deleted
+rather than left reading as an open proposal. The protocol is worth keeping
+because a new required field has now three times acted as an attractor, and this
+is the shape of test that catches it:
+
+- a determination-only diff against a **preserved** baseline of the previous
+  version, **run twice** -- a single run cannot tell an attractor from ordinary
+  variance;
+- an acceptance set covering every value the field can take, including the mixed
+  cases, which are the real test: they must report both values rather than
+  collapsing to one;
+- **and at least one paper that must NOT populate the field at all.** A field
+  that fills in on everything has stopped discriminating, and that pattern
+  travelled with `suppressed_candidates` pulling real perturbations across the
+  line.
+
+Expected result: zero determination changes. Any movement is the attractor, not
+the field.
+
+**What this cost, recorded because the next proposal will want it:** the field
+bump meant the 392 existing per-paper records predated it and would not carry it,
+so populating it needed a full re-run. It did not need a criteria change, which
+is what made it a materially safer edit than v0.0.9 and v0.0.10.
