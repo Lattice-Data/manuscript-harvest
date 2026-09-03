@@ -50,5 +50,12 @@ oa-direct*
 reextract-*.jsonl
 reextract-*.log
 review-10.*.html
+# Slide decks. Derived artifacts: a deck is built FROM
+# .claude/skills/perturbation-detection/EXPLAINED.md, which is the version that
+# is worth versioning -- it is text, it diffs, and every number in it reconciles
+# against the corpus. A 2.5 MB binary that re-renders from it earns nothing in
+# git and costs a full copy per revision.
+*.pptx
+*.potx
 # Office lock files, created beside a .pptx while it is open.
 ~$*
