@@ -136,7 +136,17 @@ for e in json.load(open(os.path.join(work, "manifest.json"))):
     if state != "done":
         print(e["doi"])
 PYEOF
-)
+) || {
+  # A crash here used to leave $DOIS empty, and an empty queue reads as "nothing
+  # pending" -- so a broken pack, or any import error, reported
+  # "nothing to do ... every paper already has a result" and exited 0. Found by
+  # running a second task pack whose record.yaml declares no secondary array:
+  # pe/validate.py raised IndexError at import and this script called it success.
+  # The same vacuous-pass shape pe/runstate.py exists to prevent, one layer up.
+  echo "FAILED to compute the pending list -- see the traceback above." >&2
+  echo "  Nothing was run. This is NOT an empty queue." >&2
+  exit 4
+}
 
 if [ -z "$DOIS" ]; then
   echo "nothing to do -- every paper in $WORK/manifest.json already has a result"

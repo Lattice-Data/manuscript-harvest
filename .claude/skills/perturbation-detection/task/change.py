@@ -34,6 +34,7 @@ ORDER = list(_CHG["order"])
 #: corpus run.
 CLASS_LABELS = dict(_CHG["classes"])
 UNEXPLAINED = str(_CHG["unexplained_class"])
+NOISE_CLASS = str(_CHG["noise_class"])
 
 _MATCH = _CHG["match"]
 _MIN_SHARED = int(_MATCH["min_shared_words"])
@@ -42,6 +43,17 @@ _STOPWORDS = frozenset(str(w) for w in _MATCH["stopwords"])
 
 #: The determination's input set, from decide.yaml. Read rather than restated:
 #: this list and the decision must agree about what the decision reads.
+#: Printed under the confusion matrix. Which caveat is worth giving a reader
+#: depends on the question, so it is the pack's. This text was three hardcoded
+#: lines in `pe/compare.py` that named SUPP-EVIDENCE -- a class only this pack
+#: declares -- so a second pack's report pointed at a class absent from its own
+#: table.
+DIFF_PREAMBLE = [
+    "Check whether the two runs saw the same input scope: a baseline built before",
+    "supplementary sources were included is not comparable on evidence alone, and",
+    "the SUPP-EVIDENCE class below flags papers where that mattered.",
+]
+
 _INPUTS = dict(_DEC["inputs"])
 
 def determination_inputs(result: dict) -> dict:
