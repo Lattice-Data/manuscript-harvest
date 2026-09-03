@@ -26,10 +26,11 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from pe.paper_text import entry_paths  # noqa: E402
+
 from pe.validate import parse_raw  # noqa: E402
 
 from pe.runroot import work_default  # noqa: E402
+from pe.runstate import entry_paths  # noqa: E402
 
 # The fields pe/extract_workflow.js reads off each manifest entry.
 ARG_FIELDS = ("doi", "prompt_file", "prompt_lines", "prompt_chars", "chars",

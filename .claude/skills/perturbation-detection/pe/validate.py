@@ -31,10 +31,10 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from pe.paper_text import (  # noqa: E402
-    entry_paths, split_assembled, verify_quote_sourced,
+from pe.paper_text import split_assembled, verify_quote_sourced  # noqa: E402
+from pe.pack import (  # noqa: E402
+    PackError, load as load_pack, read_back_marker, tables,
 )
-from pe.pack import PackError, load as load_pack, tables  # noqa: E402
 
 try:
     import yaml
@@ -42,7 +42,9 @@ except ImportError:
     yaml = None
 
 from pe.runroot import output_name, work_default  # noqa: E402
-from pe.runstate import RunError, load_manifest, resolve_run_dir  # noqa: E402
+from pe.runstate import (  # noqa: E402
+    RunError, entry_paths, load_manifest, resolve_run_dir,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -127,12 +129,26 @@ def parse_raw(text: str) -> dict:
     raise ValueError("no JSON object found")
 
 
-def paper_text_from_prompt(prompt_file: Path) -> str:
-    """Recover exactly the PAPER_TEXT the model saw, so validation is honest."""
+def paper_text_from_prompt(prompt_file: Path, marker: str | None = None) -> str:
+    """Recover exactly the PAPER_TEXT the model saw, so validation is honest.
+
+    `marker` is the pack's `spec.read_back_marker` -- the line `pe.prepare` wrote
+    before the paper text. It was hardcoded here as `"\nPAPER_TEXT:"` while
+    `task.yaml` declared it and `pack.py` parsed it into
+    `TaskPack.read_back_marker`, which **nothing read**. A dead pack key looks
+    like it works and does not: a pack declaring any other marker was silently
+    ignored, and the recovered "paper text" would have been the whole prompt file
+    including the instructions -- so every quote would verify against the spec as
+    readily as against the paper.
+
+    Defaulted rather than required only so the tests that call this with a
+    hand-built prompt stay readable; every caller in `pe/` passes the pack's
+    value. The default is `read_back_marker()`, which comes from the pack too.
+    """
     body = prompt_file.read_text()
-    marker = "\nPAPER_TEXT:"
-    idx = body.rindex(marker)
-    return body[idx + len(marker):].lstrip("\n")
+    needle = marker if marker is not None else read_back_marker()
+    idx = body.rindex(needle)
+    return body[idx + len(needle):].lstrip("\n")
 
 
 #: The record field a pre-0.0.13 result carries instead of `task_version`.
@@ -401,6 +417,7 @@ def main() -> int:
     # .claude/skills/perturbation-detection/corpus/ came to exist.
     corpus = Path(args.corpus or config.get("corpus_dir") or "./corpus")
 
+    pack = None
     try:
         pack = load_pack()
         expected_schema, pack_sha = pack.version, pack.sha256()
@@ -415,6 +432,9 @@ def main() -> int:
     # record. The pack is the one declaration; there is nothing else to read.
     version = expected_schema
 
+    # From the pack, once, rather than per paper. `pe.prepare` wrote it; this is
+    # the other half of that agreement.
+    marker = pack.read_back_marker if pack is not None else None
     work = resolve_run_dir(Path(args.work))
     manifest = load_manifest(work)
     (work / "validated").mkdir(parents=True, exist_ok=True)
@@ -443,7 +463,7 @@ def main() -> int:
 
         result.setdefault("paper_id", doi)
         try:
-            paper_text = paper_text_from_prompt(prompt_file)
+            paper_text = paper_text_from_prompt(prompt_file, marker)
         except (FileNotFoundError, ValueError) as exc:
             # Unguarded, this aborted the entire run on the FIRST such paper and
             # wrote nothing to validated/ -- including for every paper already

@@ -42,11 +42,12 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from pe.paper_text import entry_paths  # noqa: E402
+
+from pe.pack import read_back_marker  # noqa: E402
 from pe.validate import paper_text_from_prompt  # noqa: E402
 
 from pe.runroot import output_default, output_name, work_default  # noqa: E402
-from pe.runstate import RunError, load_validated  # noqa: E402
+from pe.runstate import RunError, entry_paths, load_validated  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -82,7 +83,7 @@ def _paper_text(prompt_file: Path) -> tuple[str, str | None]:
     assay language found", which reads as evidence FOR the model's answer.
     """
     try:
-        return paper_text_from_prompt(prompt_file), None
+        return paper_text_from_prompt(prompt_file, read_back_marker()), None
     except (FileNotFoundError, ValueError) as exc:
         return "", f"paper text unavailable ({type(exc).__name__}: {prompt_file})"
 
