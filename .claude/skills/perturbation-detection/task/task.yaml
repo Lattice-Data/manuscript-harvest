@@ -39,6 +39,17 @@ question: >-
   Were the samples actually profiled by a single-cell or single-nucleus
   sequencing assay experimentally perturbed?
 
+# Names the harness would otherwise hardcode. A second pack in the same repo
+# needs its own run root, or the two would share `work/` and each would see the
+# other's papers as pending.
+outputs:
+  run_root_subdir: perturbation
+  env_var: PERTURBATION_RUN_ROOT
+  per_paper_file: perturbations.json
+  summary_csv: perturbations_summary.csv
+  review_txt: review_screen.txt
+  diff_txt: version_diff.txt
+
 # The single-paper spec handed to the model, and the structural contract
 # pe.prepare needs to slice it. These anchors are the interface any replacement
 # prompt must satisfy: they were five bare string literals across two modules,

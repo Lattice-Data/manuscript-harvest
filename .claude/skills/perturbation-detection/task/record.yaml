@@ -1,0 +1,191 @@
+# TABLE 1 of 4 — WHAT COUNTS.
+#
+# Every closed value set and every field-shape rule the record must satisfy.
+# These lived as module constants in pe/validate.py and pe/pending.py, where a
+# reader could not tell the harness's own vocabulary (`processing_status`, which
+# any per-paper task needs) from this task's (`category`, which no other task
+# would have). Here the distinction is the file they are in.
+#
+# Nothing here decides anything. Deciding is decide.yaml plus rules.py; this is
+# only what a well-formed record looks like. Exactly one of these sets had a
+# drift guard against prompt.md before now -- `suppression.rules` -- and that one
+# existed because v0.0.7 stated a rule in three places and changed it in two.
+
+# The classification's own values. Also `compare.ORDER`'s reading order, and the
+# enum three fields are checked against.
+# QUOTED, and the loader rejects an unquoted form. YAML 1.1 parses bare `yes`
+# and `no` as booleans, so `[yes, no, unclear]` loads as `[True, False,
+# 'unclear']` and every tri-state comparison in the harness silently stops
+# matching -- a determination would compare against True and never equal the
+# string the model emitted. Caught here before it shipped; `task.tables()` now
+# refuses a pack whose label sets contain a boolean, because this is exactly the
+# "looks like it works and does not" failure the rest of this pass was about.
+labels: ["yes", "no", "unclear"]
+
+# The field a curator reads. `pe.compare` diffs this and nothing else, and
+# `primary_field_gloss` is how the diff describes it to a reader -- "assay-paired"
+# is the whole point of this task and would be lost if the harness just printed
+# the field name.
+primary_field: perturbation_present
+primary_field_gloss: "the assay-paired `perturbation_present`"
+
+# What the model returned before the harness pruned unverified evidence. Kept so
+# the gap between the two measures fabricated evidence directly.
+model_field: perturbation_present_model
+
+# Harness vocabulary, not task vocabulary: how the INPUT was, not what it says.
+# Any per-paper extraction task over imperfect text needs both, so a second pack
+# would inherit these unchanged rather than restating them.
+run_states:
+  processing_status: [ok, partial, failed]
+  text_completeness: [full, truncated, methods_missing, unknown]
+
+# Why an `unclear` is unclear. Three of the six name this task; the triage ladder
+# gives a tier to two of them (report.yaml).
+unresolved_reasons:
+  - degraded_text
+  - pairing_not_stated
+  - assay_type_unconfirmed
+  - perturbation_role_unclear
+  - contradiction_unresolved
+  - none
+
+# A record missing any of these is a partial write and is re-run rather than
+# validated (pe.pending). `suppressed_candidates` is on the list deliberately:
+# v0.0.9 told the model to note its exclusions in free text and nothing checked
+# that it had, so the exclusions went unrecorded. Requiring the field is what
+# makes it enforceable.
+required_fields:
+  - task_version
+  - sources_seen
+  - processing_status
+  - text_completeness
+  - has_single_cell_assay
+  - perturbation_present
+  - perturbation_present_any_assay
+  - unresolved_reason
+  - consistency_flags
+  - perturbations
+  - suppressed_candidates
+
+# A field that satisfies a required one under its old name. 0.0.13 renamed
+# `schema_version` to `task_version`; without this, all 392 records already
+# scored would read as `incomplete` and queue a full corpus re-extraction on the
+# strength of a rename.
+legacy_field_names:
+  task_version: schema_version
+
+# Flat checks, in the order they were written, so the `issues` list a record
+# carries is unchanged. `message` is the wording; `in` names the set.
+field_checks:
+  - path: perturbation_present
+    in: labels
+    message: "{path}={value!r} not in yes/no/unclear"
+  - path: has_single_cell_assay
+    in: labels
+    message: "{path}={value!r} not in yes/no/unclear"
+  - path: perturbation_present_any_assay
+    in: labels
+    message: "{path}={value!r} not in yes/no/unclear"
+  - path: processing_status
+    in: run_states.processing_status
+    message: "{path}={value!r} off-schema"
+  - path: text_completeness
+    in: run_states.text_completeness
+    message: "{path}={value!r} off-schema"
+  - path: unresolved_reason
+    in: unresolved_reasons
+    message: "{path}={value!r} off-schema"
+
+# The determinative array. Each item carries evidence quotes that are verified
+# against the source they claim; an item left with no verifiable quote is dropped
+# whole and the paper-level call is recomputed over what survives.
+item_array:
+  path: perturbations
+  label_field: single_cell_paired      # the per-item tri-state Stage A reads
+  name_field: agent                    # what the item is called, for messages
+  quotes_field: evidence_quotes
+  # A second quote whose failure downgrades one sub-field rather than dropping
+  # the item: the pairing becomes "unclear" and EV-PAIRING-DOWNGRADED is flagged.
+  secondary_quote_field: assay_evidence
+  secondary_downgrades: single_cell_paired
+  drop_when_no_verified_quote: true
+  enums:
+    category: [chemical, biologic, activation_stimulation, genetic,
+               physical_environmental, dietary, other]
+    single_cell_paired: labels
+  # OPEN values. A closed set would have to enumerate every model organism in
+  # advance and killifish is the case that breaks such a list, so the harness
+  # checks the TYPE and never the value. `null` is legitimate: an unstated
+  # organism is unstated, and the prompt forbids guessing it.
+  open_fields:
+    paired_organism: string_or_null
+
+# Arrays that point INTO the item array by index. Pruning renumbers them, so a
+# reference can never dangle at a dropped item.
+ref_arrays:
+  - path: samples
+    ref_field: perturbation_refs
+    points_at: perturbations
+    enums:
+      is_single_cell_assay: labels
+    open_fields:
+      organism: string_or_null
+    # true | false | "unclear" are all legal here, by curator ruling of
+    # 2026-08-20. Only `is True` counts as perturbed downstream; the unclear
+    # count is reported rather than folded into either bucket.
+    tristate_bool_fields: [perturbed]
+
+# Non-determinative arrays: things considered and rejected. Structurally unable
+# to move the determination, because Stage A reads only the fields above.
+secondary_arrays:
+  - path: suppressed_candidates
+    name_field: candidate
+    reason_field: rule
+    quote_field: evidence_quote
+    pairing_field: would_have_paired
+    # An unverifiable quote drops the QUOTE and keeps the ENTRY. Deleting the
+    # entry would restore exactly the silence the field was added to remove, and
+    # would make a bad quote look like a decision nobody made.
+    keep_entry_on_quote_failure: true
+    unverified_flag: EV-SUPPRESSED-UNVERIFIED
+    # A null quote is legitimate when the exclusion rests on the ABSENCE of a
+    # statement: the Methods never placing a construct in the sequenced material
+    # is not quotable.
+    quote_optional: true
+    # CLOSED on purpose. The field exists to be tallied -- "how many papers did
+    # the reporter rule hold back from yes?" -- and an open string cannot be.
+    # The first four arrived with v0.0.9; the last four are older rules that had
+    # always been silent.
+    reasons:
+      - reporter_or_marker
+      - incidental_clinical_therapy
+      - unintended_condition
+      - derivation_formulation
+      - observational_disease_state
+      - sample_handling_protocol
+      - readout_reagent
+      - routine_processing
+    # The subset whose boundary is under active review -- the four v0.0.9
+    # additions. Triage uses this subset so its tier means "a rule we are still
+    # arguing about held this paper back" rather than "this paper has a disease
+    # contrast": `observational_disease_state` fires on any tumour-vs-normal
+    # contrast, which is most clinical papers, and an unrestricted tier put 5 of
+    # 6 regression papers in it. A tier that holds most papers is not a queue.
+    reasons_under_review:
+      - reporter_or_marker
+      - incidental_clinical_therapy
+      - unintended_condition
+      - derivation_formulation
+
+# Values counted as the same thing when tallying an open field. Used for
+# reporting only -- an organism never reaches the determination.
+normalisers:
+  human:
+    field: organism
+    synonyms: [human, humans, homo sapiens, "h. sapiens", hsapiens, patient,
+               "human (patient)", "9606"]
+
+# Confidence below which a dropped item's stated confidence is rewritten, so a
+# pruned item cannot keep advertising the confidence it had with its evidence.
+downgrade_confidence: 0.2

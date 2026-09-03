@@ -35,25 +35,17 @@ from pe.runroot import work_default  # noqa: E402
 ARG_FIELDS = ("doi", "prompt_file", "prompt_lines", "prompt_chars", "chars",
               "raw_file", "source_ids")
 
-# A result must carry these to be a schema-0.0.6 record at all; anything less is
-# a partial write and gets re-run rather than validated. `suppressed_candidates`
-# is on the list deliberately: v0.0.9 told the model to note its exclusions in
-# `ambiguities` and nothing checked that it had, so the exclusions went
-# unrecorded. Requiring the field here is what makes it enforceable -- a result
-# that omits it is re-run, not silently accepted.
-REQUIRED = ("task_version", "sources_seen", "processing_status",
-            "text_completeness", "has_single_cell_assay", "perturbation_present",
-            "perturbation_present_any_assay", "unresolved_reason",
-            "consistency_flags", "perturbations", "suppressed_candidates")
+# Which fields a complete record must carry, and which old name still satisfies
+# one, are `task/record.yaml`'s -- `required_fields` and `legacy_field_names`.
+# This module's job is the resume rule, not the schema: a paper counts as done
+# only if its result parses, carries every required field, and its `sources_seen`
+# matches the manifest, so a partial write is re-run rather than silently
+# accepted.
+from task import tables  # noqa: E402
 
-#: A field that satisfies a required one under its old name.
-#:
-#: 0.0.13 renamed `schema_version` to `task_version`. Without this, all 392
-#: records already scored would report as `incomplete` and be queued for
-#: re-extraction -- a full corpus re-score triggered by a rename, which is the
-#: opposite of what a version collapse is for. `pe.validate` reads the same
-#: records and says which name they carry.
-LEGACY_FIELD_NAMES = {"task_version": "schema_version"}
+_REC = tables()["record"]
+REQUIRED = tuple(_REC["required_fields"])
+LEGACY_FIELD_NAMES = dict(_REC["legacy_field_names"])
 
 
 def status_of(entry: dict, work: Path | None = None) -> tuple[str, str]:

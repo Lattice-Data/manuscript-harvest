@@ -20,11 +20,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pe.compare import _suppression_matches, classify  # noqa: E402
+from task.change import _suppression_matches, classify  # noqa: E402
 from pe.paper_text import split_assembled  # noqa: E402
-from pe.summarize import triage_priority  # noqa: E402
-from pe.validate import (  # noqa: E402
-    SUPPRESSION_RULES, expected_determination, stage_a, validate_result,
+from task.report import triage_priority  # noqa: E402
+from pe.validate import validate_result  # noqa: E402
+from task.rules import (  # noqa: E402
+    SUPPRESSION_RULES, expected_determination, stage_a,
 )
 
 ROOT = Path(__file__).resolve().parent.parent

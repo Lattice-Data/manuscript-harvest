@@ -132,6 +132,84 @@ class TaskPack:
         return f"<TaskPack {self.name} {self.version} {self.sha256()[:12]}>"
 
 
+#: The four lookup tables, by the name they are referred to throughout.
+TABLE_FILES = {
+    "record": "record.yaml",   # what counts
+    "decide": "decide.yaml",   # how to decide
+    "report": "report.yaml",   # what to read first
+    "change": "change.yaml",   # what counts as a change
+}
+
+_TABLES: dict[str, dict] | None = None
+
+
+def _reject_yaml_booleans(path: Path, node, trail: str = "") -> None:
+    """Refuse a boolean where a VALUE belongs -- that is, inside a list.
+
+    YAML 1.1 reads `yes` and `no` as True and False, so a label set written
+    `[yes, no, unclear]` loads as `[True, False, 'unclear']`. Nothing crashes:
+    every tri-state comparison in the harness just silently stops matching,
+    because a determination gets compared against `True` and never equals the
+    string the model emitted. The answers quietly change. Found by writing
+    exactly that bug into record.yaml.
+
+    Scoped to list ELEMENTS rather than every value, because a scalar flag like
+    `drop_when_no_verified_quote: true` is a real boolean and rejecting it would
+    make the guard something a pack author has to work around. A list in these
+    tables is always a set of values -- labels, enum members, field names,
+    stopwords, regexes -- and none of those is ever a boolean.
+    """
+    if isinstance(node, dict):
+        for key, value in node.items():
+            _reject_yaml_booleans(path, value, f"{trail}.{key}" if trail else str(key))
+    elif isinstance(node, list):
+        for i, value in enumerate(node):
+            where = f"{trail}[{i}]"
+            if isinstance(value, bool):
+                raise PackError(
+                    f"{path.name}: {where} is the YAML boolean {value!r}, but a list "
+                    f"in this table is a set of VALUES. Quote it -- \"yes\" / "
+                    f"\"no\" -- because YAML 1.1 reads the bare words as booleans, "
+                    f"and a label that arrives as True never matches the string a "
+                    f"record carries.")
+            _reject_yaml_booleans(path, value, where)
+
+
+def tables(root: Path | None = None, *, reload: bool = False) -> dict[str, dict]:
+    """The four tables, read once and cached.
+
+    Cached because `rules.py` reads them at import to define its constants, and
+    because every module in `pe/` would otherwise re-parse four files per paper.
+    `reload=True` exists for the tests that write a pack into a tmp_path.
+
+    A missing table is an error, not an empty default. A pack that half-loads is
+    a run applying rules nobody can name, and the one thing this pipeline may not
+    do is proceed while unable to say what it is applying.
+    """
+    global _TABLES
+    if _TABLES is not None and not reload and root in (None, ROOT):
+        return _TABLES
+    base = root or ROOT
+    if yaml is None:
+        raise PackError("pyyaml is required to read the task pack")
+    loaded: dict[str, dict] = {}
+    for name, filename in TABLE_FILES.items():
+        path = base / "task" / filename
+        if not path.is_file():
+            raise PackError(f"the pack has no {filename} (table {name!r}) at {path}")
+        try:
+            data = yaml.safe_load(path.read_text()) or {}
+        except yaml.YAMLError as exc:
+            raise PackError(f"{path} is not readable YAML: {exc}") from exc
+        if not isinstance(data, dict):
+            raise PackError(f"{path} is not a mapping")
+        _reject_yaml_booleans(path, data)
+        loaded[name] = data
+    if root in (None, ROOT):
+        _TABLES = loaded
+    return loaded
+
+
 def load(root: Path | None = None) -> TaskPack:
     """Read `task/task.yaml`. Raises PackError rather than returning a default.
 

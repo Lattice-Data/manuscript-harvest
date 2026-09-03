@@ -1,0 +1,120 @@
+# TABLE 4 of 4 — WHAT COUNTS AS A CHANGE.
+#
+# When a re-run moves a paper, this is the list of mechanisms allowed to account
+# for it. prompt.md's validation loop is explicit that the diff is not expected
+# to be empty and that it must be CLASSIFIED rather than counted:
+#
+#   "Any change outside those two classes is a bug in this version, not a
+#    refinement, and should be investigated before the corpus run."
+#
+# So the value of this table is entirely in what it does NOT contain. Every class
+# added here silences an UNEXPLAINED warning, which is the only thing in the
+# pipeline that says "a human must look at this before the corpus run". Three of
+# the classes below were added because a real movement was landing in UNEXPLAINED
+# and reading as a logic bug; adding one to quieten a diff you have not
+# understood is the way to make this file useless.
+#
+# The predicates are `task/change.py`. Labels and names are here.
+
+# The determination's input set, restated from decide.yaml on purpose: the diff
+# and the decision must agree about what the decision reads, and `change.py`
+# asserts they do at import. If they ever disagree, the diff would report a
+# change as unexplained while the input that moved was sitting in plain sight.
+inputs_from: decide.yaml
+
+# Reading order for the confusion matrix. Not alphabetical -- "yes" first because
+# that is the bucket curation acts on.
+order: ["yes", "unclear", "no"]
+
+classes:
+  STAGE-B: >-
+    Stage B's degraded-text cap was ENTERED in the new run — predicted class (a)
+  STAGE-B-RELEASED: >-
+    Stage B's cap was RELEASED (the baseline was capped, this run is not) — e.g.
+    re-extraction completed the text
+  SUPPRESSED: >-
+    a candidate the baseline reported as a perturbation is now recorded in
+    suppressed_candidates (v0.0.10)
+  CC-5: >-
+    has_single_cell_assay='unclear' with a 'yes' pairing — predicted class (b)
+  SUPP-EVIDENCE: >-
+    new supplementary evidence the v0.0.4 main-text-only run never saw
+  HARNESS-PRUNE: >-
+    quote pruning changed the determination (EV-* flags)
+  BASELINE-UNASSESSED: >-
+    baseline never assessed this paper's assay (pairing-only route skipped it)
+  PERT-SET-CHANGED: >-
+    full re-extraction produced a different perturbation set than the baseline's
+    reused v0.0.2 list
+  ASSAY-CHANGED: >-
+    has_single_cell_assay differs between the two runs
+  ANY-ASSAY-CHANGED: >-
+    perturbation_present_any_assay differs between the two runs
+  WITHIN-NOISE: >-
+    the baseline disagrees with itself on this paper across two runs — not
+    evidence of a change
+  UNEXPLAINED: >-
+    "*** outside every expected class — investigate before the corpus run"
+
+# The class that must never be silenced casually, and the reason the rest of this
+# file is kept short.
+unexplained_class: UNEXPLAINED
+
+# Matching the same construct across two runs, for the SUPPRESSED class. The two
+# runs describe it in their own words -- "SFTPC-GFP reporter line" against
+# "lentiviral SFTPC-promoter-GFP + EF1a-TagRFP reporter" -- so an exact match
+# would never fire and a token overlap is used instead.
+#
+# Deliberately conservative in the false-positive direction: a wrong match makes
+# SUPPRESSED silence an UNEXPLAINED warning, which is the one thing this module
+# must not do. A missed match only costs precision, dropping the paper to the
+# weaker PERT-SET-CHANGED account.
+match:
+  min_shared_words: 2
+  # One shared word is enough if it is distinctive enough to stand alone.
+  # "chemotherapy (specific agent not named)" against "chemotherapy-driven
+  # lineage switch in the relapse sample" shares exactly one word, and it is the
+  # only one that matters.
+  standalone_word_length: 8
+  # Half English function words, half domain nouns. The domain half is why this
+  # belongs in the pack: "cell", "sample" and "line" carry no identity in a
+  # single-cell paper and would match everything, while in another corpus they
+  # might be the distinguishing terms. "specific" is eight characters and carries
+  # no identity, so leaving it in would let the single-word rule fire on it.
+  stopwords:
+    - the
+    - and
+    - with
+    - for
+    - from
+    - into
+    - was
+    - were
+    - that
+    - this
+    - only
+    - line
+    - lines
+    - cell
+    - cells
+    - human
+    - mouse
+    - sample
+    - samples
+    - using
+    - used
+    - via
+    - vs
+    - versus
+    - specific
+    - unspecified
+    - named
+    - unnamed
+    - not
+    - various
+    - different
+    - multiple
+    - detail
+    - details
+    - agent
+    - agents

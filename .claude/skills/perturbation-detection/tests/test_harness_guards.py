@@ -28,9 +28,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from pe.paper_text import build_sources, split_assembled  # noqa: E402
 from pe.runroot import work_default  # noqa: E402
-from pe.validate import (  # noqa: E402
-    TEXT_COMPLETENESS, model_of, stage_b, validate_result,
-)
+from pe.validate import model_of, validate_result  # noqa: E402
+from task.rules import TEXT_COMPLETENESS, stage_b  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 

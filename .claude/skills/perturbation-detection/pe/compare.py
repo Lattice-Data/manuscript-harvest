@@ -40,174 +40,24 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 from collections import Counter
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pe.runroot import work_default, output_default  # noqa: E402
+from pe.runroot import output_default, output_name, work_default  # noqa: E402
 from pe.runstate import RunError, load_manifest, resolve_run_dir  # noqa: E402
 
-ORDER = ["yes", "unclear", "no"]
-
-CLASS_LABELS = {
-    "STAGE-B": "Stage B's degraded-text cap was ENTERED in the new run — predicted class (a)",
-    "STAGE-B-RELEASED": "Stage B's cap was RELEASED (the baseline was capped, this run is not) — e.g. re-extraction completed the text",
-    "SUPPRESSED": "a candidate the baseline reported as a perturbation is now recorded in suppressed_candidates (v0.0.10)",
-    "CC-5": "has_single_cell_assay='unclear' with a 'yes' pairing — predicted class (b)",
-    "SUPP-EVIDENCE": "new supplementary evidence the v0.0.4 main-text-only run never saw",
-    "HARNESS-PRUNE": "quote pruning changed the determination (EV-* flags)",
-    "BASELINE-UNASSESSED": "baseline never assessed this paper's assay (pairing-only route skipped it)",
-    "PERT-SET-CHANGED": "full re-extraction produced a different perturbation set than the baseline's reused v0.0.2 list",
-    "ASSAY-CHANGED": "has_single_cell_assay differs between the two runs",
-    "ANY-ASSAY-CHANGED": "perturbation_present_any_assay differs between the two runs",
-    "WITHIN-NOISE": "the baseline disagrees with itself on this paper across two runs — not evidence of a change",
-    "UNEXPLAINED": "*** outside every expected class — investigate before the corpus run",
-}
-
-
-def determination_inputs(result: dict) -> dict:
-    """The complete input set the determination is a function of.
-
-    Stage A and Stage B read nothing else, so if two runs agree on all five of
-    these and still disagree on `perturbation_present`, the logic itself is
-    wrong. If they differ on any of them, the change is fully explained by the
-    input that moved -- which is what makes this diff auditable rather than a
-    matter of opinion.
-    """
-    paired = sorted(str(p.get("single_cell_paired"))
-                    for p in (result.get("perturbations") or [])
-                    if isinstance(p, dict))
-    return {
-        "processing_status": result.get("processing_status"),
-        "text_completeness": result.get("text_completeness"),
-        "has_single_cell_assay": result.get("has_single_cell_assay"),
-        "any_assay": result.get("perturbation_present_any_assay"),
-        "paired": paired,
-    }
-
-
-def classify(new: dict, old: dict | None = None) -> list[str]:
-    """Which v0.0.5 mechanism(s) can account for this paper moving."""
-    validation = new.get("validation") or {}
-    classes = []
-
-    # The v0.0.4 baseline was produced by the pairing-only route, which SKIPPED
-    # papers whose v0.0.2 result found no perturbations: nothing could pair, so
-    # `has_single_cell_assay` was set to "unclear" meaning "never assessed"
-    # rather than measured. v0.0.5 re-extracts those from scratch, so movement
-    # there is a baseline gap being filled, not a regression in this version.
-    if old is not None and old.get("pairing_pass") == "skipped_no_perturbations":
-        classes.append("BASELINE-UNASSESSED")
-
-    # Stage B is symmetric: a paper moves both when it ENTERS the degraded-text
-    # cap and when it LEAVES it. Only the first was checked before, so a cap
-    # release -- `stage_b_capped` True -> False, which is what re-extraction
-    # completing a paper's text looks like -- fell through to UNEXPLAINED and
-    # read as a logic bug. Observed on 10.1126/science.adf5357.
-    old_capped = bool(((old or {}).get("validation") or {}).get("stage_b_capped"))
-    new_capped = bool(validation.get("stage_b_capped"))
-    if new_capped:
-        classes.append("STAGE-B")
-    elif old_capped:
-        classes.append("STAGE-B-RELEASED")
-    if "CC-5" in (validation.get("consistency_flags") or []):
-        classes.append("CC-5")
-
-    # v0.0.10: a paper can now move because a candidate was SUPPRESSED rather
-    # than reported. The precise account is a perturbation present in the
-    # baseline that is absent from this run and reappears as a suppressed
-    # candidate, so the match is required rather than assumed -- an unmatched
-    # suppression explains nothing and must not silence UNEXPLAINED.
-    if old is not None:
-        matched = _suppression_matches(new, old)
-        if matched:
-            classes.append("SUPPRESSED")
-
-    # A verified quote attributed to a supplementary source is direct evidence
-    # that the model used text the main-text-only baseline never had.
-    supp_quotes = 0
-    for pert in new.get("perturbations") or []:
-        for quote in pert.get("evidence_quotes") or []:
-            if str(quote.get("source_id", "")).startswith("supp"):
-                supp_quotes += 1
-        assay_ev = pert.get("assay_evidence")
-        if isinstance(assay_ev, dict) and str(assay_ev.get("source_id", "")).startswith("supp"):
-            supp_quotes += 1
-    if supp_quotes:
-        classes.append("SUPP-EVIDENCE")
-
-    if validation.get("determination_changed_by_harness"):
-        classes.append("HARNESS-PRUNE")
-
-    # The exact account: which determination input actually moved. The v0.0.4
-    # baseline was built by the pairing-only route, which REUSED the v0.0.2
-    # perturbation list and re-asked only the pairing. v0.0.5 is a full
-    # re-extraction, so the perturbation set itself can legitimately differ --
-    # most often because v0.0.5 requires a verbatim quote for every perturbation
-    # and drops any that cannot be located.
-    if old is not None:
-        before, after = determination_inputs(old), determination_inputs(new)
-        if before["paired"] != after["paired"]:
-            classes.append("PERT-SET-CHANGED")
-        if before["has_single_cell_assay"] != after["has_single_cell_assay"]:
-            classes.append("ASSAY-CHANGED")
-        if before["any_assay"] != after["any_assay"]:
-            classes.append("ANY-ASSAY-CHANGED")
-
-    return classes or ["UNEXPLAINED"]
-
-
-def _tokens(value) -> set[str]:
-    """Content words of an agent/candidate string, for matching across runs.
-
-    Deliberately crude: the two runs describe the same construct in their own
-    words ("SFTPC-GFP reporter line" vs "lentiviral SFTPC-promoter-GFP +
-    EF1a-TagRFP reporter"), so an exact match would never fire. Short and
-    generic words are dropped so "the medium" does not match "the inhibitor".
-    """
-    # Generic qualifiers are dropped as hard as articles are. "specific" is
-    # eight characters and carries no identity, so leaving it in would let the
-    # single-distinctive-token rule below fire on it.
-    stop = {"the", "and", "with", "for", "from", "into", "was", "were", "that",
-            "this", "only", "line", "lines", "cell", "cells", "human", "mouse",
-            "sample", "samples", "using", "used", "via", "vs", "versus",
-            "specific", "unspecified", "named", "unnamed", "not", "various",
-            "different", "multiple", "detail", "details", "agent", "agents"}
-    words = re.findall(r"[A-Za-z0-9][A-Za-z0-9\-']{2,}", str(value or "").lower())
-    # Hyphenated compounds are emitted whole AND split. Without the split,
-    # "chemotherapy-driven lineage switch" shares no token with the baseline's
-    # "chemotherapy (specific agent not named)" and the pair goes unmatched --
-    # observed on 10.7554/elife.104978.2, where the suppression was real and the
-    # precise attribution was lost anyway.
-    out = set()
-    for w in words:
-        out.add(w)
-        if "-" in w:
-            out.update(part for part in w.split("-") if len(part) >= 3)
-    return {w for w in out if w not in stop}
-
-
-def _looks_like_same_thing(a: set[str], b: set[str]) -> bool:
-    """Whether two token sets plausibly name the same construct or condition.
-
-    Two shared content words, or one shared word distinctive enough to stand
-    alone. The single-token allowance exists because the two runs often describe
-    the same thing at different lengths: "chemotherapy (specific agent not
-    named)" against "chemotherapy-driven lineage switch in the relapse sample"
-    shares exactly one word, and it is the only one that matters.
-
-    Deliberately conservative in the false-positive direction. A wrong match
-    would make `SUPPRESSED` silence an UNEXPLAINED warning, which is the one
-    thing this module must not do; a missed match only costs precision, dropping
-    the paper to the weaker PERT-SET-CHANGED account.
-    """
-    shared = a & b
-    if len(shared) >= 2:
-        return True
-    return any(len(word) >= 8 for word in shared)
+# The change classes, their labels, and the predicates that decide which one
+# accounts for a movement are the pack's: `task/change.yaml` and
+# `task/change.py`. This module loads two runs, refuses an empty overlap, builds
+# the confusion matrix, computes the noise floor and warns about UNEXPLAINED --
+# none of which knows what a perturbation is.
+from task.change import (  # noqa: E402
+    CLASS_LABELS, ORDER, PRIMARY_FIELD, PRIMARY_FIELD_GLOSS, UNEXPLAINED, classify,
+    render_paper, render_unchanged,
+)
 
 
 def noise_floor(pairs: list[tuple[str, dict, dict]]) -> tuple[set[str], str | None]:
@@ -228,48 +78,7 @@ def noise_floor(pairs: list[tuple[str, dict, dict]]) -> tuple[set[str], str | No
         return set(), (f"second run is prompt v{'/'.join(sorted(vb))} but the first is "
                        f"v{'/'.join(sorted(va))}; a noise floor needs the same prompt")
     return ({doi for doi, a, b in pairs
-             if a.get("perturbation_present") != b.get("perturbation_present")}, None)
-
-
-def _suppression_matches(new: dict, old: dict) -> list[tuple[str, str, str]]:
-    """Baseline perturbations that this run records as suppressed candidates.
-
-    Returns [(rule, baseline agent, new candidate)]. Requiring the match is what
-    keeps SUPPRESSED an explanation rather than an excuse: a run that suppressed
-    something unrelated does not account for a paper moving.
-    """
-    supp = [s for s in (new.get("suppressed_candidates") or []) if isinstance(s, dict)]
-    if not supp:
-        return []
-    new_agents = [_tokens(p.get("agent")) for p in (new.get("perturbations") or [])
-                  if isinstance(p, dict)]
-    matches = []
-    for pert in old.get("perturbations") or []:
-        if not isinstance(pert, dict):
-            continue
-        old_toks = _tokens(pert.get("agent"))
-        if not old_toks:
-            continue
-        # Still reported in this run? Then it was not suppressed. Same test as
-        # below, so the two sides cannot disagree about what "the same thing"
-        # means -- a looser candidate match than still-reported match would let a
-        # perturbation that survived under a reworded agent count as suppressed.
-        if any(_looks_like_same_thing(old_toks, cur) for cur in new_agents):
-            continue
-        for cand in supp:
-            cand_toks = _tokens(cand.get("candidate"))
-            if _looks_like_same_thing(old_toks, cand_toks):
-                matches.append((str(cand.get("rule")), str(pert.get("agent")),
-                                str(cand.get("candidate"))))
-                break
-    return matches
-
-
-def _quote_line(entry) -> str:
-    if isinstance(entry, dict):
-        src = entry.get("source_id", "?")
-        return f"[{src}] {str(entry.get('quote', ''))[:150]}"
-    return str(entry)[:150]
+             if a.get(PRIMARY_FIELD) != b.get(PRIMARY_FIELD)}, None)
 
 
 def main() -> int:
@@ -284,7 +93,7 @@ def main() -> int:
     # Not "v004_vs_v005.txt": that default outlived the versions in its own name by
     # seven releases. The versions are in the report's first line, read from the
     # records.
-    parser.add_argument("--out", default=str(output_default("version_diff.txt")))
+    parser.add_argument("--out", default=str(output_default(output_name("diff_txt"))))
     args = parser.parse_args()
 
     work = resolve_run_dir(Path(args.work))
@@ -351,7 +160,7 @@ def main() -> int:
             return 2
         noise_available = True
 
-    matrix = Counter((old.get("perturbation_present"), new.get("perturbation_present"))
+    matrix = Counter((old.get(PRIMARY_FIELD), new.get(PRIMARY_FIELD))
                      for _, old, new, _ in rows)
 
     lines: list[str] = []
@@ -368,7 +177,7 @@ def main() -> int:
     lines.append(f"  new:      {work}")
     lines.append(f"  baseline: {baseline}")
     lines.append("")
-    lines.append("Both columns are the assay-paired `perturbation_present`, so this is a")
+    lines.append(f"Both columns are {PRIMARY_FIELD_GLOSS}, so this is a")
     lines.append("like-for-like diff of the primary curation field. Check whether the two")
     lines.append("runs saw the same input scope: a baseline built before supplementary")
     lines.append("sources were included is not comparable on evidence alone, and the")
@@ -389,7 +198,7 @@ def main() -> int:
                  + f"     {sum(totals):>5}")
 
     changed = [(doi, old, new, entry) for doi, old, new, entry in rows
-               if old.get("perturbation_present") != new.get("perturbation_present")]
+               if old.get(PRIMARY_FIELD) != new.get(PRIMARY_FIELD)]
     lines.append("")
     lines.append(f"unchanged: {len(rows) - len(changed)}/{len(rows)}    "
                  f"changed: {len(changed)}")
@@ -418,10 +227,10 @@ def main() -> int:
         if class_counts.get(code):
             lines.append(f"  {code:<15} {class_counts[code]:>3}   {label}")
     unexplained = [doi for doi, old, new, _ in changed
-                   if doi not in noise and classify(new, old) == ["UNEXPLAINED"]]
+                   if doi not in noise and classify(new, old) == [UNEXPLAINED]]
     if unexplained:
         lines.append("")
-        lines.append(f"  !! {len(unexplained)} UNEXPLAINED change(s): {', '.join(unexplained)}")
+        lines.append(f"  !! {len(unexplained)} {UNEXPLAINED} change(s): {', '.join(unexplained)}")
         lines.append("     prompt.md validation loop step 1 says to investigate these "
                      "before the corpus run.")
     else:
@@ -434,80 +243,19 @@ def main() -> int:
     lines.append("CHANGED PAPERS")
     lines.append("=" * 78)
     for doi, old, new, entry in changed:
-        validation = new.get("validation") or {}
-        types = new.get("single_cell_assay_types") or []
-        if isinstance(types, str):
-            types = [types]
-        lines.append("")
-        lines.append(f"{doi}:  {old.get('perturbation_present')}  ->  "
-                     f"{new.get('perturbation_present')}"
-                     f"   [{', '.join(classify(new, old))}]")
-        lines.append(f"  sources={'|'.join(entry.get('source_ids') or [])}  "
-                     f"processing={new.get('processing_status')}  "
-                     f"completeness={new.get('text_completeness')}  "
-                     f"reason={new.get('unresolved_reason')}")
-        lines.append(f"  has_single_cell_assay={new.get('has_single_cell_assay')}  "
-                     f"assays={', '.join(str(t) for t in types) or '(none)'}  "
-                     f"any_assay={new.get('perturbation_present_any_assay')}")
-        if validation.get("consistency_flags") or validation.get("evidence_flags"):
-            lines.append(f"  flags: {','.join(validation.get('consistency_flags') or [])} "
-                         f"{','.join(validation.get('evidence_flags') or [])}")
-        # Versions read off the records, not written in. These two were literal
-        # "v0.0.4"/"v0.0.5" strings, so every run since v0.0.5 has mislabelled
-        # both columns of its own diff.
-        old_v = str((old.get("validation") or {}).get("prompt_version") or "?")
-        new_v = str((new.get("validation") or {}).get("prompt_version") or "?")
-        lines.append(f"  v{old_v} had {len(old.get('perturbations') or [])} perturbation(s); "
-                     f"v{new_v} has {len(new.get('perturbations') or [])}")
-        for rule, old_agent, cand in _suppression_matches(new, old):
-            lines.append(f"    SUPPRESSED ({rule}): baseline reported "
-                         f"{old_agent[:60]!r}")
-            lines.append(f"      now recorded as a suppressed candidate: {cand[:80]}")
-        old_cap = bool((old.get("validation") or {}).get("stage_b_capped"))
-        new_cap = bool(validation.get("stage_b_capped"))
-        if old_cap != new_cap:
-            lines.append(f"  Stage B cap: {old_cap} -> {new_cap}"
-                         + ("  (released — the text is no longer degraded)"
-                            if old_cap else "  (entered)"))
-        before, after = determination_inputs(old), determination_inputs(new)
-        moved = [k for k in before if before[k] != after[k]]
-        if moved:
-            lines.append("  determination inputs that moved:")
-            for key in moved:
-                lines.append(f"    {key}: {before[key]!r} -> {after[key]!r}")
-        else:
-            lines.append("  determination inputs are IDENTICAL — this is a logic "
-                         "difference, not an input difference. Investigate.")
-        for pert in old.get("perturbations") or []:
-            agents_new = {str(p.get("agent"))[:40] for p in (new.get("perturbations") or [])}
-            if str(pert.get("agent"))[:40] not in agents_new:
-                lines.append(f"    DROPPED vs baseline: paired={pert.get('single_cell_paired')} "
-                             f"{str(pert.get('agent'))[:70]}")
-        for i, pert in enumerate(new.get("perturbations") or []):
-            lines.append(f"    [{i}] paired={pert.get('single_cell_paired')} "
-                         f"{str(pert.get('agent'))[:52]}")
-            lines.append(f"        assay: {str(pert.get('assay_applied') or '(unstated)')[:100]}")
-            assay_ev = pert.get("assay_evidence")
-            if isinstance(assay_ev, dict) and assay_ev.get("quote"):
-                check = pert.get("assay_quote_check") or {}
-                mark = "  [OK]" if check.get("status") == "verified" else f"  [{check.get('status', '?')}]"
-                lines.append(f"        pairing quote: {_quote_line(assay_ev)}{mark}")
-            for quote in (pert.get("evidence_quotes") or [])[:2]:
-                lines.append(f"        evidence: {_quote_line(quote)}")
+        # Every line of this block names a field only this task has, so it is
+        # the pack's to render. The harness decides WHICH papers appear here.
+        lines.extend(render_paper(doi, old, new, entry, classify(new, old)))
 
     lines.append("")
     lines.append("=" * 78)
     lines.append("UNCHANGED PAPERS")
     lines.append("=" * 78)
     for doi, old, new, entry in rows:
-        call = new.get("perturbation_present")
-        if old.get("perturbation_present") != call:
+        call = new.get(PRIMARY_FIELD)
+        if old.get(PRIMARY_FIELD) != call:
             continue
-        perts = new.get("perturbations") or []
-        paired = [p for p in perts if p.get("single_cell_paired") == "yes"]
-        supp = "supp" if len(entry.get("source_ids") or []) > 1 else "main"
-        lines.append(f"  {doi:34} {call:<8} {len(paired)}/{len(perts)} paired   "
-                     f"[{supp}]")
+        lines.append(render_unchanged(doi, new, entry))
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)

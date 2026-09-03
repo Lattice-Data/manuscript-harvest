@@ -34,187 +34,70 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pe.paper_text import (  # noqa: E402
     entry_paths, split_assembled, verify_quote_sourced,
 )
-from task import PackError, load as load_pack  # noqa: E402
+from task import PackError, load as load_pack, tables  # noqa: E402
 
 try:
     import yaml
 except ImportError:
     yaml = None
 
-from pe.runroot import work_default  # noqa: E402
+from pe.runroot import output_name, work_default  # noqa: E402
 from pe.runstate import RunError, load_manifest, resolve_run_dir  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-PROMPT_MD = ROOT / "prompt.md"
-DOWNGRADE_CONFIDENCE = 0.2
-CATEGORIES = {
-    "chemical", "biologic", "activation_stimulation", "genetic",
-    "physical_environmental", "dietary", "other",
-}
-# prompt.md v0.0.10's closed `rule` set. Closed on purpose: the field exists to
-# be tallied ("how many papers did the reporter rule hold back from yes?"), and
-# an open string cannot be. The first four arrived with v0.0.9; the last four are
-# older rules that had always been silent.
-SUPPRESSION_RULES = (
-    "reporter_or_marker", "incidental_clinical_therapy", "unintended_condition",
-    "derivation_formulation", "observational_disease_state",
-    "sample_handling_protocol", "readout_reagent", "routine_processing",
-)
-# The subset whose boundary is under active review -- the four v0.0.9 additions.
-# The other four are long-settled toggles, and `observational_disease_state` in
-# particular fires on any tumour-vs-normal or disease-vs-healthy contrast, which
-# is most clinical papers. Triage uses this subset so priority 2 means "a rule
-# we are still arguing about held this paper back" rather than "this paper has a
-# disease contrast", which would drown the tier.
-RULES_UNDER_REVIEW = (
-    "reporter_or_marker", "incidental_clinical_therapy",
-    "unintended_condition", "derivation_formulation",
-)
-# prompt.md v0.0.12: `organism` / `paired_organism` are OPEN values -- a closed set
-# would have to enumerate every model organism in advance, and killifish is the
-# case that breaks such a list. So the harness normalises for counting only and
-# never rejects an unrecognised species. `None` is legitimate: an unstated
-# organism is unstated, and the prompt forbids guessing it.
-HUMAN_SYNONYMS = frozenset({
-    "human", "humans", "homo sapiens", "h. sapiens", "hsapiens", "patient",
-    "human (patient)", "9606",
-})
 
-
-def normalise_organism(value) -> str | None:
-    """Lowercased, stripped organism string; None for absent/blank/non-string."""
-    if not isinstance(value, str):
-        return None
-    cleaned = " ".join(value.strip().lower().split())
-    return cleaned or None
-
-
-def is_human(value) -> bool:
-    """Whether a recorded organism denotes human. Unknown is NOT human."""
-    return normalise_organism(value) in HUMAN_SYNONYMS
-
-
-TRISTATE = ("yes", "no", "unclear")
-PROCESSING_STATUS = ("ok", "partial", "failed")
-TEXT_COMPLETENESS = ("full", "truncated", "methods_missing", "unknown")
-UNRESOLVED_REASONS = (
-    "degraded_text", "pairing_not_stated", "assay_type_unconfirmed",
-    "perturbation_role_unclear", "contradiction_unresolved", "none",
+# The harness holds no task vocabulary. Every closed set, every field name and
+# every rule below came out of this module in the 0.0.13 split and now lives in
+# `task/` -- record.yaml and decide.yaml for the lists, task/rules.py for the
+# predicates a list cannot express. Imported here only where this module
+# genuinely uses one; everything else is imported from `task.rules` directly by
+# whoever needs it, so the seam shows at the import line rather than being
+# laundered through the harness.
+#
+# What is left in this file: parsing the model's JSON however it arrives,
+# recovering the exact bytes the model was shown, verifying a quote against the
+# source it claims, the pruning bookkeeping, the recomputation, and assembling
+# the record. None of it knows what a perturbation is.
+from task.rules import (  # noqa: E402
+    CC_TEXT, checks as consistency_checks, decide, extra_field_issues, metrics,
+    progress_line, validate_items, validate_secondary,
 )
 
+_REC, _DEC = tables()["record"], tables()["decide"]
 
-def _paired(result: dict) -> list:
-    return [p.get("single_cell_paired") for p in (result.get("perturbations") or [])
-            if isinstance(p, dict)]
+#: The item array's name, for the two `validation` keys that carry it.
+ITEM_PATH = _REC["item_array"]["path"]
+#: The field a curator reads, and the two the harness writes beside it.
+PRIMARY_FIELD = _REC["primary_field"]
+MODEL_FIELD = _REC["model_field"]
+#: Codes the harness raises itself during quote checking, rather than computing
+#: from the record. CC-7 -- a quote citing a source_id that was never supplied --
+#: is only knowable here, because only here is the supplied set known.
+HARNESS_RAISED_CHECKS = tuple(_DEC.get("harness_raised_checks") or ())
+#: Post-conditions on the reason an `unclear` gives for itself.
+REASON_RULES = dict(_DEC["reason_rules"])
+#: The non-determinative array's name, for the one write-back the harness makes.
+SECONDARY_PATH = _REC["secondary_arrays"][0]["path"]
 
 
-def stage_a(result: dict) -> str | None:
-    """prompt.md v0.0.5 Stage A: evidence-based determination, ordered A0-A6.
+def _field_checks() -> list[dict]:
+    """record.yaml's flat checks, with each `in:` resolved to its value set.
 
-    Returns the implied `perturbation_present`, or None if a required input is
-    missing or off-enum. The numbered comments map 1:1 onto the prompt's rules.
+    Resolved once at import rather than per paper, and resolved by path so a
+    check can point at a nested set (`run_states.processing_status`) without the
+    validator knowing the shape of the table.
     """
-    status = result.get("processing_status")
-    has_sc = result.get("has_single_cell_assay")
-    any_assay = result.get("perturbation_present_any_assay")
-    perts = [p for p in (result.get("perturbations") or []) if isinstance(p, dict)]
-    paired = [p.get("single_cell_paired") for p in perts]
-
-    # A0. Nothing was assessed.
-    if status == "failed":
-        return "unclear"
-    if any_assay not in TRISTATE or has_sc not in TRISTATE:
-        return None
-
-    # A1. Empty perturbations array -- an explicit terminal rule in v0.0.5,
-    # rather than v0.0.4's resolution by vacuous truth through the paired list.
-    if not perts:
-        if any_assay == "no":
-            return "no"
-        if any_assay == "unclear":
-            return "unclear"
-        return "unclear"  # any_assay == "yes" is CC-2; stated default.
-
-    # A2. No qualifying assay -> nothing to pair to.
-    if has_sc == "no":
-        return "no"
-    # A3. An unconfirmed assay caps the paper-level call at "unclear".
-    if has_sc == "unclear":
-        return "unclear" if any(x in ("yes", "unclear") for x in paired) else "no"
-    # A4. One confirmed pairing is sufficient.
-    if "yes" in paired:
-        return "yes"
-    # A5. A single unresolved pairing is enough, however many "no"s accompany it.
-    if "unclear" in paired:
-        return "unclear"
-    # A6. Every pairing resolved to "no".
-    return "no"
+    resolved = []
+    for check in _REC["field_checks"]:
+        node = _REC
+        for part in str(check["in"]).split("."):
+            node = node[part]
+        resolved.append({"path": check["path"], "values": tuple(node),
+                         "message": check["message"]})
+    return resolved
 
 
-def stage_b(stage_a_result: str | None, processing_status: str,
-            text_completeness: str) -> tuple[str | None, bool]:
-    """prompt.md v0.0.5 Stage B: cap a negative drawn from degraded text.
-
-    Returns (determination, capped). The asymmetry is deliberate: missing text
-    can hide the sentence that would have paired a perturbation to a single-cell
-    assay, but it cannot invent one, so only "no" is capped.
-    """
-    # prompt.md: cap when `text_completeness` is "anything other than 'full'".
-    # The membership guard this replaced -- `text_completeness in
-    # TEXT_COMPLETENESS and != "full"` -- made the cap fail OPEN on exactly the
-    # values it should trust least: None, "", "Full" and "truncated " all skipped
-    # it and kept the "no", so an honest "unknown" was treated MORE
-    # conservatively than a malformed one. `validate_result` still raises the
-    # off-schema issue separately; this decides the determination, and a
-    # safety cap that can be switched off by a typo is not one.
-    degraded = processing_status == "partial" or text_completeness != "full"
-    if degraded and stage_a_result == "no":
-        return "unclear", True
-    return stage_a_result, False
-
-
-def expected_determination(result: dict) -> str | None:
-    """Stage A then Stage B, as the harness applies them."""
-    a = stage_a(result)
-    if a is None:
-        return None
-    final, _ = stage_b(a, result.get("processing_status"),
-                       result.get("text_completeness"))
-    return final
-
-
-def consistency_checks(result: dict) -> list[str]:
-    """CC-1 .. CC-6 from prompt.md v0.0.5. CC-7 is raised during quote checking."""
-    codes: list[str] = []
-    has_sc = result.get("has_single_cell_assay")
-    any_assay = result.get("perturbation_present_any_assay")
-    perts = [p for p in (result.get("perturbations") or []) if isinstance(p, dict)]
-    paired = [p.get("single_cell_paired") for p in perts]
-
-    if has_sc == "no" and "yes" in paired:
-        codes.append("CC-1")
-    if any_assay == "yes" and not perts:
-        codes.append("CC-2")
-    if any_assay == "no" and perts:
-        codes.append("CC-3")
-    if any(p not in TRISTATE for p in paired):
-        codes.append("CC-4")
-    if has_sc == "unclear" and "yes" in paired:
-        codes.append("CC-5")
-    if result.get("processing_status") == "failed" and perts:
-        codes.append("CC-6")
-    return codes
-
-
-CC_TEXT = {
-    "CC-1": "has_single_cell_assay='no' but a perturbation is single_cell_paired='yes'",
-    "CC-2": "perturbation_present_any_assay='yes' with an empty perturbations array",
-    "CC-3": "perturbation_present_any_assay='no' but perturbation(s) reported",
-    "CC-4": "a single_cell_paired value outside yes/no/unclear",
-    "CC-5": "has_single_cell_assay='unclear' with a single_cell_paired='yes'",
-    "CC-6": "processing_status='failed' with a non-empty perturbations array",
-    "CC-7": "a quote citing a source_id that was never supplied",
-}
+FIELD_CHECKS = _field_checks()
 
 
 def parse_raw(text: str) -> dict:
@@ -245,133 +128,6 @@ def paper_text_from_prompt(prompt_file: Path) -> str:
     marker = "\nPAPER_TEXT:"
     idx = body.rindex(marker)
     return body[idx + len(marker):].lstrip("\n")
-
-
-def _normalize_quote_entry(entry, default_source: str = "main") -> tuple[str, str, bool]:
-    """Return (source_id, quote, was_legacy_string).
-
-    v0.0.4 emitted bare strings; v0.0.5 requires {"source_id", "quote"}. A bare
-    string is accepted so an off-schema response is flagged rather than crashing
-    the stage, but it is reported.
-    """
-    if isinstance(entry, dict):
-        return str(entry.get("source_id") or default_source), str(entry.get("quote") or ""), False
-    return default_source, str(entry or ""), True
-
-
-def _validate_suppressed(result: dict, sources_text: dict[str, str], threshold: float,
-                         issues: list[str], evidence_flags: set[str]) -> tuple[list, int, int, int]:
-    """Verify and normalize `suppressed_candidates` (prompt.md v0.0.10, schema 0.0.6).
-
-    Returns (entries, checked, failed, wrong_source).
-
-    **This function cannot move the determination, and that is structural rather
-    than a convention to be careful about.** `stage_a` reads exactly four things
-    -- `processing_status`, `has_single_cell_assay`,
-    `perturbation_present_any_assay`, and the `single_cell_paired` values inside
-    `perturbations` -- and nothing here writes any of them. A suppressed
-    candidate is by definition not a perturbation, so it is never appended to
-    that array and never promoted out of this one. If a suppressed candidate ever
-    changes a determination, the bug is a write that escaped this function.
-
-    An unverifiable quote drops the quote and keeps the entry (step 6). The
-    alternative -- dropping the entry -- would restore exactly the silence the
-    field was added to remove, and would make a bad quote look like a decision
-    that was never made.
-    """
-    raw = result.get("suppressed_candidates")
-    if raw is None:
-        issues.append(
-            "suppressed_candidates missing; the schema requires it. Use [] when "
-            "nothing was suppressed: a null cannot be told apart from 'the model "
-            "never considered the question', which is the ambiguity this field exists "
-            "to remove")
-        raw = []
-    elif not isinstance(raw, list):
-        issues.append(f"suppressed_candidates={raw!r} is not a list")
-        raw = []
-
-    checked = failed = wrong_source = 0
-    entries: list[dict] = []
-
-    for i, item in enumerate(raw):
-        if not isinstance(item, dict):
-            issues.append(f"suppressed_candidates[{i}] is not an object")
-            continue
-
-        rule = item.get("rule")
-        if rule not in SUPPRESSION_RULES:
-            issues.append(
-                f"suppressed_candidates[{i}].rule={rule!r} is outside the closed set "
-                f"{list(SUPPRESSION_RULES)} — an open value cannot be tallied, which "
-                f"is the whole point of the field")
-        if item.get("would_have_paired") not in TRISTATE:
-            issues.append(f"suppressed_candidates[{i}].would_have_paired="
-                          f"{item.get('would_have_paired')!r} not in yes/no/unclear")
-        if not str(item.get("candidate") or "").strip():
-            issues.append(f"suppressed_candidates[{i}].candidate is empty — the entry "
-                          f"names nothing and cannot be reviewed")
-
-        entry = item.get("evidence_quote")
-        if isinstance(entry, str):
-            issues.append(f"suppressed_candidates[{i}].evidence_quote is a bare string, "
-                          f"expected {{source_id, quote}}")
-            entry = {"source_id": "main", "quote": entry}
-
-        if isinstance(entry, dict) and str(entry.get("quote") or "").strip():
-            quote = str(entry.get("quote"))
-            claimed = str(entry.get("source_id") or "main")
-            outcome = verify_quote_sourced(quote, claimed, sources_text, threshold)
-            checked += 1
-            item["quote_check"] = outcome
-
-            if outcome["status"] == "verified":
-                item["evidence_quote"] = {"source_id": claimed, "quote": quote}
-            elif outcome["status"] in ("wrong_source", "unknown_source"):
-                wrong_source += 1
-                evidence_flags.add("EV-WRONG-SOURCE")
-                item["evidence_quote"] = {"source_id": outcome["source_id"],
-                                          "quote": quote,
-                                          "source_id_corrected_from": claimed}
-                if outcome["status"] == "unknown_source":
-                    evidence_flags.add("CC-7")
-                    issues.append(f"suppressed_candidates[{i}] quote cited unknown source "
-                                  f"{claimed!r}; found in {outcome['source_id']!r} (CC-7)")
-                else:
-                    issues.append(f"suppressed_candidates[{i}] quote attributed to "
-                                  f"{claimed!r} but found in {outcome['source_id']!r} "
-                                  f"(EV-WRONG-SOURCE)")
-            else:
-                failed += 1
-                evidence_flags.add("EV-SUPPRESSED-UNVERIFIED")
-                item["evidence_quote_dropped"] = {"source_id": claimed, "quote": quote}
-                item["evidence_quote"] = None
-                issues.append(
-                    f"suppressed_candidates[{i}] ({str(item.get('candidate'))[:50]!r}) "
-                    f"quote unverifiable in any source (best ratio {outcome['ratio']}) — "
-                    f"quote dropped, ENTRY KEPT (EV-SUPPRESSED-UNVERIFIED)")
-        else:
-            # Legitimate per the prompt: an exclusion resting on the ABSENCE of a
-            # statement has nothing to quote. `why` is expected to say so.
-            item["evidence_quote"] = None
-
-        entries.append(item)
-
-    # prompt.md v0.0.10: `would_have_paired` held to Step 3's evidence standard,
-    # not used as an emphasis marker. If every entry says "yes" the column has
-    # stopped discriminating -- and in practice that pattern travelled with the
-    # field over-firing, pulling real perturbations across the line (observed on
-    # 10.1038/s41586-024-07571-1 and 10.7554/elife.104978.2, both moved yes ->
-    # no by a wrongly-suppressed clinical therapy). Mechanically checkable, so
-    # it is checked. This raises an issue only: judgment stays in the prompt.
-    if len(entries) >= 2 and all(e.get("would_have_paired") == "yes" for e in entries):
-        issues.append(
-            f"all {len(entries)} suppressed candidates have would_have_paired='yes'; "
-            f"the column has stopped discriminating. Check that none of them is "
-            f"actually a perturbation under a Step 2 report rule — filling "
-            f"suppressed_candidates must not shorten the perturbations array")
-
-    return entries, checked, failed, wrong_source
 
 
 #: The record field a pre-0.0.13 result carries instead of `task_version`.
@@ -439,20 +195,16 @@ def validate_result(result: dict, sources_text: dict[str, str], threshold: float
     evidence_flags: set[str] = set()
     source_ids = set(sources_text)
 
-    model_present = result.get("perturbation_present")
+    model_present = result.get(PRIMARY_FIELD)
 
-    # ---- flat enum checks -------------------------------------------------
-    if model_present not in TRISTATE:
-        issues.append(f"perturbation_present={model_present!r} not in yes/no/unclear")
-    for field in ("has_single_cell_assay", "perturbation_present_any_assay"):
-        if result.get(field) not in TRISTATE:
-            issues.append(f"{field}={result.get(field)!r} not in yes/no/unclear")
-    if result.get("processing_status") not in PROCESSING_STATUS:
-        issues.append(f"processing_status={result.get('processing_status')!r} off-schema")
-    if result.get("text_completeness") not in TEXT_COMPLETENESS:
-        issues.append(f"text_completeness={result.get('text_completeness')!r} off-schema")
-    if result.get("unresolved_reason") not in UNRESOLVED_REASONS:
-        issues.append(f"unresolved_reason={result.get('unresolved_reason')!r} off-schema")
+    # ---- flat enum checks, from record.yaml's field_checks -----------------
+    # A loop over data rather than six hand-written comparisons. The value sets
+    # were six module constants here and six lists in prompt.md, with no guard
+    # that any pair agreed; there is one statement of each now.
+    for check in FIELD_CHECKS:
+        value = result.get(check["path"])
+        if value not in check["values"]:
+            issues.append(check["message"].format(path=check["path"], value=value))
     expected = expected_schema or expected_task_version()
     claimed, version_is_legacy = record_version(result, version)
     if expected == "unknown":
@@ -486,8 +238,7 @@ def validate_result(result: dict, sources_text: dict[str, str], threshold: float
         issues.append(f"sources_seen={seen!r} does not match the supplied "
                       f"{sorted(source_ids)} — the assembly step may have dropped a file")
 
-    if result.get("has_single_cell_assay") == "yes" and not result.get("single_cell_assay_types"):
-        issues.append("has_single_cell_assay='yes' but single_cell_assay_types is empty")
+    issues.extend(extra_field_issues(result))
 
     # prompt.md batch spec step 3: truncation is a harness fact the model cannot
     # see, so it is enforced here rather than trusted.
@@ -514,184 +265,36 @@ def validate_result(result: dict, sources_text: dict[str, str], threshold: float
             "prompt.md batch spec step 3: run a section-level second pass")
         result["needs_section_pass"] = True
 
-    perturbations = result.get("perturbations") or []
-    if not isinstance(perturbations, list):
-        issues.append("perturbations is not a list")
-        perturbations = []
+    # ---- quote verification, pruning, reference renumbering ----------------
+    # The loops moved to task/rules.py: they are mostly field NAMES, and
+    # threading a dozen of them plus their message wording through here would
+    # have put the task vocabulary back into the harness in a less readable
+    # form. What stays generic is the thing passed IN -- verifying a quote
+    # against the source it claims, and correcting the attribution when it
+    # verifies elsewhere.
+    def verify(quote: str, claimed_source: str) -> dict:
+        return verify_quote_sourced(quote, claimed_source, sources_text, threshold)
 
-    # ---- source-scoped quote verification + pruning (batch spec step 6) ----
-    checked = failed = wrong_source = 0
-    kept: list[dict] = []
-    dropped: list[dict] = []
-    index_map: dict[int, int] = {}
-
-    for i, pert in enumerate(perturbations):
-        if not isinstance(pert, dict):
-            issues.append(f"perturbations[{i}] is not an object")
-            continue
-
-        if pert.get("category") not in CATEGORIES:
-            issues.append(f"perturbations[{i}].category={pert.get('category')!r} off-schema")
-
-        # v0.0.12. Type only; the value set is open. Never rejected for being an
-        # unusual species, never inferred when absent.
-        if not (pert.get("paired_organism") is None
-                or isinstance(pert.get("paired_organism"), str)):
-            issues.append(f"perturbations[{i}].paired_organism="
-                          f"{pert.get('paired_organism')!r} must be a string or null")
-
-        paired = pert.get("single_cell_paired")
-        if paired not in TRISTATE:
-            issues.append(
-                f"perturbations[{i}].single_cell_paired={paired!r} not in yes/no/unclear")
-
-        raw_quotes = pert.get("evidence_quotes") or []
-        if isinstance(raw_quotes, (str, dict)):
-            raw_quotes = [raw_quotes]
-
-        verified_quotes, quote_checks = [], []
-        for entry in raw_quotes:
-            source_id, quote, legacy = _normalize_quote_entry(entry)
-            if legacy:
-                issues.append(f"perturbations[{i}] evidence_quote is a bare string "
-                              f"(v0.0.4 shape), expected {{source_id, quote}}")
-            outcome = verify_quote_sourced(quote, source_id, sources_text, threshold)
-            checked += 1
-            check = {"claimed_source": source_id, "quote": quote, **outcome}
-            quote_checks.append(check)
-
-            if outcome["status"] == "verified":
-                verified_quotes.append({"source_id": source_id, "quote": quote})
-            elif outcome["status"] in ("wrong_source", "unknown_source"):
-                # Keep the text, correct the attribution, flag it.
-                wrong_source += 1
-                verified_quotes.append({"source_id": outcome["source_id"], "quote": quote,
-                                        "source_id_corrected_from": source_id})
-                evidence_flags.add("EV-WRONG-SOURCE")
-                if outcome["status"] == "unknown_source":
-                    evidence_flags.add("CC-7")
-                    issues.append(f"perturbations[{i}] quote cited unknown source "
-                                  f"{source_id!r}; found in {outcome['source_id']!r} (CC-7)")
-                else:
-                    issues.append(f"perturbations[{i}] quote attributed to {source_id!r} "
-                                  f"but found in {outcome['source_id']!r} (EV-WRONG-SOURCE)")
-            else:
-                failed += 1
-                evidence_flags.add("EV-UNVERIFIED")
-                issues.append(f"perturbations[{i}] quote unverifiable in any source "
-                              f"(best ratio {outcome['ratio']}) — dropped")
-
-        pert["quote_checks"] = quote_checks
-        pert["evidence_quotes"] = verified_quotes
-        pert["quotes_validated"] = bool(verified_quotes)
-
-        # assay_evidence: object or null in v0.0.5.
-        assay_ev = pert.get("assay_evidence")
-        if isinstance(assay_ev, str):
-            issues.append(f"perturbations[{i}].assay_evidence is a bare string "
-                          f"(v0.0.4 assay_evidence_quote shape)")
-            assay_ev = {"source_id": "main", "quote": assay_ev}
-        if isinstance(assay_ev, dict) and str(assay_ev.get("quote") or "").strip():
-            outcome = verify_quote_sourced(str(assay_ev.get("quote")),
-                                           str(assay_ev.get("source_id") or "main"),
-                                           sources_text, threshold)
-            checked += 1
-            pert["assay_quote_check"] = outcome
-            if outcome["status"] == "unverified":
-                failed += 1
-                if paired in ("yes", "no"):
-                    pert["single_cell_paired"] = "unclear"
-                    pert["pairing_downgraded_from"] = paired
-                    paired = "unclear"
-                    evidence_flags.add("EV-PAIRING-DOWNGRADED")
-                    issues.append(
-                        f"perturbations[{i}].assay_evidence unverifiable — pairing "
-                        f"downgraded to 'unclear' (EV-PAIRING-DOWNGRADED)")
-                else:
-                    evidence_flags.add("EV-UNVERIFIED")
-            elif outcome["status"] in ("wrong_source", "unknown_source"):
-                wrong_source += 1
-                evidence_flags.add("EV-WRONG-SOURCE")
-                assay_ev = dict(assay_ev, source_id=outcome["source_id"],
-                                source_id_corrected_from=assay_ev.get("source_id"))
-                pert["assay_evidence"] = assay_ev
-        elif paired in ("yes", "no"):
-            # Legitimate per the prompt (an inferred pairing), but recorded so a
-            # curator can see the pairing is not quoted.
-            issues.append(
-                f"perturbations[{i}].single_cell_paired={paired!r} asserted with no "
-                f"assay_evidence (pairing is inferred, not quoted)")
-
-        if not verified_quotes:
-            # batch spec step 6: zero verified quotes -> drop the perturbation.
-            evidence_flags.add("EV-PERT-DROPPED")
-            issues.append(
-                f"perturbations[{i}] ({pert.get('agent')!r}) DROPPED: no evidence quote "
-                f"could be verified against any source")
-            pert["dropped_reason"] = "no verifiable evidence quote"
-            pert["confidence_original"] = pert.get("confidence")
-            pert["confidence"] = DOWNGRADE_CONFIDENCE
-            dropped.append(pert)
-        else:
-            index_map[i] = len(kept)
-            kept.append(pert)
-
-    result["perturbations"] = kept
-    if dropped:
-        result["perturbations_dropped"] = dropped
-
-    # ---- samples ----------------------------------------------------------
-    for j, sample in enumerate(result.get("samples") or []):
-        if not isinstance(sample, dict):
-            issues.append(f"samples[{j}] is not an object")
-            continue
-        # v0.0.5 curator ruling: true | false | "unclear" are all schema-legal,
-        # so "unclear" is no longer an issue. Only pe.summarize's `is true` test
-        # decides what counts as perturbed.
-        if sample.get("perturbed") not in (True, False, "unclear"):
-            issues.append(
-                f"samples[{j}].perturbed={sample.get('perturbed')!r} not in "
-                f"true/false/'unclear'")
-        if sample.get("is_single_cell_assay") not in TRISTATE:
-            issues.append(f"samples[{j}].is_single_cell_assay="
-                          f"{sample.get('is_single_cell_assay')!r} not in yes/no/unclear")
-        # v0.0.12. Type only -- the value set is open by design, so an
-        # unrecognised species is not an error. A non-string, non-null value is.
-        if not (sample.get("organism") is None or isinstance(sample.get("organism"), str)):
-            issues.append(f"samples[{j}].organism={sample.get('organism')!r} must be a "
-                          f"string or null")
-        # Reindex refs onto the pruned array so they never dangle.
-        refs = sample.get("perturbation_refs") or []
-        remapped = []
-        for ref in refs:
-            if not isinstance(ref, int) or ref not in index_map:
-                if isinstance(ref, int) and 0 <= ref < len(perturbations):
-                    issues.append(f"samples[{j}].perturbation_refs -> {ref} pointed at a "
-                                  f"dropped perturbation; reference removed")
-                else:
-                    issues.append(f"samples[{j}].perturbation_refs contains invalid "
-                                  f"index {ref!r}")
-                continue
-            remapped.append(index_map[ref])
-        if remapped != refs:
-            sample["perturbation_refs_original"] = refs
-            sample["perturbation_refs"] = remapped
+    ctx = validate_items(result, verify, issues, evidence_flags)
+    kept, dropped = ctx["kept"], ctx["dropped"]
+    checked, failed, wrong_source = ctx["checked"], ctx["failed"], ctx["wrong_source"]
 
     # ---- suppressed candidates (v0.0.10) ----------------------------------
     # Placed after the perturbation loop so its quotes join the same counters,
     # and before the recomputation only for readability: it writes nothing the
     # recomputation reads. See `_validate_suppressed`.
-    suppressed, s_checked, s_failed, s_wrong = _validate_suppressed(
-        result, sources_text, threshold, issues, evidence_flags)
-    result["suppressed_candidates"] = suppressed
+    suppressed, s_checked, s_failed, s_wrong = validate_secondary(
+        result, verify, issues, evidence_flags)
+    result[SECONDARY_PATH] = suppressed
     checked += s_checked
     failed += s_failed
     wrong_source += s_wrong
 
     # ---- consistency + recomputation --------------------------------------
     cc_codes = consistency_checks(result)
-    if "CC-7" in evidence_flags:
-        cc_codes.append("CC-7")
+    for code in HARNESS_RAISED_CHECKS:
+        if code in evidence_flags:
+            cc_codes.append(code)
     for code in cc_codes:
         issues.append(f"{code}: {CC_TEXT[code]}")
 
@@ -701,25 +304,26 @@ def validate_result(result: dict, sources_text: dict[str, str], threshold: float
         issues.append(f"consistency_flags did not declare {undeclared} "
                       f"(model reported {model_flags or 'none'})")
 
-    a_result = stage_a(result)
-    final, capped = stage_b(a_result, result.get("processing_status"),
-                            result.get("text_completeness"))
+    final, a_result, capped = decide(result)
 
-    result["perturbation_present_model"] = model_present
-    result["perturbation_present"] = final if final is not None else model_present
-    result["perturbation_present_final"] = result["perturbation_present"]
+    result[MODEL_FIELD] = model_present
+    result[PRIMARY_FIELD] = final if final is not None else model_present
+    # Both kept, and their disagreement rate over a corpus is the direct measure
+    # of fabricated evidence: a determination resting on a hallucinated quote
+    # must not survive the removal of that quote.
+    result[f"{PRIMARY_FIELD}_final"] = result[PRIMARY_FIELD]
 
     # unresolved_reason: "none" unless the final call is unclear; Stage B owns
     # the degraded_text case outright.
     if capped:
-        result["unresolved_reason"] = "degraded_text"
-    elif result["perturbation_present"] != "unclear" and result.get("unresolved_reason") != "none":
+        result["unresolved_reason"] = REASON_RULES["cap_reason"]
+    elif result[PRIMARY_FIELD] != "unclear" and result.get("unresolved_reason") != "none":
         issues.append(f"unresolved_reason={result.get('unresolved_reason')!r} but "
-                      f"perturbation_present={result['perturbation_present']!r}; "
+                      f"{PRIMARY_FIELD}={result[PRIMARY_FIELD]!r}; "
                       f"forcing 'none'")
         result["unresolved_reason"] = "none"
-    elif result["perturbation_present"] == "unclear" and result.get("unresolved_reason") in (None, "none"):
-        issues.append("perturbation_present='unclear' with unresolved_reason='none'; "
+    elif result[PRIMARY_FIELD] == "unclear" and result.get("unresolved_reason") in (None, "none"):
+        issues.append(f"{PRIMARY_FIELD}='unclear' with unresolved_reason='none'; "
                       "the unclear bucket is not triageable without a reason")
 
     if final is not None and model_present != final:
@@ -727,55 +331,19 @@ def validate_result(result: dict, sources_text: dict[str, str], threshold: float
             f"determination recomputed: model said {model_present!r}, harness Stage "
             f"A/B over the pruned evidence gives {final!r}")
 
-    paired_values = _paired(result)
     result["validation"] = {
         "quotes_checked": checked,
         "quotes_failed": failed,
         "quotes_wrong_source": wrong_source,
-        "perturbations_kept": len(kept),
-        "perturbations_dropped": len(dropped),
-        # v0.0.10: what the NOT list swallowed on this paper. `would_pair_yes` is
-        # the actionable one -- those papers are one toggle from "yes".
-        "n_suppressed": len(suppressed),
-        "suppressed_rules": sorted({str(s.get("rule")) for s in suppressed
-                                    if s.get("rule") in SUPPRESSION_RULES}),
-        # Both are reported: the raw fact, and the subset triage acts on. A
-        # curator comparing them sees how much of the suppression load comes
-        # from settled toggles rather than from the rules in review.
-        "suppressed_would_pair_yes": any(
-            s.get("would_have_paired") == "yes" for s in suppressed),
-        "suppressed_would_pair_yes_under_review": any(
-            s.get("would_have_paired") == "yes"
-            and s.get("rule") in RULES_UNDER_REVIEW for s in suppressed),
-        "suppressed_quotes_checked": s_checked,
-        "suppressed_quotes_failed": s_failed,
-        # v0.0.12: WHOSE sample the `yes` pairings refer to. Descriptive only --
-        # nothing here feeds stage_a/stage_b, and test_organism.py asserts that
-        # over every Stage A input combination. The curation scope is applied
-        # downstream by a person, because the corpus is human-primarily but not
-        # human-only and the paper often cannot say which species was deposited.
-        "paired_organisms": sorted({
-            o for o in (normalise_organism(p.get("paired_organism"))
-                        for p in kept if p.get("single_cell_paired") == "yes") if o}),
-        "n_paired_yes_human": sum(
-            1 for p in kept
-            if p.get("single_cell_paired") == "yes" and is_human(p.get("paired_organism"))),
-        # true / false / None: None means no `yes` pairing names an organism at
-        # all, which is different from naming a non-human one. Kept tri-state so
-        # an unknown never reads as a confident "not human".
-        "paired_organism_human": (
-            None if not any(p.get("single_cell_paired") == "yes"
-                            and normalise_organism(p.get("paired_organism"))
-                            for p in kept)
-            else any(p.get("single_cell_paired") == "yes"
-                     and is_human(p.get("paired_organism")) for p in kept)),
-        "paired_yes": paired_values.count("yes"),
-        "paired_no": paired_values.count("no"),
-        "paired_unclear": paired_values.count("unclear"),
-        "mixed_no_unclear": ("no" in paired_values and "unclear" in paired_values
-                             and "yes" not in paired_values),
-        "assay_filtered": (result.get("perturbation_present_any_assay") == "yes"
-                           and result["perturbation_present"] in ("no", "unclear")),
+        f"{ITEM_PATH}_kept": len(kept),
+        f"{ITEM_PATH}_dropped": len(dropped),
+        # The task's own counters, in the order the record has always carried
+        # them. Interleaved rather than appended because the records on disk are
+        # compared byte for byte: `validation`'s key order is part of the output.
+        **metrics(result, {"kept": kept, "dropped": dropped,
+                           "secondary": suppressed,
+                           "secondary_checked": s_checked,
+                           "secondary_failed": s_failed}),
         "stage_a": a_result,
         "stage_b_capped": capped,
         "determination_changed_by_harness": final is not None and model_present != final,
@@ -811,7 +379,7 @@ def main() -> int:
     parser.add_argument("--corpus", default=None,
                         help="overrides config.yaml corpus_dir (default ./corpus)")
     parser.add_argument("--write-corpus", action="store_true",
-                        help="also write corpus/<doi>/extracted/perturbations.json")
+                        help="also write the per-paper result into the corpus tree")
     args = parser.parse_args()
 
     config = {}
@@ -895,35 +463,16 @@ def main() -> int:
         payload = json.dumps(result, indent=2)
         (work / "validated" / f"{doi}.json").write_text(payload)
         if args.write_corpus:
-            corpus_out = corpus / doi / "extracted" / "perturbations.json"
+            corpus_out = (corpus / doi / "extracted"
+                          / output_name("per_paper_file"))
             corpus_out.parent.mkdir(parents=True, exist_ok=True)
             corpus_out.write_text(payload)
         done += 1
 
-        v = result["validation"]
-        quotes_ok = v["quotes_checked"] - v["quotes_failed"]
-        flags = ""
-        if v["perturbations_dropped"]:
-            flags += f"  DROPPED={v['perturbations_dropped']}"
-        if v["stage_b_capped"]:
-            flags += "  STAGE-B-CAP"
-        if v["determination_changed_by_harness"]:
-            flags += f"  MODEL={result['perturbation_present_model']}"
-        if v["assay_filtered"]:
-            flags += "  ASSAY-FILTERED"
-        if v["consistency_flags"]:
-            flags += "  " + ",".join(v["consistency_flags"])
-        if v["evidence_flags"]:
-            flags += "  " + ",".join(v["evidence_flags"])
-        print(f"  {doi:38} {str(result.get('processing_status', '?')):8}"
-              f"{str(result.get('text_completeness', '?')):16}"
-              f"sc={str(result.get('has_single_cell_assay', '?')):8}"
-              f"{str(result.get('perturbation_present', '?')):8}"
-              f"(any={str(result.get('perturbation_present_any_assay', '?')):8}) "
-              f"conf={str(result.get('paper_confidence', '?')):<5} "
-              f"perts={v['perturbations_kept']:<3} "
-              f"y/n/u={v['paired_yes']}/{v['paired_no']}/{v['paired_unclear']:<2} "
-              f"q={quotes_ok}/{v['quotes_checked']}{flags}")
+        # Which conditions are worth shouting about is the pack's call, not the
+        # harness's -- STAGE-B-CAP and ASSAY-FILTERED mean nothing to a different
+        # question.
+        print(progress_line(doi, result))
 
     print(f"\nvalidated {done} | pending {missing} | unparseable {broken}")
     return 0
