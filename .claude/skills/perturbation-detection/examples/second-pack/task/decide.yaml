@@ -1,0 +1,26 @@
+# TABLE 2 — HOW TO DECIDE.
+inputs:
+  processing_status: processing_status
+  text_completeness: text_completeness
+  has_sequencing_assay: has_sequencing_assay
+  paired: tissues[].is_sequenced
+  stated: tissues[].stated_where
+
+cap:
+  when_status: partial
+  when_completeness_not: full
+  from: "no"
+  to: unclear
+  reason: degraded_text
+
+checks:
+  TC-1: "has_sequencing_assay='no' but a tissue is is_sequenced='yes'"
+  TC-2: "tissue_stated='yes' with an empty tissues array"
+  TC-3: "an is_sequenced value outside yes/no/unclear"
+
+harness_raised_checks: []
+
+reason_rules:
+  none_value: none
+  required_when: unclear
+  cap_reason: degraded_text

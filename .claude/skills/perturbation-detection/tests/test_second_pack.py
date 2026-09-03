@@ -39,6 +39,11 @@ Leaks 3 and 4 are one shape, and `test_no_pack_class_is_hardcoded_in_the_harness
 is the generalisation: a class name or check code from ANY pack's tables must not
 appear as a string literal in `pe/`.
 
+The pack itself is archived at `examples/second-pack/`, with its 10-paper result
+and its leak list. The guards below deliberately do NOT use it: they build a
+synthetic minimal pack instead, so this file keeps working when that snapshot
+inevitably falls behind the interface.
+
 Run: python -m pytest tests/test_second_pack.py -q
 """
 from __future__ import annotations

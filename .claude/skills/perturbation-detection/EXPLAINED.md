@@ -541,7 +541,11 @@ Getting there took five fixes, because the first attempt did not run at all: the
 harness assumed every pack has a considered-and-rejected array, printed prose
 naming a change class only this pack declares, and — worst — turned a pack that
 could not be imported into "nothing to do … every paper already has a result",
-exit 0. None of the tests written to prevent exactly that caught any of them. `tests/test_seam.py` tokenises every module
+exit 0. None of the tests written to prevent exactly that caught any of them.
+
+That pack is archived at
+[`examples/second-pack/`](.claude/skills/perturbation-detection/examples/second-pack/README.md),
+with its result and its leak list, for whoever writes question #3. `tests/test_seam.py` tokenises every module
 in `pe/` and fails on a task word in any identifier, string or key — comments and
 docstrings exempt, because half the value here is the record of which DOI taught
 which rule, and forcing that history out of the harness would trade the thing
@@ -684,5 +688,6 @@ for it.
 | version diffs and the noise floor | [compare.py](.claude/skills/perturbation-detection/pe/compare.py) |
 | what a run directory is, and the refusal to report on nothing | [runstate.py](.claude/skills/perturbation-detection/pe/runstate.py) |
 | the seam, and the test that holds it | [tests/test_seam.py](.claude/skills/perturbation-detection/tests/test_seam.py) |
+| a second pack, archived — the proof the seam works | [examples/second-pack/](.claude/skills/perturbation-detection/examples/second-pack/README.md) |
 | the human rulings ledger | [CURATOR-RULINGS.md](.claude/skills/perturbation-detection/CURATOR-RULINGS.md) |
 | what each version was allowed to claim | [ACCEPTANCE-v0.0.12.md](.claude/skills/perturbation-detection/ACCEPTANCE-v0.0.12.md), [EVAL-30-v0.0.10.md](.claude/skills/perturbation-detection/EVAL-30-v0.0.10.md) |

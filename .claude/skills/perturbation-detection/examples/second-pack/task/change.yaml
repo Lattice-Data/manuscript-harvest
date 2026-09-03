@@ -1,0 +1,33 @@
+# TABLE 4 — WHAT COUNTS AS A CHANGE.
+inputs_from: decide.yaml
+order: ["yes", "unclear", "no"]
+
+classes:
+  STAGE-B: >-
+    Stage B's degraded-text cap was ENTERED in the new run
+  STAGE-B-RELEASED: >-
+    Stage B's cap was RELEASED — e.g. re-extraction completed the text
+  STATED-WHERE-CHANGED: >-
+    the same tissue moved between `methods` and `inferred`, which is this task's
+    whole question rather than a detail
+  HARNESS-PRUNE: >-
+    quote pruning changed the determination (EV-* flags)
+  TISSUE-SET-CHANGED: >-
+    the set of tissues found differs between the two runs
+  ASSAY-CHANGED: >-
+    has_sequencing_assay differs between the two runs
+  WITHIN-NOISE: >-
+    the baseline disagrees with itself on this paper across two runs
+  UNEXPLAINED: >-
+    "*** outside every expected class — investigate before the corpus run"
+
+unexplained_class: UNEXPLAINED
+noise_class: WITHIN-NOISE
+
+match:
+  min_shared_words: 1
+  standalone_word_length: 4
+  # A tissue name is one or two words, so the perturbation pack's stop list --
+  # which drops "cell", "sample", "tissue" as uninformative -- would delete the
+  # answer here. Different corpus, different uninformative words.
+  stopwords: [the, and, was, were, from, that, this, with, for]
