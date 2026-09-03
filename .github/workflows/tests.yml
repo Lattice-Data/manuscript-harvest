@@ -104,3 +104,81 @@ jobs:
       # should be confirming a result rather than discovering it. Keep the two in
       # step if the rule selection ever changes.
       - run: ruff check --select F manuscript_harvest tests
+
+  # The skills under .claude/skills/ are deliberately NOT part of the package:
+  # a prompt cannot be tested without a model, so they sit as siblings rather
+  # than inside `manuscript_harvest`. That boundary is mechanical and stays --
+  # nothing under the package imports them, `pytest.ini`'s `testpaths = tests`
+  # does not collect them, and the lint job above is scoped to the package.
+  #
+  # What does NOT follow from that boundary is leaving them ungated. The README
+  # used to name the trade-off outright: "a skill's own tests do not run in this
+  # repo's CI, so a skill can rot while the badge stays green." The
+  # perturbation-detection skill is 2,900 lines with 115 tests of its own, and
+  # it is the artifact this repo is tagged for. So it gets its own job rather
+  # than being folded into the one above, which keeps the two boundaries
+  # separate: the package's coverage gate stays a statement about the package,
+  # and a skill failure is legible as a skill failure.
+  #
+  # Discovered rather than listed. A second skill directory with tests/ is
+  # picked up with no edit here, which is the point of the one-folder-per-
+  # question layout.
+  skills:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      # pyyaml is the skills' only runtime dependency and it is already a
+      # package requirement; ruff and pytest come from the dev file so this job
+      # runs the same versions a developer can install.
+      - run: pip install -r requirements-dev.txt pyyaml
+
+      # Every skill's suite must be collected AND non-empty. A `pytest` that
+      # finds no tests exits 5, which reads as a failure -- but a skill whose
+      # tests silently stopped being discovered would otherwise pass this job by
+      # running nothing, which is the same vacuous-pass shape pe/runstate.py
+      # exists to prevent one layer down.
+      - name: Test each skill
+        run: |
+          set -euo pipefail
+          found=0
+          for skill in .claude/skills/*/; do
+            [ -d "$skill/tests" ] || continue
+            found=$((found + 1))
+            echo "::group::pytest $skill"
+            ( cd "$skill" && python -m pytest tests -q )
+            echo "::endgroup::"
+          done
+          if [ "$found" -eq 0 ]; then
+            echo "no skill with a tests/ directory was found -- this job ran nothing" >&2
+            exit 1
+          fi
+          echo "ok: $found skill suite(s) passed"
+
+      # Same rule selection as the package, for the same reason: correctness
+      # only, no formatting gate.
+      - name: Lint each skill
+        run: |
+          set -euo pipefail
+          for skill in .claude/skills/*/; do
+            [ -d "$skill/pe" ] || continue
+            ruff check --select F "$skill/pe" "$skill/tests"
+          done
+
+      # The skills take a corpus path as an argument and vendor what they need,
+      # so each one must run against any directory of extracted papers rather
+      # than only this repo's. A run root that does not exist is the cheapest
+      # proof that no test depends on one: the corpus-scale negative control
+      # skips instead of failing.
+      - name: Confirm no test needs a local run directory
+        run: |
+          set -euo pipefail
+          for skill in .claude/skills/*/; do
+            [ -d "$skill/tests" ] || continue
+            ( cd "$skill" && PERTURBATION_RUN_ROOT=/nonexistent \
+                python -m pytest tests -q )
+          done

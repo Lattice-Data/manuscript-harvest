@@ -1106,12 +1106,22 @@ separation is mechanical, not just stated:
 
 - nothing under `manuscript_harvest/` imports them,
 - `pytest.ini`'s `testpaths = tests` means their tests are not collected by this
-  repo's suite, and `ruff` is scoped to `manuscript_harvest` and `tests`,
+  repo's suite, and `ruff check --select F manuscript_harvest tests` is scoped to
+  the package,
 - each skill vendors its own copy of what it needs and takes the corpus path as an
   argument, so it runs against any directory of extracted papers, not just this one.
 
-The trade-off is real and worth naming: a skill's own tests do not run in this
-repo's CI, so a skill can rot while the badge stays green.
+**They are gated all the same, by a separate CI job.** The boundary above is about
+what the package is, not about what goes unchecked: this file used to name the
+trade-off as "a skill's own tests do not run in this repo's CI, so a skill can rot
+while the badge stays green", and for an artifact this repo is tagged for that was
+the wrong trade to accept. The `skills` job discovers every
+`.claude/skills/*/tests/` directory, runs it, lints the same `--select F` rules,
+and re-runs the suite with `PERTURBATION_RUN_ROOT=/nonexistent` to prove no test
+depends on a local run. It is a *separate* job so the two boundaries stay separate:
+the package's coverage gate remains a statement about the package, and a skill
+failure reads as a skill failure. A job that discovered no suite fails rather than
+passing on having run nothing.
 
 ### `perturbation-detection`
 

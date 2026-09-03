@@ -1,7 +1,13 @@
-"""Mechanical helpers: reconstruct paper text from blocks.jsonl, validate quotes.
+"""Mechanical helpers: assemble paper text from blocks.jsonl, verify quotes.
 
-No LLM calls live here. The judging step runs inside a Claude Code session
-(see run.md); this module only prepares its input and checks its output.
+No LLM calls live here, and no task vocabulary either -- this module and
+`pe/prepare.py` are the two files in the skill that contain no reference to
+perturbations at all. The judging step runs inside a Claude Code session (see
+SKILL.md); this module only prepares its input and checks its output.
+
+`reconstruct_text` used to sit here, flattening every block into one string. It
+was superseded by `build_sources` when v0.0.5 made supplementary files
+first-class sources with their own `source_id`, and had no caller after that.
 """
 
 from __future__ import annotations
@@ -56,43 +62,6 @@ def read_blocks_jsonl(article_dir: Path) -> list[dict]:
         if candidate.exists():
             return [json.loads(line) for line in candidate.open() if line.strip()]
     return []
-
-
-def reconstruct_text(blocks: list[dict], exclude_sections=EXCLUDE_SECTIONS,
-                     include_kinds=INCLUDE_KINDS) -> tuple[str, dict]:
-    """Rebuild title+abstract+body. Returns (text, stats)."""
-    parts: list[str] = []
-    stats = {"kept": 0, "dropped_section": 0, "dropped_supplementary": 0, "dropped_kind": 0}
-
-    for block in blocks:
-        if not block:
-            continue
-
-        # The decisive supplementary filter. `section` is unreliable for
-        # PDF-derived articles (often None), so supplement text only gets
-        # caught by source_file.
-        source_file = block.get("source_file") or ""
-        if source_file.startswith("supplementary/") or "supplement" in source_file.lower():
-            stats["dropped_supplementary"] += 1
-            continue
-
-        section = (block.get("section") or "").lower()
-        if section and any(excluded in section for excluded in exclude_sections):
-            stats["dropped_section"] += 1
-            continue
-
-        if block.get("kind") not in include_kinds:
-            stats["dropped_kind"] += 1
-            continue
-
-        text = (block.get("text") or "").strip()
-        if text:
-            parts.append(text)
-            stats["kept"] += 1
-
-    full_text = "\n\n".join(parts)
-    stats["chars"] = len(full_text)
-    return full_text, stats
 
 
 def _anchors(quote_norm: str, limit: int = 6) -> list[tuple[str, int]]:
@@ -250,8 +219,15 @@ def build_sources(blocks: list[dict], exclude_sections=EXCLUDE_SECTIONS,
 
     main_text = "\n\n".join(_block_texts(main_blocks, exclude_sections, include_kinds))
 
+    # `chars` and `supp_chars` are seeded here rather than only on the way out.
+    # The main-text-only path returned before the block that set them, so
+    # `pe.prepare --no-supplementary` -- a toggle prompt.md documents -- died on
+    # `KeyError: 'chars'` and had never once worked. Every key this dict will ever
+    # carry now exists before the first return.
     stats = {
         "main_chars": len(main_text),
+        "chars": len(main_text),
+        "supp_chars": 0,
         "supp_files_seen": 0,
         "supp_files_kept": 0,
         "supp_dropped_admin": [],

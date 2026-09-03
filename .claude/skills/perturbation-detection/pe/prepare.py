@@ -126,7 +126,14 @@ def sources_within_budget(blocks, exclude, include, include_supplementary, budge
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--set", default=str(ROOT / "validation_set.txt"))
+    # Required rather than defaulted. The old default, `validation_set.txt`, has
+    # never existed in this skill, so `python -m pe.prepare` with no arguments
+    # failed with a FileNotFoundError naming a file nobody could have created on
+    # purpose. SKILL.md's `--set papers.txt` names one that does not ship either;
+    # the sets that do are papers-6/30/50/50b/all.txt.
+    parser.add_argument("--set", required=True,
+                        help="file of paper directory names, one per line "
+                             "(e.g. papers-30.txt)")
     parser.add_argument("--corpus", default=None, help="overrides config.yaml corpus_dir")
     parser.add_argument("--config", default=str(ROOT / "config.yaml"))
     parser.add_argument("--work", default=str(work_default()))

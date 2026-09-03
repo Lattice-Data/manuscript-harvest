@@ -32,22 +32,26 @@ include_kinds:
   - paragraph
   - caption
 
-# Quote validation
+# Quote validation. `threshold` is the only key here, and it is read by
+# pe.validate. `enabled`, `normalize_unicode` and `normalize_punctuation` used to
+# sit beside it and were read by NOTHING: normalisation is unconditional in
+# pe.paper_text.normalize_text, because prompt.md requires the same
+# normalisation on both sides of a comparison and a switch that turned it off on
+# one side only would make every quote check meaningless. Removed for the reason
+# stated at the bottom of this file about `output_dir` -- a key nobody reads
+# looks like it works and does not.
 fuzzy_match:
-  enabled: true
   threshold: 0.85  # similarity below which a quote counts as unlocatable
-  normalize_unicode: true
-  normalize_punctuation: true
 
-# Confidence bands from prompt.md's rubric, for reading the summary CSV.
-confidence_thresholds:
-  high: 0.80
-  medium: 0.40
-  low: 0.20
-
-# Every paper goes to a human curator regardless of confidence, so there is no
-# auto-accept/auto-reject routing to build.
-flag_all_for_review: true
+# Two more keys have been removed rather than left to look functional.
+# `confidence_thresholds` (high/medium/low bands) had no reader: the one
+# threshold triage actually applies is paper_confidence < 0.6 in
+# pe.summarize.triage_priority, which came from prompt.md step 10 and matched
+# none of the three band edges here, so the file described a rubric the code did
+# not use. `flag_all_for_review: true` had no reader either -- pe.validate sets
+# `needs_review = True` on every record unconditionally, which is the curator's
+# standing decision and not a setting; a key implying it could be switched off
+# was the misleading part.
 
 # Run artifacts (work/ and output/) live OUTSIDE this directory: `claude -p`
 # cannot write under `.claude/` and exits 0 regardless, so results written

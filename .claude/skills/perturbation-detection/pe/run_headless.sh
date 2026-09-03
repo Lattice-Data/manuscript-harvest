@@ -32,7 +32,7 @@ MODEL="${PERTURBATION_MODEL:-claude-opus-5}"
 export MODEL
 
 cd "$ROOT" || exit 1
-mkdir -p "$WORK/logs"
+mkdir -p "$WORK/logs" "$WORK/meta"
 
 # One paper. Called by xargs below.
 run_one() {
@@ -51,10 +51,13 @@ run_one() {
     echo "ABORT $doi (session died earlier this run; re-authenticate and re-run)"
     return 1
   fi
-  if [ -s "$raw_file" ]; then
-    echo "SKIP  $doi (already has a result)"
-    return 0
-  fi
+  # No `[ -s "$raw_file" ]` skip here. The queue below was computed with
+  # pe.pending.status_of, whose whole point is that a non-empty raw file is NOT
+  # enough -- it must parse, carry every required field, and match the manifest's
+  # sources. A paper with a malformed result (seen in practice: one `claude -p`
+  # call wrote JSON with a doubled closing quote) was therefore QUEUED here and
+  # then unconditionally skipped, so the terminal path could never re-run it.
+  # This function trusts the queue; only papers status_of called not-done reach it.
   if [ ! -f "$prompt_file" ]; then
     echo "MISS  $doi (no prompt file -- run pe.prepare first)"
     return 1
@@ -80,6 +83,12 @@ Reply with only the word DONE when the file is written."
        --allowedTools Read Write Bash Grep \
        --output-format text >"$log" 2>&1; then
     if [ -s "$raw_file" ]; then
+      # Which model produced this result. The model is pinned (MODEL above) so
+      # results are attributable across machines and across time, but nothing
+      # recorded it, so the pin bought no attribution at all. Written beside the
+      # result rather than into it: the JSON is the model's own output and the
+      # harness does not edit it before pe.validate reads it.
+      printf '%s\n' "$MODEL" > "$work/meta/$doi.model"
       echo "OK    $doi"
     else
       echo "FAIL  $doi (claude returned 0 but wrote no file; see $log)"
@@ -110,7 +119,7 @@ export -f run_one is_auth_failure
 # would treat as finished forever. Import pe.pending's own status_of rather
 # than re-implementing a weaker version of it.
 DOIS=$("$PY" - "$WORK" <<'PYEOF'
-import json, os, sys
+import json, os, pathlib, sys
 sys.path.insert(0, os.getcwd())
 from pe.pending import status_of
 
@@ -118,7 +127,12 @@ work = sys.argv[1]
 for e in json.load(open(os.path.join(work, "manifest.json"))):
     if "error" in e:
         continue
-    state, _ = status_of(e)
+    # status_of(entry, work), not status_of(entry). Without `work` it falls back
+    # to the manifest's recorded path strings, so a run directory that was moved
+    # or copied -- which the acceptance protocol does -- is judged against the
+    # OLD directory while pe.pending uses the derived ones. The two disagreeing
+    # about what is done is what `entry_paths` exists to prevent.
+    state, _ = status_of(e, pathlib.Path(work))
     if state != "done":
         print(e["doi"])
 PYEOF
@@ -159,7 +173,11 @@ fi
 
 echo "running $COUNT paper(s), $JOBS at a time"
 echo
-printf '%s\n' "$DOIS" | xargs -P "$JOBS" -I{} bash -c 'run_one "$@"' _ {} "$WORK"
+# Teed into run.log because that is where ./pe/watch.sh looks for failures. It
+# never existed, so watch.sh's "N failed" was hardcoded to 0 by accident -- a
+# progress display that could not report a problem.
+printf '%s\n' "$DOIS" | xargs -P "$JOBS" -I{} bash -c 'run_one "$@"' _ {} "$WORK" \
+  | tee -a "$WORK/run.log"
 
 echo
 echo "done. next:"

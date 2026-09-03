@@ -388,9 +388,28 @@ def expected_schema_version(prompt_md: Path | None = None) -> str:
     return prompt_schema_version(path) if path.exists() else "unknown"
 
 
+def model_of(work: Path, doi: str) -> str | None:
+    """Which model produced this paper's raw result, if the runner recorded it.
+
+    `pe/run_headless.sh` pins the model so results are attributable across
+    machines and across time, and wrote that pin nowhere -- so the record could
+    not answer "which model said this", the only question the pin exists to make
+    answerable. The runner writes it beside the result rather than into it,
+    because the raw JSON is the model's own output and the harness does not edit
+    it before reading it back. `None` for every run that predates the sidecar,
+    which is the honest answer there rather than a guess at the default.
+    """
+    path = work / "meta" / f"{doi}.model"
+    if not path.is_file():
+        return None
+    return path.read_text().strip() or None
+
+
 def validate_result(result: dict, sources_text: dict[str, str], threshold: float,
                     version: str = "unknown", truncated_by_harness: bool = False,
-                    expected_schema: str | None = None) -> dict:
+                    expected_schema: str | None = None,
+                    model_id: str | None = None,
+                    needs_section_pass: bool = False) -> dict:
     """Verify quotes per source, prune, recompute the determination."""
     issues: list[str] = []
     evidence_flags: set[str] = set()
@@ -437,6 +456,23 @@ def validate_result(result: dict, sources_text: dict[str, str], threshold: float
                       "text_completeness='full'; treating it as 'truncated'")
         result["text_completeness"] = "truncated"
         result["text_completeness_source"] = "harness"
+
+    # The truncation ladder ran out. pe.prepare wrote this into the manifest and
+    # nothing read it, so the flag was decoration: both papers that hit it on the
+    # 392-paper run were capped at "unclear"/degraded_text like any truncated
+    # paper and sorted to triage P4 -- "route to re-fetch, not to reading", which
+    # is the WRONG QUEUE. Re-fetching cannot help. The text arrived complete and
+    # does not fit the budget even after dropping Discussion, Introduction and
+    # every supplement but the largest. prompt.md batch spec step 3 asks for a
+    # section-level second pass, and this is what makes that distinction visible
+    # to a curator instead of implied by a manifest key nobody reads.
+    if needs_section_pass:
+        issues.append(
+            "harness truncation ran out of ladder (needs_section_pass): the text "
+            "does not fit the budget with Methods preserved, so the cap at "
+            "'unclear' is NOT a fetch problem and re-fetching will not change it. "
+            "prompt.md batch spec step 3: run a section-level second pass")
+        result["needs_section_pass"] = True
 
     perturbations = result.get("perturbations") or []
     if not isinstance(perturbations, list):
@@ -708,6 +744,7 @@ def validate_result(result: dict, sources_text: dict[str, str], threshold: float
         "issues": issues,
         "threshold": threshold,
         "prompt_version": version,
+        "model_id": model_id,
         "sources_verified_against": sorted(source_ids),
     }
     # User decision: every paper gets human review regardless of confidence.
@@ -790,7 +827,9 @@ def main() -> int:
         result = validate_result(
             result, sources_text, threshold, entry_version,
             truncated_by_harness=bool(entry.get("truncation", {}).get("truncated")),
-            expected_schema=expected_schema)
+            expected_schema=expected_schema, model_id=model_of(work, doi),
+            needs_section_pass=bool(
+                entry.get("truncation", {}).get("needs_section_pass")))
 
         payload = json.dumps(result, indent=2)
         (work / "validated" / f"{doi}.json").write_text(payload)
