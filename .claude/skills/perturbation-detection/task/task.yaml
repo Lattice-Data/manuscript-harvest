@@ -1,0 +1,71 @@
+# The task pack's identity. ONE version number for the whole question.
+#
+# This replaces the pair `prompt_version` + `schema_version`. They always moved
+# together in practice, and the only thing keeping them apart was a judgment
+# call -- "did this revision change the record shape?" -- whose cost is now
+# measured: at v0.0.12 the answer was yes, three of four declaration sites were
+# updated, and the model split on the contradiction. 386 of 392 corpus records
+# followed the schema example and emitted 0.0.7 while 6 followed the instruction
+# line and emitted 0.0.6, and the validator was calibrated to the minority.
+#
+# So the judgment call is gone, replaced by two facts:
+#
+#   version       -- what the harness grades a record against. Bump it for any
+#                    change that alters what a record should contain or how it
+#                    is judged.
+#   pack_sha256    -- computed, never written here. Two records were produced
+#                    under byte-identical rules iff their pack hashes match, so
+#                    "was this scored under the same rules" needs no bookkeeping
+#                    and no opinion. See pe/task loader.
+#
+# Nothing may restate `version` as a literal. prompt.md carries
+# `{{TASK_VERSION}}` at every declaration site and pe.prepare fills it, the way
+# it already fills {{PAPER_ID}} -- so a stale version in the prompt is not a bug
+# to catch but a state the file cannot be in. tests/test_task_version.py holds
+# that line.
+
+name: perturbation-detection
+
+# 0.0.13 continues the prompt's own series rather than restarting, so a record
+# from this pack stays comparable to the 392 scored under 0.0.12. The repo's
+# release tag is a separate number on purpose: fold them together and every
+# unrelated fetch-layer fix marks 392 stored records as wrong-version and
+# demands a re-score, which is the opposite of what a release should cost.
+version: 0.0.13
+
+# What the model is asked, in one line, for a reader deciding whether this pack
+# is the one they want. The criteria live in prompt.md and nowhere else.
+question: >-
+  Were the samples actually profiled by a single-cell or single-nucleus
+  sequencing assay experimentally perturbed?
+
+# Names the harness would otherwise hardcode. A second pack in the same repo
+# needs its own run root, or the two would share `work/` and each would see the
+# other's papers as pending.
+outputs:
+  run_root_subdir: perturbation
+  env_var: PERTURBATION_RUN_ROOT
+  per_paper_file: perturbations.json
+  summary_csv: perturbations_summary.csv
+  review_txt: review_screen.txt
+  diff_txt: version_diff.txt
+
+# The single-paper spec handed to the model, and the structural contract
+# pe.prepare needs to slice it. These anchors are the interface any replacement
+# prompt must satisfy: they were five bare string literals across two modules,
+# and a prompt missing one died on an unmessaged ValueError.
+spec:
+  path: prompt.md
+  anchors:
+    instruction: "## Instruction prompt"
+    schema_start: "## Output schema"
+    schema_end: "## Toggle decisions"
+  placeholders:
+    paper_id: "{{PAPER_ID}}"
+    paper_text: "{{PAPER_TEXT}}"
+    source_ids: "{{SOURCE_IDS}}"
+    task_version: "{{TASK_VERSION}}"
+  # The line pe.validate searches for, backwards, to recover exactly the bytes
+  # the model was shown. Stated here so the writer and the reader cannot
+  # disagree about it.
+  read_back_marker: "\nPAPER_TEXT:"

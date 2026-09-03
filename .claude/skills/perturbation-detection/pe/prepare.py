@@ -33,6 +33,7 @@ except ImportError:  # config is optional; defaults live in paper_text.py
     yaml = None
 
 from pe.runroot import work_default  # noqa: E402
+from task import PackError, load as load_pack  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -45,29 +46,60 @@ ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_BUDGET_CHARS = 400_000
 
 
-def build_template(prompt_md: Path) -> str:
+def build_template(pack) -> str:
     """Instruction block + output schema, still holding the {{...}} placeholders.
 
-    prompt.md keeps the schema *outside* the fenced instruction block even
-    though the instruction says "matching the schema below", so it has to be
-    spliced in ahead of PAPER_ID or the model never sees it.
-    """
-    src = prompt_md.read_text()
+    The spec document keeps the schema *outside* the fenced instruction block
+    even though the instruction says "matching the schema below", so it has to
+    be spliced in ahead of PAPER_ID or the model never sees it.
 
-    head = src.index("## Instruction prompt")
+    **This is the pack/harness interface, and it used to be five bare string
+    literals across two modules with nothing declaring them.** Three heading
+    anchors here, three placeholder names here, and a read-back marker in
+    `pe.validate` -- so a replacement spec that renamed a heading failed with an
+    unmessaged `ValueError` from a `str.index`, and the only way to learn the
+    contract was to read the slicing code. They now come from
+    `task.yaml: spec.anchors` / `spec.placeholders`, and every violation names
+    the file, the anchor, and what to do about it.
+    """
+    src = pack.spec_path.read_text()
+
+    def anchor(key: str) -> int:
+        needle = pack.anchors[key]
+        at = src.find(needle)
+        if at < 0:
+            raise PackError(
+                f"{pack.spec_path.name} has no {needle!r} heading, which "
+                f"task.yaml declares as spec.anchors.{key}. Either add the "
+                f"heading or point the anchor at the one this spec uses.")
+        return at
+
+    head = anchor("instruction")
     match = re.search(r"```\s*\n(.*?)\n\s*```", src[head:], re.DOTALL)
     if not match:
-        raise ValueError("no fenced instruction block after '## Instruction prompt'")
+        raise PackError(
+            f"{pack.spec_path.name}: no fenced ``` block after "
+            f"{pack.anchors['instruction']!r}. The instruction the model is "
+            f"given is the contents of that block.")
     instruction = match.group(1)
 
-    schema = src[src.index("## Output schema") : src.index("## Toggle decisions")].strip()
+    start, end = anchor("schema_start"), anchor("schema_end")
+    if end <= start:
+        raise PackError(
+            f"{pack.spec_path.name}: {pack.anchors['schema_end']!r} appears "
+            f"before {pack.anchors['schema_start']!r}, so the schema slice would "
+            f"be empty. The schema section must precede the end anchor.")
+    schema = src[start:end].strip()
 
-    marker = "PAPER_ID: {{PAPER_ID}}"
+    marker = f"PAPER_ID: {pack.placeholders['paper_id']}"
     if marker not in instruction:
-        raise ValueError("instruction block lost its PAPER_ID placeholder")
-    for placeholder in ("{{PAPER_TEXT}}", "{{SOURCE_IDS}}"):
+        raise PackError(f"the instruction block has no {marker!r} line")
+    for key in ("paper_text", "source_ids"):
+        placeholder = pack.placeholders[key]
         if placeholder not in instruction:
-            raise ValueError(f"instruction block lost its {placeholder} placeholder")
+            raise PackError(
+                f"the instruction block has no {placeholder} placeholder "
+                f"(task.yaml spec.placeholders.{key})")
     before, after = instruction.split(marker, 1)
     return f"{before.rstrip()}\n\n{schema}\n\n---\n\n{marker}{after}"
 
@@ -126,11 +158,20 @@ def sources_within_budget(blocks, exclude, include, include_supplementary, budge
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--set", default=str(ROOT / "validation_set.txt"))
+    # Required rather than defaulted. The old default, `validation_set.txt`, has
+    # never existed in this skill, so `python -m pe.prepare` with no arguments
+    # failed with a FileNotFoundError naming a file nobody could have created on
+    # purpose. SKILL.md's `--set papers.txt` names one that does not ship either;
+    # the sets that do are papers-6/30/50/50b/all.txt.
+    parser.add_argument("--set", required=True,
+                        help="file of paper directory names, one per line "
+                             "(e.g. papers-30.txt)")
     parser.add_argument("--corpus", default=None, help="overrides config.yaml corpus_dir")
     parser.add_argument("--config", default=str(ROOT / "config.yaml"))
     parser.add_argument("--work", default=str(work_default()))
-    parser.add_argument("--prompt", default=str(ROOT / "prompt.md"))
+    # No --prompt. The spec's path is `task.yaml: spec.path`, so pointing this
+    # module at a different file without its anchors and placeholders would fail
+    # in the slicing code rather than at the flag. Swap the pack, not the file.
     parser.add_argument("--budget", type=int, default=None,
                         help=f"assembled text char budget (default {DEFAULT_BUDGET_CHARS:,})")
     parser.add_argument("--no-supplementary", action="store_true",
@@ -149,11 +190,22 @@ def main() -> int:
         include_supp = bool(config["include_supplementary"])
     budget = args.budget or config.get("budget_chars") or DEFAULT_BUDGET_CHARS
 
-    template = build_template(Path(args.prompt))
+    pack = load_pack()
+    template = build_template(pack)
     # Stamped into the manifest so pe.validate can report the version the
-    # EXTRACTION ran under. Reading prompt.md at validate time instead means any
+    # EXTRACTION ran under. Reading the spec at validate time instead means any
     # re-validation after a version bump silently relabels old results as new.
-    built_version = prompt_version(Path(args.prompt))
+    stamp = pack.stamp()
+    built_version = stamp["task_version"]
+    # The spec's own `Version:` line is a placeholder now, so this asserts the
+    # substitution below actually happened rather than reading a stale literal.
+    declared = prompt_version(pack.spec_path)
+    if declared != pack.placeholders["task_version"]:
+        raise PackError(
+            f"{pack.spec_path.name}'s `Version:` line reads {declared!r}, but the "
+            f"single declaration of the version is task.yaml. Put "
+            f"{pack.placeholders['task_version']} there instead -- a literal in "
+            f"the spec is the drift that 0.0.13 removed.")
     corpus = Path(args.corpus or config.get("corpus_dir")
                   or "./corpus")
     # Resolved to absolute: the manifest records raw_file/prompt_file as strings,
@@ -166,6 +218,7 @@ def main() -> int:
 
     dois = [line.strip() for line in Path(args.set).read_text().splitlines() if line.strip()]
     manifest = []
+    print(f"task {pack.name} {pack.version}  pack {stamp['pack_sha256'][:12]}")
     print(f"supplementary sources: {'INCLUDED (deduped)' if include_supp else 'EXCLUDED'} "
           f"| budget {budget:,} chars\n")
 
@@ -189,10 +242,14 @@ def main() -> int:
         # block also mentions `{{PAPER_TEXT}}` as prose in Step 0 ("may be
         # incomplete"), and a blanket str.replace spliced the whole paper in
         # there too -- doubling every prompt file and burying the instructions.
-        head, tail = template.rsplit("{{PAPER_TEXT}}", 1)
+        head, tail = template.rsplit(pack.placeholders["paper_text"], 1)
         filled = (f"{head}{paper_text}{tail}"
-                  .replace("{{PAPER_ID}}", doi)
-                  .replace("{{SOURCE_IDS}}", source_ids))
+                  .replace(pack.placeholders["paper_id"], doi)
+                  .replace(pack.placeholders["source_ids"], source_ids)
+                  # The version the model echoes, substituted rather than
+                  # written into the spec. This is what makes "one version"
+                  # structural instead of a rule somebody has to remember.
+                  .replace(pack.placeholders["task_version"], built_version))
         prompt_file = work / "prompts" / f"{doi}.txt"
         prompt_file.write_text(filled)
 
@@ -200,6 +257,11 @@ def main() -> int:
             "doi": doi,
             "paper_id": doi,
             "fetch_status": "ok",
+            **stamp,
+            # Kept as an alias of task_version, written from the same variable so
+            # the two cannot drift. Every preserved baseline and every one of the
+            # 392 scored records is keyed on this name; dropping it would make
+            # them incomparable, which is a re-score nobody asked for.
             "prompt_version": built_version,
             "prompt_file": str(prompt_file),
             # Recorded so subagents know whether one Read call covers the file
@@ -248,4 +310,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except PackError as exc:
+        print(f"pe.prepare: {exc}", file=sys.stderr)
+        raise SystemExit(2) from None

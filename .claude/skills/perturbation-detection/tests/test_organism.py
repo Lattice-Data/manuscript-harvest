@@ -22,10 +22,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from pe.paper_text import split_assembled  # noqa: E402
-from pe.summarize import triage_priority  # noqa: E402
-from pe.validate import (  # noqa: E402
-    is_human, normalise_organism, stage_a, validate_result,
-)
+from task.report import triage_priority  # noqa: E402
+from pe.validate import validate_result  # noqa: E402
+from task.rules import is_human, normalise_organism, stage_a  # noqa: E402
 
 TRI = ("yes", "no", "unclear")
 
@@ -56,7 +55,7 @@ def _pert(**over):
 
 def _record(**over):
     base = {
-        "schema_version": "0.0.7",
+        "task_version": "0.0.13",
         "paper_id": "10.1038_s41586-022-05060-x",
         "sources_seen": ["main"],
         "processing_status": "ok",

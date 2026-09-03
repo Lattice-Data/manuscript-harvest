@@ -35,16 +35,17 @@ from pe.runroot import work_default  # noqa: E402
 ARG_FIELDS = ("doi", "prompt_file", "prompt_lines", "prompt_chars", "chars",
               "raw_file", "source_ids")
 
-# A result must carry these to be a schema-0.0.6 record at all; anything less is
-# a partial write and gets re-run rather than validated. `suppressed_candidates`
-# is on the list deliberately: v0.0.9 told the model to note its exclusions in
-# `ambiguities` and nothing checked that it had, so the exclusions went
-# unrecorded. Requiring the field here is what makes it enforceable -- a result
-# that omits it is re-run, not silently accepted.
-REQUIRED = ("schema_version", "sources_seen", "processing_status",
-            "text_completeness", "has_single_cell_assay", "perturbation_present",
-            "perturbation_present_any_assay", "unresolved_reason",
-            "consistency_flags", "perturbations", "suppressed_candidates")
+# Which fields a complete record must carry, and which old name still satisfies
+# one, are `task/record.yaml`'s -- `required_fields` and `legacy_field_names`.
+# This module's job is the resume rule, not the schema: a paper counts as done
+# only if its result parses, carries every required field, and its `sources_seen`
+# matches the manifest, so a partial write is re-run rather than silently
+# accepted.
+from task import tables  # noqa: E402
+
+_REC = tables()["record"]
+REQUIRED = tuple(_REC["required_fields"])
+LEGACY_FIELD_NAMES = dict(_REC["legacy_field_names"])
 
 
 def status_of(entry: dict, work: Path | None = None) -> tuple[str, str]:
@@ -63,7 +64,8 @@ def status_of(entry: dict, work: Path | None = None) -> tuple[str, str]:
         result = parse_raw(raw.read_text())
     except Exception as exc:  # noqa: BLE001 - any parse problem means re-run
         return "unparseable", str(exc)[:80]
-    absent = [k for k in REQUIRED if k not in result]
+    absent = [k for k in REQUIRED
+              if k not in result and LEGACY_FIELD_NAMES.get(k) not in result]
     if absent:
         return "incomplete", "missing " + ",".join(absent)
     seen = {str(s) for s in (result.get("sources_seen") or [])}

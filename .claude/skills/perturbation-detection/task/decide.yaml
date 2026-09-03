@@ -1,0 +1,79 @@
+# TABLE 2 of 4 — HOW TO DECIDE.
+#
+# The inputs the determination is a function of, the degraded-text cap, and the
+# consistency codes with their wording. The ORDERED RULES themselves are
+# `rules.decide()` in rules.py rather than data here, and that is a deliberate
+# choice rather than an unfinished one -- see the note at the bottom.
+
+# The complete input set. Stage A and Stage B read nothing else, so two runs that
+# agree on all five and still disagree on the determination indicate a logic bug
+# rather than a difference of reading. `pe.compare` uses exactly this list, which
+# is the point of stating it once: the diff and the decision must agree about
+# what the decision reads.
+inputs:
+  processing_status: processing_status
+  text_completeness: text_completeness
+  has_single_cell_assay: has_single_cell_assay
+  any_assay: perturbation_present_any_assay
+  paired: perturbations[].single_cell_paired
+
+# Stage B. Asymmetric on purpose: missing text can hide the sentence that would
+# have paired a perturbation to a qualifying assay, but it cannot invent one, so
+# only a negative is capped. A positive stands on the evidence it has.
+#
+# `when_completeness_not: full` means ANYTHING other than "full" -- including a
+# malformed or absent value. The guard here used to test membership of the legal
+# enum first, so None, "", "Full" and "truncated " all escaped the cap and kept
+# the "no", while an honest "unknown" was capped. A safety mechanism a typo
+# switches off is not one.
+cap:
+  when_status: partial
+  when_completeness_not: full
+  from: "no"
+  to: unclear
+  reason: degraded_text
+
+# CC-1 .. CC-6 are computed from the record; CC-7 is raised by the harness during
+# quote checking, when a quote cites a source_id that was never supplied. The
+# messages are the wording a curator reads.
+checks:
+  CC-1: "has_single_cell_assay='no' but a perturbation is single_cell_paired='yes'"
+  CC-2: "perturbation_present_any_assay='yes' with an empty perturbations array"
+  CC-3: "perturbation_present_any_assay='no' but perturbation(s) reported"
+  CC-4: "a single_cell_paired value outside yes/no/unclear"
+  CC-5: "has_single_cell_assay='unclear' with a single_cell_paired='yes'"
+  CC-6: "processing_status='failed' with a non-empty perturbations array"
+  CC-7: "a quote citing a source_id that was never supplied"
+
+# Raised by the harness rather than computed from the record.
+harness_raised_checks: [CC-7]
+
+# Post-conditions on `unresolved_reason`. A determination that is not `unclear`
+# has no reason to be unresolved, and an `unclear` with no reason is not
+# triageable -- report.yaml's ladder gives the latter a tier so it cannot sink.
+reason_rules:
+  none_value: none
+  required_when: unclear
+  cap_reason: degraded_text
+
+# ---------------------------------------------------------------------------
+# Why the ordered rules are NOT data here.
+#
+# prompt.md publishes Stage A as a 10-row truth table with explicit wildcards,
+# so expressing it as YAML rows plus a small matcher is genuinely possible, and
+# it was the first thing tried. It was rejected for one reason: a table needs a
+# predicate vocabulary, that vocabulary is a guess until a SECOND task has a
+# decide step to compare against, and the recorded decision of 2026-08-31 is
+# explicit that `stage_a` "is the piece expected to be shaped differently per
+# question, so the seam is a guess until two real cases exist".
+#
+# Inventing an expression language for one instance would make the pack harder
+# to write and the harness harder to trust, in exchange for a generality nobody
+# can yet check. So the rules are three functions in rules.py -- `decide`,
+# `checks`, `metrics` -- and the harness calls them without knowing what they
+# mean. A second pack writes three functions, not a table; if a third pack's
+# functions turn out to have the same shape, THAT is the moment to lift them
+# into rows here, with two real cases to draw the vocabulary from.
+#
+# What is data above is data because it is a list or a message, not a rule.
+# ---------------------------------------------------------------------------

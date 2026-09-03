@@ -1106,12 +1106,22 @@ separation is mechanical, not just stated:
 
 - nothing under `manuscript_harvest/` imports them,
 - `pytest.ini`'s `testpaths = tests` means their tests are not collected by this
-  repo's suite, and `ruff` is scoped to `manuscript_harvest` and `tests`,
+  repo's suite, and `ruff check --select F manuscript_harvest tests` is scoped to
+  the package,
 - each skill vendors its own copy of what it needs and takes the corpus path as an
   argument, so it runs against any directory of extracted papers, not just this one.
 
-The trade-off is real and worth naming: a skill's own tests do not run in this
-repo's CI, so a skill can rot while the badge stays green.
+**They are gated all the same, by a separate CI job.** The boundary above is about
+what the package is, not about what goes unchecked: this file used to name the
+trade-off as "a skill's own tests do not run in this repo's CI, so a skill can rot
+while the badge stays green", and for an artifact this repo is tagged for that was
+the wrong trade to accept. The `skills` job discovers every
+`.claude/skills/*/tests/` directory, runs it, lints the same `--select F` rules,
+and re-runs the suite with `PERTURBATION_RUN_ROOT=/nonexistent` to prove no test
+depends on a local run. It is a *separate* job so the two boundaries stay separate:
+the package's coverage gate remains a statement about the package, and a skill
+failure reads as a skill failure. A job that discovered no suite fails rather than
+passing on having run nothing.
 
 ### `perturbation-detection`
 
@@ -1124,11 +1134,20 @@ RNA-seq, qPCR, Western or flow readout while the single-cell dataset comes from
 separate untreated material.
 
     cd .claude/skills/perturbation-detection
-    python -m pe.prepare  --set papers.txt --work work --corpus ../../../corpus
-    ./pe/run_headless.sh work 4
-    python -m pe.validate --work work --write-corpus --corpus ../../../corpus
-    python -m pe.summarize --work work
-    ./pe/watch.sh work            # in another shell: progress, then a notification
+    python -m pe.prepare  --set papers-30.txt --corpus ../../../corpus
+    ./pe/run_headless.sh
+    python -m pe.validate --write-corpus --corpus ../../../corpus
+    python -m pe.summarize
+    ./pe/watch.sh ~/.manuscript-harvest/perturbation/work   # in another shell
+
+Two things that used to be wrong in this block and are worth stating rather than
+quietly fixing. `--set papers.txt` named a file that has never shipped, so the
+quickstart died on its first line; the sets that exist are `papers-6/30/50/50b/
+all.txt`. And `--work work` wrote run artifacts *under `.claude/`*, which is the
+one place they cannot go: `claude -p` subagents cannot write there and the CLI
+exits 0 anyway, so a result lands nowhere and reports success. The default run
+root is outside the repo for exactly that reason, and passing an explicit path is
+now the only way to override it.
 
 Only the second step needs a model, and it needs no API key: it runs `claude -p`
 against the logged-in Claude Code session. `pe/pending.py` makes a run resumable,
@@ -1141,8 +1160,16 @@ The design choice worth copying into any similar skill: **the harness does not t
 the model's own answer.** Every quote is verified against the specific source it
 claims, unlocatable quotes are dropped, a perturbation left with no verified quote is
 dropped whole, and only then is the paper-level call recomputed. Both values are
-kept, so the gap between them measures fabricated evidence directly. Over 77 papers
-it has been 0, with 544/544 quotes verified and no misattributions.
+kept, so the gap between them measures fabricated evidence directly. Over the
+full 392-paper corpus it is **1 of 392**, with **2,471 of 2,471 quotes verified,
+0 unverifiable and 0 misattributed**.
+
+A result that clean has two readings — the model is honest, or the checker cannot
+fail — so there is now a negative control that separates them at corpus scale:
+`test_the_verifier_can_actually_fail` corrupts a quote in real records from a
+real run and asserts the flags fire, at the real threshold against the real
+multi-source assembly. It skips when no run directory is present, so CI is
+unaffected.
 
 This mirrors the `## Design` principle above: emptiness you cannot account for is
 worthless, so a paper whose text is truncated or missing its Methods can never be
@@ -1162,9 +1189,39 @@ v0.0.10 makes exclusions a structured, required field with a closed rule set, so
 each one is attributable and countable, and papers a rule alone kept out of "yes"
 sort to the top of the review queue.
 
-Read `.claude/skills/perturbation-detection/SKILL.md` to run it, and `prompt.md` in
+### Three layers, and only the top one is about perturbations
+
+The skill is split so the judgment can be swapped without touching the machinery:
+
+    JUDGMENT   task/    the spec + four lookup tables — "what counts, how to
+                        decide, what to read first, what counts as a change"
+    PLUMBING   pe/      assemble sources, splice the prompt, one call per paper,
+                        verify every quote, prune, recompute, tabulate, diff
+    TEXT       manuscript_harvest   this package
+
+`pe/` is 1,517 lines that name the task **nowhere in code**, and
+`tests/test_seam.py` holds that line by tokenising every module and rejecting a
+task word in any identifier, string or key. It was not always so: `pe/` was
+1,038 task lines against 1,185 generic ones, interleaved inside four files.
+Moving them out changed nothing measurable — all 392 records re-validated with
+zero differing beyond the pack hash, and three text outputs came out
+byte-identical — which is the only evidence that a refactor of that size was a
+refactor.
+
+The pack also carries **one version**. `prompt_version` and `schema_version`
+collapsed into `task_version`, declared once in `task/task.yaml` and spliced into
+the prompt as a placeholder, plus `pack_sha256` — a hash over every rule-bearing
+file, so "were these two records produced under the same rules" is a comparison
+rather than an opinion. The two numbers existed because somebody had to judge per
+revision whether the record shape had moved, and the cost of that judgment is
+measured: at v0.0.12 three of four declaration sites were updated, the model
+split on the contradiction, and 386 of 392 records were filed with a spurious
+issue.
+
+Read `.claude/skills/perturbation-detection/SKILL.md` to run it, `prompt.md` in
 the same directory for the criteria — that file, not this one, is the source of
-truth for what counts as a perturbation.
+truth for what counts as a perturbation — and `EXPLAINED.md` beside it for the
+whole thing in plain language with every number measured.
 
 ## Tests
 

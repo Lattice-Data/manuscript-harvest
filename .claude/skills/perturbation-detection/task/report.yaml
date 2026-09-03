@@ -1,0 +1,304 @@
+# TABLE 3 of 4 — WHAT TO READ FIRST.
+#
+# The triage ladder, the summary columns, the corpus counters, and the six review
+# screens with their keyword banks. All of it is a statement about which papers a
+# curator should open first, which is a judgment about this task and not a
+# property of the harness.
+#
+# Two of these were written twice before. The ladder existed as predicates in
+# `triage_priority` AND as labels in `_counters`, 40 lines apart in one file, and
+# the only test pinning them was code-against-code -- so a tier could be
+# renumbered in one and not the other, which is a documented trap here (see
+# `renumbered_at` below). The columns existed as a 44-name list and a 44-key
+# literal, two hand-maintained halves that DictWriter would only catch at run
+# time. Both are single lists now.
+#
+# The predicates are `task/report.py`; this is the data they read. Same reasoning
+# as decide.yaml: lists and labels are data, rules are functions, and a
+# predicate vocabulary invented for one task is a guess.
+
+# --------------------------------------------------------------------------
+# The triage ladder. Lower sorts first; 0 is reserved for rows that failed or
+# are still pending, and 8 is unused.
+# --------------------------------------------------------------------------
+#
+# **This ladder renumbered once, at prompt v0.0.10**, when tier 2 was inserted
+# and the old 2-5 shifted to 3-6. Do not compare a priority column across that
+# boundary without checking which version produced it. v0.0.12 did NOT renumber:
+# its tier took the unused slot 7 precisely so 1-6 stayed comparable, and that
+# is the pattern to copy.
+renumbered_at: 0.0.10
+
+tiers:
+  - n: 1
+    label: "unclear + pairing_not_stated  (may hide a real match — read first)"
+  - n: 2
+    label: "not yes + a suppressed candidate would have paired yes  (v0.0.10)"
+  - n: 3
+    label: "yes with paper_confidence < 0.6"
+  - n: 4
+    label: "unclear + degraded_text       (route to re-fetch, not to reading)"
+  - n: 5
+    label: "no but any_assay=yes          (pairing filter fired — sample it)"
+  - n: 6
+    label: "consistency or evidence flags"
+  - n: 7
+    label: "yes carried only by a non-human model — scope call  (v0.0.12)"
+  - n: 9
+    label: "everything else"
+
+# The confidence below which a positive is worth a second read. Note this is a
+# FOURTH threshold, matching none of prompt.md's three rubric band edges
+# (0.80/0.40/0.20) -- it came from step 10 and is deliberately its own number.
+low_confidence_yes: 0.6
+
+# `unresolved_reason` values a tier above 6 already accounts for. Anything else
+# on an `unclear` paper -- including "none", null and an off-enum string -- leaves
+# the paper with no stated reason to be unclear, and it used to fall past every
+# tier into 9, the bottom of the queue. Tier 6 catches it instead: widening an
+# existing tier rather than inserting one, so nothing renumbers.
+triaged_unresolved_reasons:
+  - pairing_not_stated
+  - degraded_text
+  - assay_type_unconfirmed
+  - perturbation_role_unclear
+  - contradiction_unresolved
+
+# --------------------------------------------------------------------------
+# The summary CSV. One list, read by both the writer and the row builder.
+# --------------------------------------------------------------------------
+columns:
+  - triage_priority
+  - paper_id
+  - doi
+  - status
+  - perturbation_present
+  - perturbation_present_model
+  - perturbation_present_any_assay
+  - unresolved_reason
+  - processing_status
+  - text_completeness
+  - has_single_cell_assay
+  - single_cell_assay_types
+  - paper_confidence
+  - n_perturbations
+  - n_paired_yes
+  - n_paired_no
+  - n_paired_unclear
+  - assay_filtered
+  - stage_b_capped
+  - determination_changed_by_harness
+  - consistency_flags
+  - evidence_flags
+  - categories
+  - n_samples
+  - n_samples_perturbed
+  - n_samples_unclear
+  - n_samples_sc_assay
+  - n_suppressed
+  - suppressed_rules
+  - suppressed_would_pair_yes
+  - suppressed_would_pair_yes_under_review
+  - paired_organisms
+  - paired_organism_human
+  - n_paired_yes_human
+  - quotes_checked
+  - quotes_failed
+  - quotes_wrong_source
+  - perturbations_dropped
+  - max_pert_confidence
+  - sources
+  - perturbation_agents
+  - n_issues
+  - chars
+  - needs_review
+
+# Long cells are shortened for spreadsheet readability, and every cut is marked
+# with an ellipsis: a silent [:60] is indistinguishable from broken data.
+# `perturbation_agents` is deliberately NOT truncated -- a curator reads that
+# column to judge each perturbation, and a cut mid-sentence cannot be judged.
+column_limits:
+  single_cell_assay_types: {per_item: 60, total: 200}
+
+# --------------------------------------------------------------------------
+# The six review screens. Titles and blurbs only; the selectors and the
+# per-paper rendering are report.py, because each screen prints different
+# fields of a task-specific record.
+# --------------------------------------------------------------------------
+#
+# Screens, not verdicts. A keyword hit is not proof of an error: "treated with"
+# also describes routine processing, and "single-cell suspension" is a
+# dissociation step rather than an assay -- the two traps this task turns on.
+screens:
+  - id: A
+    summary: "assay-pairing flipped the call"
+    title: "assay-pairing flipped the call (review these first)"
+    blurb: "perturbation_present_any_assay = yes, but perturbation_present = no/unclear"
+    empty: "none — the assay-pairing requirement changed no determinations"
+  - id: B
+    summary: "possible missed single-cell assay"
+    title: "has_single_cell_assay is no/unclear, but assay language appears"
+    grep: assay
+  - id: C
+    summary: "possible missed perturbation"
+    title: "perturbation_present_any_assay = no, but perturbation language appears"
+    grep: perturbation
+  - id: D
+    summary: "capped at unclear by Stage B — re-fetch queue"
+    title: "capped at 'unclear' by Stage B (degraded/incomplete text)"
+    blurb: "prompt.md step 10 priority 4: these go to the re-fetch queue, not to a reader"
+    empty: "none — no paper's negative rested on degraded text"
+  - id: E
+    summary: "supplementary-only evidence / attribution"
+    title: "supplementary-only evidence and quote attribution"
+    blurb: |-
+      prompt.md validation loop step 4: the one behaviour a main-text-only
+      sample cannot check. A perturbation resting ONLY on a supplementary
+      quote is one the v0.0.4 main-text-only run could not have found.
+    empty: "none — no supplementary-only evidence and no misattributed quotes"
+  - id: F
+    summary: "suppressed candidates — the NOT list's audit trail"
+    title: "suppressed candidates: what the NOT list swallowed"
+    blurb: |-
+      Rows marked >>> WOULD HAVE PAIRED YES are one toggle from flipping the
+      paper to 'yes'. They are a review of the RULES, not of the reading:
+      the model named the candidate and judged its pairing, then excluded it.
+      The paper-level marker counts only rules still under review, matching
+      triage P2; a settled toggle pairing 'yes' is annotated but not flagged,
+      since observational disease state alone would mark most clinical papers.
+    empty: |-
+      none — no paper recorded a suppressed candidate. On a corpus of any
+      size that is itself suspicious: the NOT list is long, and a run where
+      nothing was ever excluded more likely means the field is being
+      skipped than that no paper had a candidate.
+
+# The caveat printed under the screen summary. Two named traps, both specific to
+# this task, which is why the harness does not write them.
+footer:
+  - "Screens, not verdicts. 'treated with' also describes routine processing, and"
+  - "'single-cell suspension' is a dissociation step rather than an assay."
+
+# A dissociation step, not an assay. The wording trap this task turns on, so
+# Screen B counts it separately rather than letting it read as an assay hit.
+traps:
+  suspension: "single[- ]cell suspension"
+
+# --------------------------------------------------------------------------
+# Keyword banks for Screens B and C. Indicative, never decisive: a hit means
+# "a human should look", not "the model was wrong".
+# --------------------------------------------------------------------------
+signals:
+  perturbation:
+    genetic:
+    - \bknock(?:ed)?[ -]?outs?\b
+    - \bknock(?:ed)?[ -]?downs?\b
+    - \bknock[ -]?ins?\b
+    - \bsh[Rr]NA\b
+    - \bsi[Rr]NA\b
+    - \bRNAi\b
+    - \bCRISPRi?a?\b
+    - \bsgRNA\b
+    - \bCas9\b
+    - \boverexpress
+    - \btransgenic\b
+    - \bfloxed\b
+    - \bCre[ -]?(?:driver|recombinase|ER)
+    - \bconditional (?:deletion|knockout)\b
+    - \bnull (?:allele|mice)\b
+    - \bbase edit
+    - \bprime edit
+    - \blentivir(?:us|al) (?:transduc|infect)
+    chemical:
+    - \btreated with\b
+    - \btreatment with\b
+    - \bvehicle[ -]?(?:treated|control)\b
+    - \binhibitor\b
+    - \bagonist\b
+    - \bantagonist\b
+    - \bdoxycycline\b
+    - \btamoxifen\b
+    - \b4[- ]?OHT\b
+    - \bchemotherap
+    - \bdosed? (?:with|at)\b
+    biologic_stimulation:
+    - \bstimulated with\b
+    - \bstimulation with\b
+    - \bLPS\b
+    - \bPMA\b
+    - \bionomycin\b
+    - \banti[ -]?CD3\b
+    - \banti[ -]?CD28\b
+    - \bTCR (?:activation|stimulation)\b
+    - \brecombinant (?:human|mouse|murine)\b
+    - \bneutralizing antibod
+    - \bblocking antibod
+    - \bdepleting antibod
+    - \bimmuniz
+    - \bvaccinat
+    physical_environmental:
+    - \bhypoxi
+    - \banoxi
+    - \bheat[ -]?shock
+    - \bcold[ -]?shock
+    - \birradiat
+    - \boxidative stress\b
+    - \bstarvation\b
+    - \bserum[ -]?starv
+    dietary:
+    - \bhigh[ -]?fat diet\b
+    - \bfasting\b
+    - \bfasted\b
+    - \bcaloric restriction\b
+    model_system:
+    - \borganoid
+    - \breprogramm
+    - \biPSC[ -]?derived\b
+    - \bxenograft
+    - \bPDX\b
+  assay:
+    scRNA:
+    - \bscRNA[- ]?seq\b
+    - \bsingle[- ]cell RNA[- ]?(?:seq|sequencing)\b
+    - \b10x Genomics\b
+    - \bChromium\b
+    - \bSmart[- ]seq ?[23]?\b
+    - \bDrop[- ]seq\b
+    - \binDrop\b
+    - \bCEL[- ]seq2?\b
+    - \bMARS[- ]seq\b
+    - \bsci[- ]RNA[- ]seq\b
+    - \bSeq[- ]Well\b
+    snRNA:
+    - \bsnRNA[- ]?seq\b
+    - \bsingle[- ]nucleus RNA[- ]?(?:seq|sequencing)\b
+    scATAC:
+    - \bscATAC[- ]?seq\b
+    - \bsnATAC[- ]?seq\b
+    - \bsci[- ]ATAC[- ]seq\b
+    - \bsingle[- ](?:cell|nucleus) ATAC\b
+    multiome:
+    - \bmultiome\b
+    - \bSNARE[- ]seq\b
+    - \bSHARE[- ]seq\b
+    - \bISSAAC[- ]seq\b
+    protein_multimodal:
+    - \bCITE[- ]seq\b
+    - \bREAP[- ]seq\b
+    - \bASAP[- ]seq\b
+    - \bTEA[- ]seq\b
+    perturb_screen:
+    - \bPerturb[- ]seq\b
+    - \bCROP[- ]seq\b
+    - \bCRISP[- ]seq\b
+    - \bMosaic[- ]seq\b
+    - \bsci[- ]Plex\b
+    patch_seq:
+    - \bPatch[- ]seq\b
+    spatial_single_cell:
+    - \bMERFISH\b
+    - \bseqFISH\b
+    - \bXenium\b
+    - \bCosMx\b
+    - \bSTARmap\b
+    single_cell_dna:
+    - \bsingle[- ]cell (?:DNA|whole[- ]genome|exome)\b

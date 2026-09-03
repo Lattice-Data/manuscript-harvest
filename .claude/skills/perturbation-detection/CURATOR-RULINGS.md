@@ -134,7 +134,7 @@ snRNA-seq / snATAC-seq / Visium cohort is naturally occurring MI, suppressed und
 suppressed under `reporter_or_marker`; RUNX1 overexpression was reported but
 unpaired (bulk RNA extraction).
 
-**Consequence:** raised the organism gap. See `PROPOSAL-organism.md`. The agreed
+**Consequence:** raised the organism gap. See `ACCEPTANCE-v0.0.12.md`. The agreed
 shape is to record the organism of the paired material and **not** to call on it —
 the determination stays species-agnostic and a human interpreter applies the
 filter, because a non-human dataset can be a legitimate curation target and the

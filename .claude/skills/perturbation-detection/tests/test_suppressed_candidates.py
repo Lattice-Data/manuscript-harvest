@@ -20,11 +20,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pe.compare import _suppression_matches, classify  # noqa: E402
-from pe.paper_text import schema_version, split_assembled  # noqa: E402
-from pe.summarize import triage_priority  # noqa: E402
-from pe.validate import (  # noqa: E402
-    SUPPRESSION_RULES, expected_determination, stage_a, validate_result,
+from task.change import _suppression_matches, classify  # noqa: E402
+from pe.paper_text import split_assembled  # noqa: E402
+from task.report import triage_priority  # noqa: E402
+from pe.validate import validate_result  # noqa: E402
+from task.rules import (  # noqa: E402
+    SUPPRESSION_RULES, expected_determination, stage_a,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -56,7 +57,7 @@ def _candidate(**over):
 
 def _record(**over):
     base = {
-        "schema_version": "0.0.7",
+        "task_version": "0.0.13",
         "paper_id": "10.1038_s44318-024-00328-6",
         "sources_seen": ["main", "supp1"],
         "processing_status": "ok",
@@ -240,11 +241,14 @@ def test_empty_candidate_name_is_an_issue():
     assert any("candidate is empty" in i for i in out["validation"]["issues"])
 
 
-def test_stale_schema_version_is_rejected():
-    """The expected value is read from prompt.md rather than named here -- naming
-    it is what let `pe.validate` and the prompt disagree for a whole version."""
-    live = schema_version(ROOT / "prompt.md")
-    out = _validate(_record(schema_version="0.0.5"))
+def test_stale_task_version_is_rejected():
+    """The expected value comes from the pack rather than being named here --
+    naming it is what let `pe.validate` and the prompt disagree for a whole
+    version. Renamed from schema_version at 0.0.13, when the two version numbers
+    collapsed into one; `tests/test_task_version.py` owns that contract."""
+    from pe.validate import expected_task_version
+    live = expected_task_version()
+    out = _validate(_record(task_version="0.0.5"))
     assert any(f"expected {live!r}" in i for i in out["validation"]["issues"])
 
 
@@ -295,22 +299,17 @@ def test_a_single_yes_is_not_flagged():
 
 
 # --------------------------------------------------------------------------
-# The closed set must not drift between prompt.md and the harness.
+# The closed set must not drift between prompt.md and the pack.
+#
+# `test_prompt_and_code_agree_on_the_closed_rule_set` lived here and is now
+# `tests/test_prompt_pack_agree.py`, alongside the other eight sets it was the
+# only guard for. It is not merely moved: it located its input with a `next()`
+# over lines containing two substrings, which raises StopIteration if the schema
+# block is ever reformatted -- a guard that stops firing rather than complaining,
+# which is the failure it was written to prevent. The replacement asserts it
+# found something before asserting agreement, and covers order as well as
+# membership.
 # --------------------------------------------------------------------------
-
-def test_prompt_and_code_agree_on_the_closed_rule_set():
-    """prompt.md is the source of truth; `pe.validate` mirrors it. v0.0.7's
-    precedence bug was one rule stated in three places and changed in two."""
-    prompt = (ROOT / "prompt.md").read_text()
-    schema_line = next(line for line in prompt.splitlines()
-                       if '"rule":' in line and "reporter_or_marker" in line)
-    declared = {tok.strip().strip('",')
-                for tok in schema_line.split('"rule":')[1].split("|")}
-    declared = {d for d in declared if d.replace("_", "").isalpha()}
-    assert declared == set(SUPPRESSION_RULES), (
-        f"prompt.md declares {sorted(declared)}, pe.validate has "
-        f"{sorted(SUPPRESSION_RULES)}")
-
 
 # --------------------------------------------------------------------------
 # Triage: the new tier, and that it stays out of the way when it should.

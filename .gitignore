@@ -39,3 +39,23 @@ curation/
 # The sheet is regenerable with `manuscript-select sheet`.
 truth/
 accession-labels.html
+
+# Run logs and one-off reports from a fetch, extract or re-extract session.
+# They are a record of one afternoon on one machine -- the durable facts land in
+# the manifest, the extraction record and `reviews/`. Ignored rather than
+# deleted so `git status` stays readable on a repo that gets tagged: an
+# untracked file nobody intends to commit is noise that hides one somebody does.
+finish-fetch*
+oa-direct*
+reextract-*.jsonl
+reextract-*.log
+review-10.*.html
+# Slide decks. Derived artifacts: a deck is built FROM
+# .claude/skills/perturbation-detection/EXPLAINED.md, which is the version that
+# is worth versioning -- it is text, it diffs, and every number in it reconciles
+# against the corpus. A 2.5 MB binary that re-renders from it earns nothing in
+# git and costs a full copy per revision.
+*.pptx
+*.potx
+# Office lock files, created beside a .pptx while it is open.
+~$*

@@ -19,8 +19,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from pe.paper_text import split_assembled, verify_quote_sourced  # noqa: E402
-from pe.validate import (  # noqa: E402
-    consistency_checks, expected_determination, stage_a, stage_b, validate_result,
+from pe.validate import validate_result  # noqa: E402
+# The determination itself lives in the pack. This file is the assertion that
+# prompt.md's Stage A, Stage B and truth table have not moved since v0.0.5, so it
+# reads them from where they are stated rather than from the harness that applies
+# them.
+from task.rules import (  # noqa: E402
+    consistency_checks, expected_determination, stage_a, stage_b,
 )
 
 TRI = ("yes", "no", "unclear")
@@ -244,11 +249,11 @@ def _v005_result(**over):
     tracks the live schema (0.0.7) so these end-to-end cases keep validating a
     record shape the pipeline actually accepts, rather than drifting into
     testing a version `pe.validate` now rejects. The literal is the one thing
-    here that has to be edited on a schema bump; `tests/test_schema_version.py`
+    here that has to be edited on a version bump; `tests/test_task_version.py`
     is what notices if it is not.
     """
     base = {
-        "schema_version": "0.0.7",
+        "task_version": "0.0.13",
         "sources_seen": ["main", "supp1"],
         "processing_status": "ok",
         "text_completeness": "full",

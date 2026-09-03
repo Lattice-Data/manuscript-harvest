@@ -16,15 +16,36 @@ PY="${PY:-$(command -v python3 || command -v python)}"
 cd "$ROOT" || exit 1
 
 progress() {
-  local total done fails
-  total=$("$PY" -c "import json,sys;print(sum(1 for e in json.load(open('$WORK/manifest.json')) if 'error' not in e))")
-  done=$(ls "$WORK/raw" 2>/dev/null | wc -l | tr -d ' ')
-  fails=$(grep -cE '^FAIL' "$WORK/run.log" 2>/dev/null | head -1)
-  fails=${fails:-0}
-  echo "$done/$total done, $fails failed"
+  # "done" means what pe.pending means by it -- parses, carries every required
+  # field, sources match the manifest. `ls raw | wc -l` counted files, so a
+  # malformed write showed as progress, which is the definition run_headless.sh's
+  # own comment forbids. One python call rather than three, and it prints
+  # "N/M done, K failed" itself so an unreadable manifest says so instead of
+  # printing "0/ done".
+  "$PY" - "$WORK" <<'PYEOF' 2>/dev/null || echo "cannot read $WORK/manifest.json"
+import json, os, pathlib, re, sys
+sys.path.insert(0, os.getcwd())
+from pe.pending import status_of
+
+work = pathlib.Path(sys.argv[1])
+entries = [e for e in json.load(open(work / "manifest.json")) if "error" not in e]
+done = sum(1 for e in entries if status_of(e, work)[0] == "done")
+log = work / "run.log"
+fails = len(re.findall(r"(?m)^FAIL", log.read_text())) if log.is_file() else 0
+print(f"{done}/{len(entries)} done, {fails} failed")
+PYEOF
 }
 
 running() { pgrep -f "run_headless.sh $WORK" >/dev/null 2>&1; }
+
+# A run directory that cannot be read is not a finished run. Saying "FINISHED"
+# for one is the same false reassurance as reporting 0 failures from a log that
+# was never written -- `./pe/watch.sh work status` used to print
+# "0/ done, 0 failed  FINISHED" for a work dir that did not exist.
+if [ ! -f "$WORK/manifest.json" ]; then
+  echo "no run at $WORK -- no manifest.json. Run pe.prepare first, or check the path." >&2
+  exit 2
+fi
 
 if [ "$MODE" = "status" ]; then
   echo "$(progress)  $(running && echo RUNNING || echo FINISHED)"
