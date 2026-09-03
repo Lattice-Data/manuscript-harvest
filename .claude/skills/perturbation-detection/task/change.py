@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import re
 
-from task import PackError, tables
+from pe.pack import PackError, tables
 
 _T = tables()
 _CHG = _T["change"]

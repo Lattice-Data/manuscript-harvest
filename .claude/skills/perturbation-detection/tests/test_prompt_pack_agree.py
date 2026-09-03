@@ -39,7 +39,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from task import load as load_pack, tables  # noqa: E402
+from pe.pack import load as load_pack, tables  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 

@@ -32,7 +32,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from task import TABLE_FILES, load as load_pack, tables  # noqa: E402
+from pe.pack import TABLE_FILES, load as load_pack, tables  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 HARNESS = sorted((ROOT / "pe").glob("*.py"))
@@ -183,12 +183,43 @@ def test_the_diff_and_the_decision_read_the_same_inputs():
 
 def test_every_rule_bearing_file_is_in_the_pack_hash():
     """A rule the hash does not cover is a rule two runs can differ on silently."""
-    from task import pack_files
+    from pe.pack import pack_files
     covered = {p.relative_to(ROOT).as_posix() for p in pack_files(ROOT)}
     expected = {"prompt.md"} | {f"task/{f}" for f in TABLE_FILES.values()} | {
-        "task/__init__.py", "task/rules.py", "task/report.py", "task/screens.py",
-        "task/change.py", "task/task.yaml"}
+        "task/rules.py", "task/report.py", "task/screens.py", "task/change.py",
+        "task/task.yaml"}
     assert expected <= covered, f"not hashed: {sorted(expected - covered)}"
+
+
+def test_the_harness_is_not_in_the_pack_hash():
+    """The hash answers "were these records produced under the same RULES", so it
+    covers the spec and `task/*` and nothing else.
+
+    `pe/pack.py` is the case worth pinning: it was `task/__init__.py` and was
+    hashed by accident of living there. A change to how tables are READ is a
+    change to the harness, and if that belonged in the hash then so would
+    `pe/validate.py` -- at which point the hash stops meaning "same rules" and
+    starts meaning "same everything", which the git SHA already says.
+    """
+    from pe.pack import pack_files
+    covered = {p.relative_to(ROOT).as_posix() for p in pack_files(ROOT)}
+    assert not any(p.startswith("pe/") for p in covered), (
+        f"the harness is inside the pack hash: "
+        f"{sorted(p for p in covered if p.startswith('pe/'))}")
+
+
+def test_the_pack_has_no_generic_machinery_left_in_it():
+    """`task/` is a namespace package on purpose.
+
+    An `__init__.py` there is where plumbing accumulates: the loader lived in one
+    for the whole of 0.0.13, and a second pack had to copy it verbatim -- 232
+    lines of machinery no pack owns, duplicated per pack. `pe/` has never had
+    one either, so the two layers are symmetric about it.
+    """
+    assert not (ROOT / "task" / "__init__.py").exists(), (
+        "task/__init__.py is back. Whatever is in it is either a rule -- in which "
+        "case it belongs in a named module beside the others -- or plumbing, in "
+        "which case it belongs in pe/.")
 
 
 def test_the_pack_names_the_outputs_so_a_second_pack_gets_its_own(tmp_path):

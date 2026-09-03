@@ -32,7 +32,7 @@ def _outputs() -> dict:
     relocating a run somewhere new.
     """
     try:
-        from task import load
+        from pe.pack import load
         return dict(load()._config.get("outputs") or {})
     except Exception:  # noqa: BLE001 - a broken pack must not break the path
         return {}

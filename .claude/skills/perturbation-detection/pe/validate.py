@@ -34,7 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pe.paper_text import (  # noqa: E402
     entry_paths, split_assembled, verify_quote_sourced,
 )
-from task import PackError, load as load_pack, tables  # noqa: E402
+from pe.pack import PackError, load as load_pack, tables  # noqa: E402
 
 try:
     import yaml

@@ -1,30 +1,26 @@
-"""The task pack: what question is being asked, and under exactly which rules.
+"""Reading a task pack: what it declares, and whether it declares enough.
 
-`pe/` is the harness and holds no version literal. This package holds the
-identity, and Stage 3 of the refactor moves the four judgment tables in beside
-it. The split the whole thing is aimed at:
+**This is plumbing, and it used to live in the judgment layer.** It was
+`task/__init__.py` -- 232 lines of loader, hashing and shape-validation sitting
+in the directory whose whole job is to hold the answer to one question. A second
+pack found it the hard way: it had to copy the file verbatim, so every pack would
+carry an identical copy of machinery none of them owns.
 
-    JUDGMENT   task/  -- the spec + the tables. Swap this.
-    PLUMBING   pe/    -- assemble, splice, one call per paper, verify every
-                        quote, prune, recompute, tabulate, diff. Keep this.
-    TEXT       manuscript_harvest -- DOI to labelled text with provenance. Keep.
+So `task/` now has no `__init__.py` at all. It is a namespace package, like `pe/`
+already was, and it contains nothing but the spec, the four tables and the four
+rule modules. Nothing in it is generic.
 
-Two things live here that used to be spread across five files.
+The dependency runs pack -> harness, which is the right direction and worth
+stating because it looks backwards at first glance. The harness must never
+import a task's vocabulary; a task importing the harness's loader is the ordinary
+plugin shape, and `tests/test_seam.py` enforces exactly that asymmetry.
 
-**One version.** `prompt_version` and `schema_version` were separate because
-somebody had to decide, per revision, whether the record shape had moved. At
-v0.0.12 that decision was made and then applied to three of four declaration
-sites; the model split on the contradiction, 386 records said 0.0.7 and 6 said
-0.0.6, and `pe.validate` compared against a literal calibrated to the minority.
-There is now one number, declared in `task.yaml`, and prompt.md carries
-`{{TASK_VERSION}}` rather than a literal at every site that declares it -- so a
-stale version is not a bug to be caught but a state the file cannot be in.
-
-**One hash.** `pack_sha256` covers every rule-bearing file, so "were these two
-records produced under the same rules" is a comparison rather than an opinion.
-That is the question the two-number scheme was really trying to answer, and a
-hand-maintained semver answers it badly: a version bump says the author thought
-something changed, while the hash says whether anything did.
+**What is NOT here, deliberately.** `pack_sha256` covers the rules -- the spec and
+`task/*` -- and not this file, for the same reason it does not cover
+`pe/validate.py`: a change to how tables are READ is a change to the harness, and
+the harness is not what one run differs from another by. Moving this file out of
+the pack therefore changes every pack's hash exactly once, which is honest -- the
+set of rule-bearing files really did change.
 """
 
 from __future__ import annotations
@@ -37,7 +33,9 @@ try:
 except ImportError:  # pragma: no cover - yaml is a package requirement
     yaml = None
 
-#: The skill root: the directory holding prompt.md, pe/ and task/.
+#: The skill root: the directory holding prompt.md, pe/ and task/. Unchanged by
+#: the move -- this file went from `task/__init__.py` to `pe/pack.py`, and
+#: `parent.parent` is the same directory from either.
 ROOT = Path(__file__).resolve().parent.parent
 
 #: Files whose contents define the answer, and therefore the pack hash.
@@ -45,8 +43,11 @@ ROOT = Path(__file__).resolve().parent.parent
 #: `config.yaml` is deliberately NOT here. It carries `corpus_dir`, a path
 #: specific to whoever is running, so hashing it would make two identical runs
 #: on two machines look like different rules -- the exact confusion the hash
-#: exists to remove. The text policy it also holds does belong in the hash and
-#: moves into this package at Stage 3, at which point it is covered.
+#: exists to remove.
+#:
+#: Neither is this module, which is why `task/*.py` reads as "the rule modules"
+#: rather than "everything in task/": the loader moved out of the pack precisely
+#: because it is not a rule.
 PACK_GLOBS = ("prompt.md", "task/*.yaml", "task/*.py")
 
 

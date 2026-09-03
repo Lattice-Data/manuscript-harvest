@@ -30,7 +30,7 @@ The interface `pe/` relies on, and all a second pack must supply:
 
 from __future__ import annotations
 
-from task import tables
+from pe.pack import tables
 
 _T = tables()
 _REC = _T["record"]

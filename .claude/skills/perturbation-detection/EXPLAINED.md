@@ -507,7 +507,7 @@ Three layers. Only the top one is about perturbations.
  │  PLUMBING           assemble sources · splice the prompt ·    │  KEEP
  │                     one call per paper · verify every quote · │
  │                     prune · recompute · tabulate · diff       │
- │                     (1,517 lines that name this task NOWHERE  │
+ │                     (1,697 lines that name this task NOWHERE  │
  │                      in code — a test holds that line)        │
  ├───────────────────────────────────────────────────────────────┤
  │  TEXT               DOI → article + attachments → labelled    │  KEEP
@@ -531,7 +531,17 @@ already clean, and they were the evidence the seam existed to be found.
 
 Moving them changed nothing: all 392 records re-validated with **0 differing**
 beyond the pack hash, and the summary CSV, the 5,836-line review screen and the
-version diff came out byte-identical. `tests/test_seam.py` tokenises every module
+version diff came out byte-identical.
+
+**And it has since been swapped.** A second pack — "which tissue did the
+sequenced material come from, and does the paper state it explicitly?" — runs on
+this corpus through a byte-identical `pe/`. It cost 155 lines of spec, 279 of
+tables and 588 of rule modules, against 1,697 lines of harness it did not touch.
+Getting there took five fixes, because the first attempt did not run at all: the
+harness assumed every pack has a considered-and-rejected array, printed prose
+naming a change class only this pack declares, and — worst — turned a pack that
+could not be imported into "nothing to do … every paper already has a result",
+exit 0. None of the tests written to prevent exactly that caught any of them. `tests/test_seam.py` tokenises every module
 in `pe/` and fails on a task word in any identifier, string or key — comments and
 docstrings exempt, because half the value here is the record of which DOI taught
 which rule, and forcing that history out of the harness would trade the thing
@@ -666,6 +676,7 @@ for it.
 | **the four lookup tables — swap these** | [task/record.yaml](.claude/skills/perturbation-detection/task/record.yaml), [decide.yaml](.claude/skills/perturbation-detection/task/decide.yaml), [report.yaml](.claude/skills/perturbation-detection/task/report.yaml), [change.yaml](.claude/skills/perturbation-detection/task/change.yaml) |
 | the predicates a table cannot express | [task/rules.py](.claude/skills/perturbation-detection/task/rules.py), [report.py](.claude/skills/perturbation-detection/task/report.py), [screens.py](.claude/skills/perturbation-detection/task/screens.py), [change.py](.claude/skills/perturbation-detection/task/change.py) |
 | the pack's identity, version and spec contract | [task/task.yaml](.claude/skills/perturbation-detection/task/task.yaml) |
+| reading a pack, and hashing it — plumbing, not judgment | [pe/pack.py](.claude/skills/perturbation-detection/pe/pack.py) |
 | assemble the paper into one prompt | [prepare.py](.claude/skills/perturbation-detection/pe/prepare.py), [paper_text.py](.claude/skills/perturbation-detection/pe/paper_text.py) |
 | the one model step | [run_headless.sh](.claude/skills/perturbation-detection/pe/run_headless.sh) |
 | verify quotes, prune, recompute the verdict | [validate.py](.claude/skills/perturbation-detection/pe/validate.py) |
