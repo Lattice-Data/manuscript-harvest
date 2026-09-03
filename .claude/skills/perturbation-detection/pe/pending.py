@@ -41,10 +41,19 @@ ARG_FIELDS = ("doi", "prompt_file", "prompt_lines", "prompt_chars", "chars",
 # `ambiguities` and nothing checked that it had, so the exclusions went
 # unrecorded. Requiring the field here is what makes it enforceable -- a result
 # that omits it is re-run, not silently accepted.
-REQUIRED = ("schema_version", "sources_seen", "processing_status",
+REQUIRED = ("task_version", "sources_seen", "processing_status",
             "text_completeness", "has_single_cell_assay", "perturbation_present",
             "perturbation_present_any_assay", "unresolved_reason",
             "consistency_flags", "perturbations", "suppressed_candidates")
+
+#: A field that satisfies a required one under its old name.
+#:
+#: 0.0.13 renamed `schema_version` to `task_version`. Without this, all 392
+#: records already scored would report as `incomplete` and be queued for
+#: re-extraction -- a full corpus re-score triggered by a rename, which is the
+#: opposite of what a version collapse is for. `pe.validate` reads the same
+#: records and says which name they carry.
+LEGACY_FIELD_NAMES = {"task_version": "schema_version"}
 
 
 def status_of(entry: dict, work: Path | None = None) -> tuple[str, str]:
@@ -63,7 +72,8 @@ def status_of(entry: dict, work: Path | None = None) -> tuple[str, str]:
         result = parse_raw(raw.read_text())
     except Exception as exc:  # noqa: BLE001 - any parse problem means re-run
         return "unparseable", str(exc)[:80]
-    absent = [k for k in REQUIRED if k not in result]
+    absent = [k for k in REQUIRED
+              if k not in result and LEGACY_FIELD_NAMES.get(k) not in result]
     if absent:
         return "incomplete", "missing " + ",".join(absent)
     seen = {str(s) for s in (result.get("sources_seen") or [])}

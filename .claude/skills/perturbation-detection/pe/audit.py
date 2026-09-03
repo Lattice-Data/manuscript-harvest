@@ -43,7 +43,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from pe.paper_text import entry_paths, prompt_version  # noqa: E402
+from pe.paper_text import entry_paths  # noqa: E402
 from pe.validate import RULES_UNDER_REVIEW, paper_text_from_prompt  # noqa: E402
 
 from pe.runroot import work_default, output_default  # noqa: E402
@@ -132,6 +132,18 @@ def screen(text: str, compiled: dict[str, list[re.Pattern]]) -> dict[str, dict]:
         if count:
             found[group] = {"count": count, "examples": hits[:4]}
     return found
+
+
+def _versions(loaded) -> list[str]:
+    """The task versions present among the loaded records.
+
+    More than one means the screens below mix rule sets, which is worth seeing in
+    the header rather than discovering from a determination that will not
+    reconcile.
+    """
+    return sorted({str((r.get("validation") or {}).get("task_version")
+                       or (r.get("validation") or {}).get("prompt_version") or "?")
+                   for _, r, _ in loaded}) or ["?"]
 
 
 def _paper_text(prompt_file: Path) -> tuple[str, str | None]:
@@ -416,7 +428,10 @@ def main() -> int:
 
     header = [
         run.coverage(),
-        f"Review screen — prompt v{prompt_version(Path(args.prompt))} — "
+        # The version the RECORDS were produced under, not whatever the pack
+        # says today: a screen re-run after a version bump would otherwise label
+        # old results as new. Read the same way pe.summarize reads it.
+        f"Review screen — task v{'/'.join(_versions(loaded))} — "
         f"{len(loaded)} paper(s) validated",
         f"  Screen A (assay-pairing flipped the call): {counts['A']}",
         f"  Screen B (possible missed single-cell assay): {counts['B']}",

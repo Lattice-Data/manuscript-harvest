@@ -56,7 +56,7 @@ def _pert(**over):
 
 def _record(**over):
     base = {
-        "schema_version": "0.0.7",
+        "task_version": "0.0.13",
         "paper_id": "10.1038_s41586-022-05060-x",
         "sources_seen": ["main"],
         "processing_status": "ok",

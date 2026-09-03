@@ -32,10 +32,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pe.paper_text import (  # noqa: E402
-    entry_paths, prompt_version, split_assembled,
-    verify_quote_sourced,
+    entry_paths, split_assembled, verify_quote_sourced,
 )
-from pe.paper_text import schema_version as prompt_schema_version  # noqa: E402
+from task import PackError, load as load_pack  # noqa: E402
 
 try:
     import yaml
@@ -375,17 +374,41 @@ def _validate_suppressed(result: dict, sources_text: dict[str, str], threshold: 
     return entries, checked, failed, wrong_source
 
 
-def expected_schema_version(prompt_md: Path | None = None) -> str:
-    """The `schema_version` a record must echo, read from prompt.md.
+#: The record field a pre-0.0.13 result carries instead of `task_version`.
+LEGACY_VERSION_FIELD = "schema_version"
 
-    Deliberately NOT taken from the manifest the way `prompt_version` is. The two
-    answer different questions: `prompt_version` records what the extraction ran
-    under and must stay pinned to that history, while this asks whether the record
-    in hand matches the schema the harness expects *now* -- so re-validating a
-    superseded record should say so rather than quietly grade it on its own curve.
+
+def expected_task_version() -> str:
+    """The `task_version` a record must echo, from the pack's one declaration.
+
+    Deliberately NOT taken from the manifest the way the run's own recorded
+    version is. The two answer different questions: the manifest records what the
+    extraction ran under and must stay pinned to that history, while this asks
+    whether the record in hand matches the rules the harness applies *now* -- so
+    re-validating a superseded record should say so rather than quietly grade it
+    on its own curve.
     """
-    path = PROMPT_MD if prompt_md is None else prompt_md
-    return prompt_schema_version(path) if path.exists() else "unknown"
+    try:
+        return load_pack().version
+    except PackError:
+        return "unknown"
+
+
+def record_version(result: dict, run_version: str | None = None) -> tuple[str | None, bool]:
+    """(version this record claims, whether it came from the legacy field).
+
+    Records written before 0.0.13 carry `schema_version` (0.0.5-0.0.7) and no
+    `task_version`, and their run's version lives in the manifest. Reading them
+    as their run version is what keeps the 392 papers already scored comparable
+    without a re-run -- the alternative was flagging every one of them as
+    off-schema, which is the same noise the version collapse was undertaken to
+    remove.
+    """
+    if result.get("task_version") is not None:
+        return str(result["task_version"]), False
+    if result.get(LEGACY_VERSION_FIELD) is not None:
+        return (str(run_version) if run_version else None), True
+    return None, False
 
 
 def model_of(work: Path, doi: str) -> str | None:
@@ -409,7 +432,8 @@ def validate_result(result: dict, sources_text: dict[str, str], threshold: float
                     version: str = "unknown", truncated_by_harness: bool = False,
                     expected_schema: str | None = None,
                     model_id: str | None = None,
-                    needs_section_pass: bool = False) -> dict:
+                    needs_section_pass: bool = False,
+                    pack_sha256: str | None = None) -> dict:
     """Verify quotes per source, prune, recompute the determination."""
     issues: list[str] = []
     evidence_flags: set[str] = set()
@@ -429,15 +453,31 @@ def validate_result(result: dict, sources_text: dict[str, str], threshold: float
         issues.append(f"text_completeness={result.get('text_completeness')!r} off-schema")
     if result.get("unresolved_reason") not in UNRESOLVED_REASONS:
         issues.append(f"unresolved_reason={result.get('unresolved_reason')!r} off-schema")
-    expected = expected_schema or expected_schema_version()
+    expected = expected_schema or expected_task_version()
+    claimed, version_is_legacy = record_version(result, version)
     if expected == "unknown":
         # Never skip silently: a check that quietly stops firing is worse than one
         # that complains, because the record then looks clean for the wrong reason.
-        issues.append("schema_version not checked — prompt.md's 'Constants for a "
-                      "run' table declares no schema_version")
-    elif str(result.get("schema_version")) != expected:
-        issues.append(f"schema_version={result.get('schema_version')!r}, "
-                      f"expected {expected!r}")
+        issues.append("task_version not checked — task/task.yaml declares no version")
+    elif claimed is None:
+        issues.append(
+            f"record carries neither `task_version` nor `{LEGACY_VERSION_FIELD}`, so "
+            f"there is no way to say which rules produced it; expected {expected!r}")
+    elif version_is_legacy:
+        # Deliberately NOT an issue. A pre-0.0.13 record is correctly labelled
+        # for its own time, so there is nothing for anyone to fix -- and the
+        # first draft of this branch DID file a note, which put one entry on all
+        # 392 records and took `issues` from 146 to 532. That is precisely the
+        # failure the version collapse was undertaken to remove: `issues` is
+        # where real problems surface, and one entry on every paper makes the
+        # column unreadable. The fact is recorded structurally in
+        # `validation.task_version_source` and tallied by pe.summarize, which is
+        # the same lesson `suppressed_candidates` taught -- a per-paper note is
+        # neither enforceable nor countable; a structured field plus a corpus
+        # counter is both.
+        pass
+    elif claimed != expected:
+        issues.append(f"task_version={claimed!r}, expected {expected!r}")
     if not isinstance(result.get("consistency_flags"), list):
         issues.append("consistency_flags missing or not a list")
 
@@ -743,7 +783,16 @@ def validate_result(result: dict, sources_text: dict[str, str], threshold: float
         "evidence_flags": sorted(evidence_flags),
         "issues": issues,
         "threshold": threshold,
+        # One version, plus the hash that says whether the rules were identical.
+        # `prompt_version` is an alias written from the same variable, kept
+        # because every preserved baseline and all 392 scored records are keyed
+        # on that name -- dropping it would make them incomparable, which is a
+        # re-score nobody asked for. Written together, so they cannot drift.
+        "task_version": version,
         "prompt_version": version,
+        "task_version_source": ("legacy_schema_version" if version_is_legacy
+                                else "record"),
+        "pack_sha256": pack_sha256,
         "model_id": model_id,
         "sources_verified_against": sorted(source_ids),
     }
@@ -778,8 +827,19 @@ def main() -> int:
     # .claude/skills/perturbation-detection/corpus/ came to exist.
     corpus = Path(args.corpus or config.get("corpus_dir") or "./corpus")
 
-    version = prompt_version(Path(args.prompt)) if Path(args.prompt).exists() else "unknown"
-    expected_schema = expected_schema_version(Path(args.prompt))
+    try:
+        pack = load_pack()
+        expected_schema, pack_sha = pack.version, pack.sha256()
+    except PackError as exc:
+        # Named, not defaulted. A run that cannot say which rules it is applying
+        # must say THAT, rather than grading records against nothing.
+        print(f"  WARNING: {exc}; task_version cannot be checked", file=sys.stderr)
+        expected_schema, pack_sha = "unknown", None
+    # The fallback for a manifest entry that records no version of its own. It
+    # used to read the spec's `Version:` line -- which is a placeholder since
+    # 0.0.13, so this would have stamped the literal "{{TASK_VERSION}}" onto a
+    # record. The pack is the one declaration; there is nothing else to read.
+    version = expected_schema
 
     work = resolve_run_dir(Path(args.work))
     manifest = load_manifest(work)
@@ -828,6 +888,7 @@ def main() -> int:
             result, sources_text, threshold, entry_version,
             truncated_by_harness=bool(entry.get("truncation", {}).get("truncated")),
             expected_schema=expected_schema, model_id=model_of(work, doi),
+            pack_sha256=pack_sha,
             needs_section_pass=bool(
                 entry.get("truncation", {}).get("needs_section_pass")))
 

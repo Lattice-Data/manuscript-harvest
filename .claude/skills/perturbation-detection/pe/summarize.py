@@ -224,11 +224,30 @@ def _counters(rows: list[dict], results: dict[str, dict]) -> list[str]:
         out.append(f"  {label:<52} "
                    + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())))
 
-    versions = sorted({str((r.get("validation") or {}).get("prompt_version") or "?")
-                       for r in results.values()}) or ["?"]
+    validations = [r.get("validation") or {} for r in results.values()]
+    versions = sorted({str(v.get("task_version") or "?") for v in validations}) or ["?"]
+    packs = sorted({str(v.get("pack_sha256"))[:12] for v in validations
+                    if v.get("pack_sha256")})
     out.append("")
     out.append(f"corpus counters (prompt.md step 11 — acceptance criteria) "
-               f"— prompt v{'/'.join(versions)}")
+               f"— task v{'/'.join(versions)}"
+               + (f", pack {'/'.join(packs)}" if packs else ""))
+    if len(versions) > 1:
+        out.append("  MIXED VERSIONS in one run — determinations from different "
+                   "rule sets are not comparable; check which papers came from which")
+    if len(packs) > 1:
+        out.append("  MIXED PACK HASHES at the same task_version — the rules changed "
+                   "without the version being bumped")
+    # The countable form of "this record predates task_version". A per-paper note
+    # would put one entry on every one of the 392 already-scored records, which is
+    # the unreadable-issues-column failure the version collapse was undertaken to
+    # remove. One line, and it names nothing when there is nothing to name.
+    legacy = [d for d, r in results.items()
+              if (r.get("validation") or {}).get("task_version_source")
+              == "legacy_schema_version"]
+    if legacy:
+        out.append(f"  {'records predating task_version (read as their run version)':<52} "
+                   f"{len(legacy)}/{len(results)}")
     tally("papers by processing_status", lambda r: r["processing_status"])
     tally("papers by text_completeness", lambda r: r["text_completeness"])
     tally("papers by perturbation_present", lambda r: r["perturbation_present"])

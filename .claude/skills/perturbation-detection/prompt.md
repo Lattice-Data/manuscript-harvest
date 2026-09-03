@@ -1,8 +1,10 @@
 # Perturbation Detection for Paper Curation — Extraction Prompt + Schema
 
-Version: 0.0.12
+Version: {{TASK_VERSION}}
 
 ## Changelog
+
+- **0.0.13: one version number, and it is no longer written in this file.** Replaces the `prompt_version` + `schema_version` pair with a single `task_version`, declared once in `task/task.yaml` and spliced into this file by `pe.prepare` as `{{TASK_VERSION}}` — the same mechanism as `{{PAPER_ID}}`. **No criterion changed and no determination logic changed:** Stage A, Stage B, the truth table, every Step 2 rule and the closed `rule` set are untouched, so `pe.validate`'s mirror and `tests/test_determination_v005.py` remain valid unchanged. The two numbers were separate only because somebody had to judge, per revision, whether the record shape had moved — and the cost of that judgment is measured. At v0.0.12 the answer was yes and three of the four declaration sites were updated; the model split on the contradiction, **386 of 392 corpus records followed the schema example and emitted 0.0.7 while 6 followed the instruction line and emitted 0.0.6**, and the validator was calibrated to the minority, filing a spurious issue on 386 correct records. The judgment is now replaced by two facts: `task_version`, which the harness grades a record against, and `pack_sha256`, a hash over every rule-bearing file that answers "were these two records produced under the same rules" by comparison rather than by opinion. A version bump says the author thought something changed; the hash says whether anything did. Records written before 0.0.13 carry `schema_version` and no `task_version`; `pe.validate` reads them as their run's `prompt_version` and says so, so the 392 already scored stay comparable without a re-run.
 
 - **v0.0.12: the record says WHOSE sample was perturbed. `schema_version` 0.0.6 -> 0.0.7, two new fields, and NO determination-logic change.** Stage A, Stage B and the truth table are untouched, so `pe.validate`'s mirror and `tests/test_determination_v005.py` remain valid unchanged. Curator rulings of 2026-08-31 (`CURATOR-RULINGS.md` 4 and 5). `perturbation_present` asked whether a perturbed sample was profiled by a qualifying assay; it never asked **whose** sample. So a paper could be `yes` on the strength of an animal model while the human data — the material that actually reaches the curated deposit — was purely observational. Measured on the 50-paper v0.0.11 run: **5 of 15 positives rest on an animal-only pairing, ~10% of a random sample**, the largest single source of false positives found in any run. Two were ruled `no`: `10.1038/s41586-022-05060-x` (`yes` from surgical LAD ligation in mice; the human snRNA-seq/snATAC-seq/Visium cohort is naturally occurring infarction) and `10.1126/science.aay3224` (`yes` from a Rag1 knockout **mouse**; the paper is a human thymus atlas). Both had been independently flagged in review as the least trustworthy calls in the set without the reviewer identifying the common cause — one gap, not two judgments. New: `paired_organism` on each perturbation, `organism` on each sample group. Triage gains tier **7** in the previously-unused slot, so **tiers 1-6 do not renumber**.
   **The field is recorded and deliberately NOT acted on**, per the curator: the corpus is "human primarily, but... we SHOULD NOT limit to human only. The paper could be mice, or zebrafish or killifish, or some other specie", and the instruction was to add the column "but not call on it — leaving it to the human interpreter." Two reasons that is the right place for the line rather than mere caution. (i) **A non-human dataset can be a valid curation target**, and hard-coding human into the determination would drop it silently — the worst direction for a task that is deliberately recall-biased. (ii) **The paper usually cannot say which species was deposited.** `s41586-022-05060-x` contains both human and mouse single-cell data and nothing in the text says which reached CellxGene; that is knowledge about the deposit, not the publication. Recording is answerable, filtering is not. The value is an OPEN string, unlike `rule`, because a closed set would have to enumerate every model organism in advance and killifish is exactly the case that breaks such a list.
@@ -42,8 +44,8 @@ Constants for a run:
 
 | Constant | Value |
 |---|---|
-| `schema_version` | `0.0.7` (v0.0.12 adds `organism` / `paired_organism`; the determination fields are unchanged) |
-| `prompt_version` | `0.0.12` (read from the `Version:` line above — nothing hardcodes it) |
+| `task_version` | `{{TASK_VERSION}}` — ONE number for this pack, replacing the old `prompt_version` + `schema_version` pair. Declared in `task/task.yaml` and spliced in by `pe.prepare`, so no literal appears in this file and it cannot go stale. Bump it for any change to what a record should contain or how it is judged. |
+| `pack_sha256` | computed by the harness over every rule-bearing file. `task_version` says the author thought something changed; this says whether anything did. |
 | temperature | `0` |
 | calls per paper | 1 (plus at most 1 JSON-repair retry) |
 
@@ -346,7 +348,7 @@ These combinations indicate a mistake somewhere upstream, not a determination to
 - **CC-7.** A quote whose `source_id` is not one of the `<<<SOURCE>>>` ids you were given. Re-attribute it or drop the quote.
 
 ## Output
-Return ONLY a single JSON object, no prose, no markdown fences, matching the schema below. Echo `schema_version` as "0.0.7".
+Return ONLY a single JSON object, no prose, no markdown fences, matching the schema below. Echo `task_version` as "{{TASK_VERSION}}".
 
 PAPER_ID: {{PAPER_ID}}
 
@@ -362,7 +364,7 @@ PAPER_TEXT:
 
 ```json
 {
-  "schema_version": "0.0.7",
+  "task_version": "{{TASK_VERSION}}",
   "paper_id": "string (echo of PAPER_ID)",
   "sources_seen": ["main", "supp1"],
   "processing_status": "ok | partial | failed",
@@ -433,13 +435,13 @@ Notes on fields:
 - `evidence_quote` is verified verbatim like every other quote. An unverifiable quote is dropped and **the entry keeps its place** — the suppression still happened, and a quoteless entry is more honest than no entry. Use `null` when the exclusion rests on the ABSENCE of a statement (the Methods never say the sequenced lines carried the construct): there is nothing to quote, and `why` should say so.
 - **A suppressed candidate is not a perturbation.** It never enters `perturbations`, never receives a `perturbation_refs` index, and cannot affect Stage A, Stage B or `perturbation_present_any_assay`. If recording one changes a determination, that is a bug in the harness, not a judgment call.
 - `sources_seen` should echo the ids in the `<<<SOURCE>>>` markers. A mismatch against the manifest means the assembly step dropped a file.
-- Run metadata (`model_id`, `prompt_version`, timestamps, token counts, source checksums) is added by the harness, not by the model. See the JSONL record in the batch spec.
+- Run metadata (`model_id`, `pack_sha256`, timestamps, token counts, source checksums) is added by the harness, not by the model. `task_version` is the one version value, and the model echoes it because the record must be readable on its own. See the JSONL record in the batch spec.
 
 **New in schema 0.0.7 (v0.0.12):** `paired_organism` on each perturbation and `organism` on each sample group, both OPEN strings and both nullable. Nothing else changed, and no determination field moved — the fields are recorded and deliberately not acted on, so a 0.0.6 consumer that ignores the new keys reads a 0.0.7 record correctly.
 
 **New in schema 0.0.6 (v0.0.10):** `suppressed_candidates` is a new required field (empty array when nothing was suppressed). Nothing else changed, and no determination field moved — a 0.0.5 consumer that ignores the new key reads a 0.0.6 record correctly.
 
-**Breaking changes from v0.0.4:** `evidence_quotes` is now an array of objects rather than an array of strings; `assay_evidence_quote` (string) is replaced by `assay_evidence` (object or null); `schema_version`, `sources_seen`, `processing_status`, `text_completeness`, `unresolved_reason`, and `consistency_flags` are new and required.
+**Breaking changes from v0.0.4:** `evidence_quotes` is now an array of objects rather than an array of strings; `assay_evidence_quote` (string) is replaced by `assay_evidence` (object or null); `sources_seen`, `processing_status`, `text_completeness`, `unresolved_reason`, `consistency_flags` and a version field are new and required — the version field was `schema_version` until 0.0.13 replaced it with `task_version`.
 
 ---
 
@@ -504,7 +506,7 @@ If the assembled text exceeds the context budget, drop content in this fixed ord
 Never drop Methods, Results, figure legends, or the abstract: pairing evidence concentrates there. If the budget cannot be met without cutting Methods, mark the paper for a section-level second pass rather than truncating blindly.
 
 ### 4. Model call
-Temperature 0, one call per paper, response format constrained to JSON where the API supports it. Record `model_id`, `prompt_version`, `schema_version`, request timestamp, and input/output token counts.
+Temperature 0, one call per paper, response format constrained to JSON where the API supports it. Record `model_id`, `task_version`, `pack_sha256`, request timestamp, and input/output token counts.
 
 ### 5. Parse
 On JSON parse failure, retry once with a repair instruction ("return only the JSON object"). A second failure writes `processing_status = "failed"`, `perturbation_present = "unclear"`, `error_code = "PARSE_FAILURE"`.
@@ -522,7 +524,7 @@ For each quote, normalize both sides (see **How to use**) and check it against t
 **Then recompute `perturbation_present` in the harness** by re-running Stage A and Stage B over the pruned object. Do not trust the model's returned value after pruning; a determination resting on a hallucinated quote must not survive the removal of that quote. Store both values (`perturbation_present_model`, `perturbation_present_final`) and count disagreements: a rising disagreement rate is the earliest signal of evidence fabrication.
 
 ### 7. Idempotency
-Key each result on `(paper_id, prompt_version, model_id, sorted source sha256 list)`. A rerun over an unchanged corpus is a no-op unless forced, matching manuscript-harvest's behavior, so a killed run can be resumed safely.
+Key each result on `(paper_id, task_version, model_id, sorted source sha256 list)`. A rerun over an unchanged corpus is a no-op unless forced, matching manuscript-harvest's behavior, so a killed run can be resumed safely.
 
 ### 8. Retries
 Transport and rate-limit errors: exponential backoff, capped attempts, then `processing_status = "failed"` with `error_code`. Never write a failed call as a determination of "no".
@@ -535,8 +537,9 @@ One JSONL line per paper: the model object, plus a `run` block.
   "run": {
     "run_id": "2026-08-19T10:00:00Z_cxg800",
     "model_id": "...",
-    "prompt_version": "0.0.12",
-    "schema_version": "0.0.7",
+    "task": "perturbation-detection",
+    "task_version": "{{TASK_VERSION}}",
+    "pack_sha256": "<sha256 of every rule-bearing file>",
     "assembled_text_sha256": "...",
     "input_tokens": 0,
     "perturbation_present_model": "yes",

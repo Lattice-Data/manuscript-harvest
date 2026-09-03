@@ -244,11 +244,11 @@ def _v005_result(**over):
     tracks the live schema (0.0.7) so these end-to-end cases keep validating a
     record shape the pipeline actually accepts, rather than drifting into
     testing a version `pe.validate` now rejects. The literal is the one thing
-    here that has to be edited on a schema bump; `tests/test_schema_version.py`
+    here that has to be edited on a version bump; `tests/test_task_version.py`
     is what notices if it is not.
     """
     base = {
-        "schema_version": "0.0.7",
+        "task_version": "0.0.13",
         "sources_seen": ["main", "supp1"],
         "processing_status": "ok",
         "text_completeness": "full",

@@ -152,7 +152,7 @@ def test_no_config_key_is_read_by_nothing():
 
 def _minimal(**over):
     record = {
-        "schema_version": "0.0.7", "sources_seen": ["main"],
+        "task_version": "0.0.13", "sources_seen": ["main"],
         "processing_status": "ok", "text_completeness": "full",
         "has_single_cell_assay": "yes", "perturbation_present": "no",
         "perturbation_present_any_assay": "no", "unresolved_reason": "none",

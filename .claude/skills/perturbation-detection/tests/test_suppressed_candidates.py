@@ -21,7 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from pe.compare import _suppression_matches, classify  # noqa: E402
-from pe.paper_text import schema_version, split_assembled  # noqa: E402
+from pe.paper_text import split_assembled  # noqa: E402
 from pe.summarize import triage_priority  # noqa: E402
 from pe.validate import (  # noqa: E402
     SUPPRESSION_RULES, expected_determination, stage_a, validate_result,
@@ -56,7 +56,7 @@ def _candidate(**over):
 
 def _record(**over):
     base = {
-        "schema_version": "0.0.7",
+        "task_version": "0.0.13",
         "paper_id": "10.1038_s44318-024-00328-6",
         "sources_seen": ["main", "supp1"],
         "processing_status": "ok",
@@ -240,11 +240,14 @@ def test_empty_candidate_name_is_an_issue():
     assert any("candidate is empty" in i for i in out["validation"]["issues"])
 
 
-def test_stale_schema_version_is_rejected():
-    """The expected value is read from prompt.md rather than named here -- naming
-    it is what let `pe.validate` and the prompt disagree for a whole version."""
-    live = schema_version(ROOT / "prompt.md")
-    out = _validate(_record(schema_version="0.0.5"))
+def test_stale_task_version_is_rejected():
+    """The expected value comes from the pack rather than being named here --
+    naming it is what let `pe.validate` and the prompt disagree for a whole
+    version. Renamed from schema_version at 0.0.13, when the two version numbers
+    collapsed into one; `tests/test_task_version.py` owns that contract."""
+    from pe.validate import expected_task_version
+    live = expected_task_version()
+    out = _validate(_record(task_version="0.0.5"))
     assert any(f"expected {live!r}" in i for i in out["validation"]["issues"])
 
 
