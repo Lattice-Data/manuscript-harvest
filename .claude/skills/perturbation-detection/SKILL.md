@@ -44,6 +44,12 @@ backwards for a moment and is the ordinary plugin shape — the harness must nev
 import a task's vocabulary, while a task reading the harness's loader is fine,
 and `test_seam.py` enforces exactly that asymmetry.
 
+**The worked example is archived at
+[`examples/second-pack/`](examples/second-pack/README.md)** — the whole tissue
+pack, its 10-paper result, and the five leaks it found. Read it before writing a
+third question. It is a snapshot: not in CI, not linted, not maintained, and its
+README says so at the top.
+
 | table | holds |
 |---|---|
 | `task/record.yaml` | **what counts** — the closed value sets, the required fields, the array shapes, the open fields |

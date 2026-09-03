@@ -1,0 +1,122 @@
+# TABLE 3 — WHAT TO READ FIRST.
+renumbered_at: none
+
+tiers:
+  - n: 1
+    summary: "unclear + tissue_not_stated"
+    label: "unclear because no tissue was stated  (read first — the answer may be there)"
+  - n: 2
+    summary: "yes carried only by an inferred tissue"
+    label: "yes, but every paired tissue is `inferred` rather than stated"
+  - n: 3
+    summary: "yes with low confidence"
+    label: "yes with paper_confidence < 0.6"
+  - n: 4
+    summary: "unclear + degraded_text"
+    label: "unclear because the text was incomplete  (re-fetch, do not read)"
+  - n: 5
+    summary: "more than one sequenced tissue"
+    label: "two or more tissues paired yes — check the paper is not a multi-organ atlas"
+  - n: 6
+    summary: "consistency or evidence flags"
+    label: "consistency or evidence flags"
+  - n: 9
+    summary: "everything else"
+    label: "everything else"
+
+low_confidence_yes: 0.6
+
+triaged_unresolved_reasons:
+  - tissue_not_stated
+  - pairing_not_stated
+  - assay_not_found
+  - degraded_text
+
+columns:
+  - triage_priority
+  - paper_id
+  - doi
+  - status
+  - tissue_stated
+  - tissue_stated_model
+  - unresolved_reason
+  - processing_status
+  - text_completeness
+  - has_sequencing_assay
+  - sequencing_assay_types
+  - paper_confidence
+  - n_tissues
+  - n_sequenced_yes
+  - n_sequenced_no
+  - n_sequenced_unclear
+  - tissue_names
+  - stated_where
+  - strongest_statement
+  - stage_b_capped
+  - determination_changed_by_harness
+  - consistency_flags
+  - evidence_flags
+  - quotes_checked
+  - quotes_failed
+  - quotes_wrong_source
+  - tissues_dropped
+  - sources
+  - n_issues
+  - chars
+  - needs_review
+
+column_limits:
+  sequencing_assay_types: {per_item: 60, total: 200}
+
+screens:
+  - id: A
+    summary: "tissue named but not sequenced"
+    title: "a tissue is named and explicitly NOT sequenced"
+    blurb: "is_sequenced = no — check the paper is not being read too narrowly"
+    empty: "none — every named tissue was paired to sequenced material"
+  - id: B
+    summary: "possible missed tissue"
+    title: "tissue_stated is no/unclear, but tissue language appears"
+    grep: tissue
+  - id: C
+    summary: "inferred only"
+    title: "the answer rests entirely on an inferred tissue"
+    blurb: "stated_where = inferred for every yes pairing: the curator must confirm"
+    empty: "none — no paper rests on an inference alone"
+  - id: D
+    summary: "capped by Stage B"
+    title: "capped at 'unclear' by Stage B (degraded/incomplete text)"
+    blurb: "these go to the re-fetch queue, not to a reader"
+    empty: "none — no negative rested on degraded text"
+
+footer:
+  - "Screens, not verdicts. 'nuclei were isolated' describes preparation, not a"
+  - "source tissue — the tissue is what the suspension was made FROM."
+
+traps:
+  suspension: "(?:single[- ]cell suspension|nuclei were isolated)"
+
+signals:
+  tissue:
+    organ:
+      - \b(?:lung|liver|kidney|heart|brain|pancreas|spleen|thymus|colon|intestine)\b
+      - \b(?:skin|retina|cortex|placenta|testis|ovary|prostate|breast|stomach)\b
+      - \b(?:bone marrow|lymph node|adipose tissue|skeletal muscle|spinal cord)\b
+    fluid:
+      - \b(?:peripheral blood|whole blood|PBMC|plasma|serum|cerebrospinal fluid|CSF)\b
+      - \bbronchoalveolar lavage\b
+      - \bBALF?\b
+    source_phrase:
+      - \bbiops(?:y|ies)\b
+      - \bresect(?:ion|ed)\b
+      - \bautops(?:y|ies)\b
+      - \bpost[- ]mortem\b
+      - \bsurgical specimen\b
+      - \bexplant\b
+      - \bwas dissected from\b
+      - \bisolated from\b
+    model_material:
+      - \borganoid
+      - \biPSC\b
+      - \bcell line\b
+      - \bxenograft\b

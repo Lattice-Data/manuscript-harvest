@@ -1,0 +1,72 @@
+# TABLE 1 — WHAT COUNTS.
+labels: ["yes", "no", "unclear"]
+primary_field: tissue_stated
+model_field: tissue_stated_model
+
+run_states:
+  processing_status: [ok, partial, failed]
+  text_completeness: [full, truncated, methods_missing, unknown]
+
+unresolved_reasons:
+  - tissue_not_stated
+  - pairing_not_stated
+  - assay_not_found
+  - degraded_text
+  - none
+
+required_fields:
+  - task_version
+  - sources_seen
+  - processing_status
+  - text_completeness
+  - has_sequencing_assay
+  - tissue_stated
+  - unresolved_reason
+  - consistency_flags
+  - tissues
+
+legacy_field_names: {}
+
+field_checks:
+  - path: tissue_stated
+    in: labels
+    message: "{path}={value!r} not in yes/no/unclear"
+  - path: has_sequencing_assay
+    in: labels
+    message: "{path}={value!r} not in yes/no/unclear"
+  - path: processing_status
+    in: run_states.processing_status
+    message: "{path}={value!r} off-schema"
+  - path: text_completeness
+    in: run_states.text_completeness
+    message: "{path}={value!r} off-schema"
+  - path: unresolved_reason
+    in: unresolved_reasons
+    message: "{path}={value!r} off-schema"
+
+item_array:
+  path: tissues
+  label_field: is_sequenced
+  name_field: name
+  quotes_field: evidence_quotes
+  secondary_quote_field: sequenced_evidence
+  secondary_downgrades: is_sequenced
+  drop_when_no_verified_quote: true
+  enums:
+    # An enum the perturbation pack has no analogue of: HOW explicitly the
+    # paper says it, which is the whole point of this question.
+    stated_where: [methods, results_or_figure, abstract_or_title, inferred]
+    is_sequenced: labels
+  open_fields: {}
+
+# No ref_arrays: this question has no samples[] pointing into the item array.
+ref_arrays: []
+
+# No secondary_arrays. The item array's own `is_sequenced: "no"` already records
+# "considered and excluded", so a separate considered-and-rejected array would
+# be a second way to say the same thing. Written this way on purpose: the pack is
+# designed for the question, not to satisfy the harness.
+secondary_arrays: []
+
+normalisers: {}
+downgrade_confidence: 0.2

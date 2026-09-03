@@ -1,0 +1,27 @@
+name: tissue-stated
+version: 0.1.0
+
+question: >-
+  Which tissue or organ did the sequenced material come from, and does the paper
+  state it explicitly?
+
+outputs:
+  run_root_subdir: tissue-stated
+  env_var: TISSUE_RUN_ROOT
+  per_paper_file: tissues.json
+  summary_csv: tissues_summary.csv
+  review_txt: review_screen.txt
+  diff_txt: version_diff.txt
+
+spec:
+  path: prompt.md
+  anchors:
+    instruction: "## Instruction prompt"
+    schema_start: "## Output schema"
+    schema_end: "## Toggle decisions"
+  placeholders:
+    paper_id: "{{PAPER_ID}}"
+    paper_text: "{{PAPER_TEXT}}"
+    source_ids: "{{SOURCE_IDS}}"
+    task_version: "{{TASK_VERSION}}"
+  read_back_marker: "\nPAPER_TEXT:"

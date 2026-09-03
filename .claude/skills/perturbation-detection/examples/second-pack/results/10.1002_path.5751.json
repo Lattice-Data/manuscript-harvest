@@ -1,0 +1,323 @@
+{
+  "task_version": "0.1.0",
+  "paper_id": "10.1002_path.5751",
+  "sources_seen": [
+    "main",
+    "supp1",
+    "supp2"
+  ],
+  "processing_status": "ok",
+  "text_completeness": "full",
+  "has_sequencing_assay": "yes",
+  "sequencing_assay_types": [
+    "10x Genomics scRNA-seq",
+    "bulk RNA-seq"
+  ],
+  "tissue_stated": "yes",
+  "paper_confidence": 0.95,
+  "unresolved_reason": "none",
+  "consistency_flags": [],
+  "tissues": [
+    {
+      "name": "prostate (human)",
+      "stated_where": "methods",
+      "is_sequenced": "yes",
+      "evidence_quotes": [
+        {
+          "source_id": "main",
+          "quote": "Prostate specimens were obtained from organ donors whose families consented at the Southwest Transplant Alliance under IRB STU 112014-033."
+        },
+        {
+          "source_id": "main",
+          "quote": "BPH specimens were obtained from patients undergoing simple prostatectomy at UT Southwestern Medical Center (see supplementary material, Table S1)."
+        }
+      ],
+      "sequenced_evidence": {
+        "source_id": "main",
+        "quote": "bulk and scRNA-seq data from human and mouse prostate tissues were deposited into the GEO SuperSeries GSE172357 and GSE173096."
+      },
+      "confidence": 0.97,
+      "reasoning": "Methods describe human prostate specimens from organ donors and BPH prostatectomies digested to single cells and profiled by scRNA-seq, with prostate tissue data deposited in GEO.",
+      "quote_checks": [
+        {
+          "claimed_source": "main",
+          "quote": "Prostate specimens were obtained from organ donors whose families consented at the Southwest Transplant Alliance under IRB STU 112014-033.",
+          "status": "verified",
+          "source_id": "main",
+          "ratio": 1.0
+        },
+        {
+          "claimed_source": "main",
+          "quote": "BPH specimens were obtained from patients undergoing simple prostatectomy at UT Southwestern Medical Center (see supplementary material, Table S1).",
+          "status": "verified",
+          "source_id": "main",
+          "ratio": 1.0
+        }
+      ],
+      "quotes_validated": true,
+      "sequenced_quote_check": {
+        "status": "verified",
+        "source_id": "main",
+        "ratio": 1.0
+      }
+    },
+    {
+      "name": "prostate (mouse)",
+      "stated_where": "methods",
+      "is_sequenced": "yes",
+      "evidence_quotes": [
+        {
+          "source_id": "main",
+          "quote": "Cells from mouse prostate and urethra were also pro\ufb01led by scRNA-seq to determine orthologous \ufb01broblasts that traverse the putative stem cell niche in the urethra and proximal prostate."
+        },
+        {
+          "source_id": "main",
+          "quote": "(A) Clustering of subsetted \ufb01bromuscular stroma from adult mouse prostates (n = 4 mice) and prostatic urethras (n = 4 mice)."
+        }
+      ],
+      "sequenced_evidence": {
+        "source_id": "main",
+        "quote": "We analyzed 5617 \ufb01bromuscular stromal cells from prostate and urethra (from n = 4 mice each) (see supplementary material, Table S1)."
+      },
+      "confidence": 0.95,
+      "reasoning": "Mouse prostate was dissected and digested into single cells and profiled by scRNA-seq, per Methods and the Figure 2 legend.",
+      "quote_checks": [
+        {
+          "claimed_source": "main",
+          "quote": "Cells from mouse prostate and urethra were also pro\ufb01led by scRNA-seq to determine orthologous \ufb01broblasts that traverse the putative stem cell niche in the urethra and proximal prostate.",
+          "status": "verified",
+          "source_id": "main",
+          "ratio": 1.0
+        },
+        {
+          "claimed_source": "main",
+          "quote": "(A) Clustering of subsetted \ufb01bromuscular stroma from adult mouse prostates (n = 4 mice) and prostatic urethras (n = 4 mice).",
+          "status": "verified",
+          "source_id": "main",
+          "ratio": 1.0
+        }
+      ],
+      "quotes_validated": true,
+      "sequenced_quote_check": {
+        "status": "verified",
+        "source_id": "main",
+        "ratio": 1.0
+      }
+    },
+    {
+      "name": "urethra (prostatic urethra, mouse)",
+      "stated_where": "methods",
+      "is_sequenced": "yes",
+      "evidence_quotes": [
+        {
+          "source_id": "main",
+          "quote": "Cells from mouse prostate and urethra were also pro\ufb01led by scRNA-seq to determine orthologous \ufb01broblasts that traverse the putative stem cell niche in the urethra and proximal prostate."
+        },
+        {
+          "source_id": "main",
+          "quote": "(A) Clustering of subsetted \ufb01bromuscular stroma from adult mouse prostates (n = 4 mice) and prostatic urethras (n = 4 mice)."
+        }
+      ],
+      "sequenced_evidence": {
+        "source_id": "main",
+        "quote": "We analyzed 5617 \ufb01bromuscular stromal cells from prostate and urethra (from n = 4 mice each) (see supplementary material, Table S1)."
+      },
+      "confidence": 0.94,
+      "reasoning": "Mouse prostatic urethra was profiled by scRNA-seq alongside prostate, with cluster contributions explicitly attributed to urethra samples.",
+      "quote_checks": [
+        {
+          "claimed_source": "main",
+          "quote": "Cells from mouse prostate and urethra were also pro\ufb01led by scRNA-seq to determine orthologous \ufb01broblasts that traverse the putative stem cell niche in the urethra and proximal prostate.",
+          "status": "verified",
+          "source_id": "main",
+          "ratio": 1.0
+        },
+        {
+          "claimed_source": "main",
+          "quote": "(A) Clustering of subsetted \ufb01bromuscular stroma from adult mouse prostates (n = 4 mice) and prostatic urethras (n = 4 mice).",
+          "status": "verified",
+          "source_id": "main",
+          "ratio": 1.0
+        }
+      ],
+      "quotes_validated": true,
+      "sequenced_quote_check": {
+        "status": "verified",
+        "source_id": "main",
+        "ratio": 1.0
+      }
+    },
+    {
+      "name": "transition zone (human prostate)",
+      "stated_where": "methods",
+      "is_sequenced": "yes",
+      "evidence_quotes": [
+        {
+          "source_id": "supp1",
+          "quote": "Fibroblasts were sorted from transition zone and peripheral zone preparations for bulk RNA-sequencing."
+        },
+        {
+          "source_id": "supp2",
+          "quote": "(C) Plot representing PCA dimensionality reduction performed on proximal fibroblasts from the transition zone (n=4 samples) and distal fibroblasts from the peripheral zone (n=5 samples)."
+        }
+      ],
+      "sequenced_evidence": {
+        "source_id": "supp1",
+        "quote": "Fibroblasts were sorted from transition zone and peripheral zone preparations for bulk RNA-sequencing."
+      },
+      "confidence": 0.9,
+      "reasoning": "Fibroblasts flow-sorted from the proximal transition zone of normal human prostate were subjected to bulk RNA sequencing.",
+      "quote_checks": [
+        {
+          "claimed_source": "supp1",
+          "quote": "Fibroblasts were sorted from transition zone and peripheral zone preparations for bulk RNA-sequencing.",
+          "status": "verified",
+          "source_id": "supp1",
+          "ratio": 1.0
+        },
+        {
+          "claimed_source": "supp2",
+          "quote": "(C) Plot representing PCA dimensionality reduction performed on proximal fibroblasts from the transition zone (n=4 samples) and distal fibroblasts from the peripheral zone (n=5 samples).",
+          "status": "verified",
+          "source_id": "supp2",
+          "ratio": 1.0
+        }
+      ],
+      "quotes_validated": true,
+      "sequenced_quote_check": {
+        "status": "verified",
+        "source_id": "supp1",
+        "ratio": 1.0
+      }
+    },
+    {
+      "name": "peripheral zone (human prostate)",
+      "stated_where": "methods",
+      "is_sequenced": "yes",
+      "evidence_quotes": [
+        {
+          "source_id": "supp1",
+          "quote": "Fibroblasts were sorted from transition zone and peripheral zone preparations for bulk RNA-sequencing."
+        },
+        {
+          "source_id": "main",
+          "quote": "Table S5. Transition zone versus peripheral zone bulk RNA sequencing DESeq2 analysis",
+          "source_id_corrected_from": "supp1"
+        }
+      ],
+      "sequenced_evidence": {
+        "source_id": "supp1",
+        "quote": "Fibroblasts were sorted from transition zone and peripheral zone preparations for bulk RNA-sequencing."
+      },
+      "confidence": 0.9,
+      "reasoning": "Fibroblasts flow-sorted from the distal peripheral zone of normal human prostate were subjected to bulk RNA sequencing.",
+      "quote_checks": [
+        {
+          "claimed_source": "supp1",
+          "quote": "Fibroblasts were sorted from transition zone and peripheral zone preparations for bulk RNA-sequencing.",
+          "status": "verified",
+          "source_id": "supp1",
+          "ratio": 1.0
+        },
+        {
+          "claimed_source": "supp1",
+          "quote": "Table S5. Transition zone versus peripheral zone bulk RNA sequencing DESeq2 analysis",
+          "status": "wrong_source",
+          "source_id": "main",
+          "ratio": 1.0,
+          "claimed": "supp1"
+        }
+      ],
+      "quotes_validated": true,
+      "sequenced_quote_check": {
+        "status": "verified",
+        "source_id": "supp1",
+        "ratio": 1.0
+      }
+    },
+    {
+      "name": "lung",
+      "stated_where": "results_or_figure",
+      "is_sequenced": "no",
+      "evidence_quotes": [
+        {
+          "source_id": "main",
+          "quote": "we used a well-annotated scRNA-seq study from the lung as a reference for leukocyte identi\ufb01cation [21]"
+        },
+        {
+          "source_id": "supp1",
+          "quote": "Broad cell lineages were identified using the \u201cmagnetic.selection\u201d labels from human and mouse lung data [21]."
+        }
+      ],
+      "sequenced_evidence": null,
+      "confidence": 0.93,
+      "reasoning": "Lung appears only as the source of a published external reference dataset used for cell type annotation, not as material sequenced in this study.",
+      "quote_checks": [
+        {
+          "claimed_source": "main",
+          "quote": "we used a well-annotated scRNA-seq study from the lung as a reference for leukocyte identi\ufb01cation [21]",
+          "status": "verified",
+          "source_id": "main",
+          "ratio": 1.0
+        },
+        {
+          "claimed_source": "supp1",
+          "quote": "Broad cell lineages were identified using the \u201cmagnetic.selection\u201d labels from human and mouse lung data [21].",
+          "status": "verified",
+          "source_id": "supp1",
+          "ratio": 1.0
+        }
+      ],
+      "quotes_validated": true
+    }
+  ],
+  "notes": "Table S5 label quote is from the supplementary-materials list reproduced inside the supp1 block. The main-text bulk RNA-seq sentence spans a page-column break, so the equivalent verbatim Methods sentence from supp1 was used for the transition/peripheral zone pairings. Histology, immunostaining, RNAscope, and RT-qPCR were also performed on prostate and mouse lower urinary tract tissue, but the same prostate/urethra tissues independently went into sequencing.",
+  "tissue_stated_model": "yes",
+  "tissue_stated_final": "yes",
+  "validation": {
+    "quotes_checked": 17,
+    "quotes_failed": 0,
+    "quotes_wrong_source": 1,
+    "tissues_kept": 6,
+    "tissues_dropped": 0,
+    "n_sequenced_yes": 5,
+    "n_sequenced_no": 1,
+    "n_sequenced_unclear": 0,
+    "tissue_names": [
+      "peripheral zone (human prostate)",
+      "prostate (human)",
+      "prostate (mouse)",
+      "transition zone (human prostate)",
+      "urethra (prostatic urethra, mouse)"
+    ],
+    "stated_where": [
+      "methods"
+    ],
+    "strongest_statement": "methods",
+    "inferred_only": false,
+    "multi_tissue": true,
+    "stage_a": "yes",
+    "stage_b_capped": false,
+    "determination_changed_by_harness": false,
+    "consistency_flags": [],
+    "evidence_flags": [
+      "EV-WRONG-SOURCE"
+    ],
+    "issues": [
+      "tissues[4] quote attributed to 'supp1' but found in 'main' (EV-WRONG-SOURCE)",
+      "tissues[5].is_sequenced='no' asserted with no sequenced_evidence (pairing is inferred, not quoted)"
+    ],
+    "threshold": 0.85,
+    "task_version": "0.1.0",
+    "prompt_version": "0.1.0",
+    "task_version_source": "record",
+    "pack_sha256": "aecd8d981768d87a1969f99eed16ee1ef0af0981eed11adfc96a0c0b88a1a3ca",
+    "model_id": "claude-opus-5",
+    "sources_verified_against": [
+      "main",
+      "supp1",
+      "supp2"
+    ]
+  },
+  "needs_review": true
+}
