@@ -181,11 +181,12 @@ python -m pe.compare --baseline <old_run_dir>   # version-to-version diff
 - **`suppressed_candidates`** (added in schema 0.0.6, prompt v0.0.10) — one entry per
   thing the model recognised as a possible perturbation and deliberately did not
   list, so the NOT list stops being silent. Each entry carries `candidate`,
-  `rule` (a **closed** set of eight values: `reporter_or_marker`,
-  `incidental_clinical_therapy`, `unintended_condition`,
-  `derivation_formulation`, `observational_disease_state`,
-  `sample_handling_protocol`, `readout_reagent`, `routine_processing`), `why`, a
-  verified `evidence_quote`, and `would_have_paired`.
+  `rule` (a **closed** set, owned by the table under "Recording an exclusion" in
+  `prompt.md`: `reporter_or_marker`, `incidental_clinical_therapy`,
+  `unintended_condition`, `derivation_formulation`, `disease_model_establishment`,
+  `observational_disease_state`, `sample_handling_protocol`, `readout_reagent`,
+  `routine_processing`), `why`, a verified `evidence_quote`, and
+  `would_have_paired`.
 
   Two things it buys that a free-text `ambiguities` note could not. A curator can
   tell **"considered the transgene and excluded it under the reporter rule"**

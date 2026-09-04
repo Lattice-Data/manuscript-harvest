@@ -159,28 +159,46 @@ secondary_arrays:
     quote_optional: true
     # CLOSED on purpose. The field exists to be tallied -- "how many papers did
     # the reporter rule hold back from yes?" -- and an open string cannot be.
-    # The first four arrived with v0.0.9; the last four are older rules that had
-    # always been silent.
+    #
+    # No count of this list is written anywhere. It was stated as "eight" in four
+    # places, and the first time the set grew -- v0.0.15, by curator ruling --
+    # three of them would have gone stale. prompt.md's exclusion table owns the
+    # scopes and this list owns the values; neither states how many there are.
+    #
+    # Arrival order, for reading the history rather than for any code:
+    # reporter_or_marker .. derivation_formulation came with v0.0.9,
+    # disease_model_establishment with v0.0.15, and the rest are older rules that
+    # had always been silent.
     reasons:
       - reporter_or_marker
       - incidental_clinical_therapy
       - unintended_condition
       - derivation_formulation
+      - disease_model_establishment
       - observational_disease_state
       - sample_handling_protocol
       - readout_reagent
       - routine_processing
-    # The subset whose boundary is under active review -- the four v0.0.9
-    # additions. Triage uses this subset so its tier means "a rule we are still
-    # arguing about held this paper back" rather than "this paper has a disease
-    # contrast": `observational_disease_state` fires on any tumour-vs-normal
-    # contrast, which is most clinical papers, and an unrestricted tier put 5 of
-    # 6 regression papers in it. A tier that holds most papers is not a queue.
+    # The subset whose boundary is under active review -- the v0.0.9 additions
+    # plus v0.0.15's. Triage uses this subset so its tier means "a rule we are
+    # still arguing about held this paper back" rather than "this paper has a
+    # disease contrast": `observational_disease_state` fires on any
+    # tumour-vs-normal contrast, which is most clinical papers, and an
+    # unrestricted tier put 5 of 6 regression papers in it. A tier that holds
+    # most papers is not a queue.
+    #
+    # `disease_model_establishment` is here because it is the newest boundary and
+    # its entries will almost always carry `would_have_paired: "yes"` -- an
+    # engraftment or an induced mutation pairs trivially to the assay run on the
+    # tissue it produced. Those are exactly the papers a curator should ratify
+    # rather than discover later, and there are few enough of them not to drown
+    # the tier.
     reasons_under_review:
       - reporter_or_marker
       - incidental_clinical_therapy
       - unintended_condition
       - derivation_formulation
+      - disease_model_establishment
 
 # Values counted as the same thing when tallying an open field. Used for
 # reporting only -- an organism never reaches the determination.

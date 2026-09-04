@@ -196,7 +196,11 @@ def test_rules_under_review_matches_the_spec(spec, pack):
     # is what this did first -- passes when the pack's set SHRINKS: a prefix of
     # four still prefix-matches three. Caught by mutating the pack and finding
     # this the one guard of eight that did not fire.
-    marker = "The other four rules"
+    # Count-free on purpose. This marker was "The other four rules" until
+    # v0.0.15 added a fifth under-review rule and the SETTLED set went from four
+    # to four-of-nine -- so the cut marker was itself a stale count, in a test
+    # written to catch stale counts.
+    marker = "The remaining rules"
     assert marker in line, (
         f"the spec's step-10 line no longer contains {marker!r}, which is where "
         f"the under-review list ends and the excluded list begins")
