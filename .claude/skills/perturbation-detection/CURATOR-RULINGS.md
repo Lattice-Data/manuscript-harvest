@@ -29,6 +29,7 @@ other specie." So no rule may hard-code human.
 | 4 | `10.1038/s41586-022-05060-x` | no | 2026-08-31 |
 | 5 | `10.1126/science.aay3224` | no | 2026-08-31 |
 | 6 | `10.1126/science.aat1699` | no | 2026-09-03 |
+| 7 | `10.1016/j.ccell.2025.12.003` | no | 2026-09-03 |
 
 ---
 
@@ -211,3 +212,92 @@ enrichment-versus-attribution line in `prompt.md`. It would strengthen a rule th
 extraction already applies correctly on both known papers, and every criteria
 addition in this project's history has carried an attractor risk, so it needs its
 own two-run acceptance rather than being folded into a ruling record.
+
+## 7. `10.1016/j.ccell.2025.12.003` — establishing a disease model is not perturbing it
+
+**Ruling: `no`, overturning the extraction's `yes`.** 2026-09-03.
+**This ruling CONTRADICTS a written rule.** See "The bug it names" below.
+
+> "engraftment of AKPS tumor organoids (Apc-LOF..) in mice is not perturbation.
+> it is introduction of tumorous cells into the mice - to allow -> 'Tumors
+> developed within six to eight weeks and progressively expanded through the
+> colonic layers toward the peritoneal cavity, mirroring some of the invasive
+> characteristics of late-stage human CRC'. When the single cell is performed -
+> there is no real treatment or perturbation - it is cancer or no cancer and not
+> the fact of the injection/engraftment/ etc. comparison of tumor/non tumor from
+> adjacent sites is again not treatment or perturbation."
+
+Colorectal cancer / tumour-associated neutrophil paper. The record is worth
+reading closely, because **the paper's three real perturbations are all correctly
+unpaired** and only the engraftment carried the call:
+
+| # | perturbation | paired | readout |
+|---|---|---|---|
+| 0 | orthotopic transplantation of CRISPR-engineered AKPS organoids (Apc-LOF, p53-LOF, Kras-GOF, Smad4-LOF) | **yes** | BD Rhapsody scRNA-seq of CD45-enriched leukocytes, 6 weeks post-injection |
+| 1 | anti-Ly6G neutrophil depletion vs isotype control | no | flow cytometry |
+| 2 | CRC-organoid conditioned medium on donor neutrophils | no | flow cytometry, RT-qPCR |
+| 3 | T Cell TransAct polyclonal activation | no | flow cytometry (CD69) |
+
+So the assay-pairing filter worked exactly as designed on the three treatments,
+and the `yes` rested entirely on **how the mice came to have tumours**. The
+sequenced contrast is AKPS-injected against naive mice — cancer or no cancer.
+
+**The bug it names.** `prompt.md` states, in the tricky-cases list: *"Cell/animal
+model where the engineering is the studied point (e.g., an oncogene-transformed
+line, a transgenic disease model) = perturbation."* Under that rule the
+extraction was right, and it said so: "Deliberate engraftment of genetically
+engineered tumor organoids is the study's experimental manipulation of the
+animals (with naive mice as the comparator arm)." The curator's ruling says
+otherwise, so **the rule is the thing to fix**, per this file's own instruction.
+
+**Why the model had nowhere else to put it.** The eight-value suppression set has
+no home for an *experimentally established* disease state:
+`observational_disease_state` is defined as a "**naturally occurring** disease
+state or genotype in patient/donor samples with **NO experimental
+manipulation**". An engineered tumour model is neither naturally occurring nor
+free of manipulation, so the taxonomy left the model a choice between reporting a
+perturbation and inventing a ninth value it is told not to invent. It reported.
+That is a gap in the closed set, not a misreading.
+
+**Fourth instance of one principle.** Rulings 1, 2, 6 and 7 all reduce to *what
+is the applied thing FOR?*
+
+- ruling 1: a differentiation cocktail produces a target **cell identity** — the model.
+- ruling 2: induction chemotherapy is the **backdrop** an intrinsic property is measured against.
+- ruling 6: a therapy that **enriched** for a cell type is not thereby the variable.
+- ruling 7: an engraftment produces a target **disease state** — the model.
+
+In every case the applied thing is the route to the sample rather than the
+variable under study, and in every case the sequenced axis is an identity or a
+state rather than a treatment contrast. Ruling 7 is ruling 1 with "disease state"
+substituted for "cell type" — including the curator's indifference to the route:
+*"not the fact of the injection/engraftment/ etc."*
+
+**Measured blast radius, so the fix can be sized before it is written.** Of the
+115 papers determined `yes` in the 392-paper corpus, **7** have EVERY
+`single_cell_paired = "yes"` perturbation reading as model establishment. They
+are three different questions, not one:
+
+- **This ruling's shape (3).** `j.ccell.2025.12.003` (ruled here);
+  `s42003-021-02562-8` (heterotopic xenotransplantation of human hepatoblastoma);
+  `s41586-022-05060-x` (surgical LAD ligation) — **already ruled `no` as ruling 4**,
+  on the organism ground, and this ruling supplies a second and independent one.
+- **Genuinely ambiguous (1).** `s41590-023-01504-2` — diphtheria-toxin ablation
+  and intranasal bleomycin. Bleomycin against control mice is a drug applied to
+  elicit a response, which is a textbook perturbation; it is also how the
+  fibrosis model is established. This is the case that will decide how the
+  reworded rule has to be phrased, and it needs reading.
+- **Not this boundary at all (3).** `s41591-018-0269-2` (bortezomib, melphalan,
+  ASCT), `s12943-025-02430-7` (FOLFOX and targeted antibody),
+  `s41556-019-0446-7` (LVAD implantation) — applied clinical therapy in patients,
+  which is rulings 2 and 6's territory.
+
+So the rule change costs about 2-3 determinations beyond the papers already
+ruled, and every candidate carries an `observational_disease_state` suppression
+already, which is where the disease contrast would move.
+
+**Not acted on here.** Fixing this needs a decision the ruling does not settle:
+whether to widen `observational_disease_state` past "naturally occurring", or to
+open the closed set to a ninth value for an experimentally established disease
+state. That changes the taxonomy every corpus count is built on, so it is a
+v0.0.15 with its own two-run acceptance.
