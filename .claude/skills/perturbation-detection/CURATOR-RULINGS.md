@@ -30,6 +30,7 @@ other specie." So no rule may hard-code human.
 | 5 | `10.1126/science.aay3224` | no | 2026-08-31 |
 | 6 | `10.1126/science.aat1699` | no | 2026-09-03 |
 | 7 | `10.1016/j.ccell.2025.12.003` | no | 2026-09-03 |
+| 8 | `10.1016/j.cell.2021.11.031` | no | 2026-09-03 |
 
 ---
 
@@ -301,3 +302,102 @@ whether to widen `observational_disease_state` past "naturally occurring", or to
 open the closed set to a ninth value for an experimentally established disease
 state. That changes the taxonomy every corpus count is built on, so it is a
 v0.0.15 with its own two-run acceptance.
+
+## 8. `10.1016/j.cell.2021.11.031` — the same rule, keyed on the STATE and not the route
+
+**Ruling: `no`, overturning the extraction's `yes`.** 2026-09-03.
+
+> "similar to the CRC before. I don't see evidence for perturbations. it is a
+> bunch of tumors and not tumors from various patients and conditions - not
+> treatment or perturbation."
+
+and, on being shown that the `yes` rested on the mouse arm rather than the
+patient polyps:
+
+> "Lrig1CreERT2/+;Apc2lox14/2lox14 were injected with 0.01mM 4-hydroxytamoxifen
+> through colonoscopy-guided orthotopic injections into the mucosal lining of the
+> distal colon, and were administered 2.5% DSS in drinking water for the
+> following 6 days. Control mice received PBS injections followed by DSS." — the
+> paper describes injection of mice intestines with cells caring mutations and
+> inducible tumor - but that is not perturbation, it is a disease model.
+
+Colonic tumour cell-of-origin paper. The human side was already handled: patient
+polyps are suppressed under `observational_disease_state` ("spontaneous patient
+lesions collected at routine screening... no manipulation applied by the
+investigators"). The `yes` rested on three paired mouse perturbations — biallelic
+`Apc` deletion driven from Lrig1+ stem cells, the same deletion driven from
+Mist1+ non-stem cells, and 2.5% DSS.
+
+**Why this ruling was needed even though ruling 7 exists.** Ruling 7 could have
+been read narrowly, as being about *introducing diseased material* — engrafting
+tumour organoids. Here **nothing is introduced**: 4-hydroxytamoxifen activates
+Cre in the animal's own resident cells, against a PBS-injected control. A rule
+keyed on the route would have caught the AKPS engraftment and missed this. The
+ruling therefore fixes the rule's key: **what matters is that the manipulation's
+purpose is to produce the disease state under study**, by any route —
+engraftment, an induced mutation, a chemical or surgical induction protocol, a
+transgenic model.
+
+**And comparing two ways of making the model does not promote it.** This paper
+sequences Lrig1-derived against Mist1-derived tumours, i.e. it varies the cell of
+origin — a contrast *between* models. The curator still says no. That is exactly
+the move ruling 1 made when two differentiation media were both sequenced and
+compared: the applied thing does not become the variable just because the paper
+ran two versions of it.
+
+**Where the curator's phrasing and the record diverged, recorded because it
+matters.** The first message described the human cohort ("a bunch of tumors and
+not tumors from various patients and conditions"), which is the part the pipeline
+had already excluded. The mouse `Apc`/DSS models were what actually carried the
+call. Asking rather than assuming turned out to be worth it: the answer settled
+that this is a **criteria** ruling (the induced model is not a perturbation) and
+not a **scope** ruling (the mouse arm is out of curation scope), and those two
+readings differ by an order of magnitude in how many papers they touch.
+
+**Consequence:** v0.0.15. The tricky-cases rule that called an engineered disease
+model a perturbation is rewritten; the Step 2 genetic bullet defers to it; Step
+3's canonical pairing example stops using "tumors from Brca1-deleted mice
+underwent snRNA-seq"; and `disease_model_establishment` becomes the ninth `rule`
+value, because `observational_disease_state` excludes anything with experimental
+manipulation and the case had nowhere else to go.
+
+---
+
+# The two axes these rulings live on
+
+Eight rulings is enough to be confusing without a map, and two of them were
+initially filed on the wrong axis. There are exactly two questions, and only the
+first one changes a determination.
+
+**Axis 1 — is there a perturbation at all?** A criteria question. Five rulings,
+one principle: *what is the applied thing FOR?* If its job is to produce the
+sample — the cell identity, or the disease state — it is the model. If its job is
+to elicit a response in a sample that already exists, it is a perturbation.
+
+| ruling | the applied thing | produces | verdict |
+|---|---|---|---|
+| 1 | differentiation cocktail | a target **cell identity** | model |
+| 2 | induction chemotherapy | the **backdrop** an intrinsic property is measured against | setting |
+| 6 | neoadjuvant chemotherapy | an **enriched** population, not an attributed effect | setting |
+| 7 | engraftment of tumour organoids | a target **disease state** | model |
+| 8 | induced `Apc` deletion + DSS | a target **disease state** | model |
+
+**Axis 2 — is the paper in curation SCOPE?** Not a criteria question: the
+perturbation is real and correctly found, but the material it was applied to is
+not what reaches the curated deposit. Two rulings, and they are the reason triage
+tier 7 exists.
+
+| ruling | paper | the `yes` rested on | scope problem |
+|---|---|---|---|
+| 4 | `s41586-022-05060-x` | mouse LAD coronary ligation | human MI cohort is observational; the deposit is human |
+| 5 | `science.aay3224` | Rag1-knockout mouse | human thymus atlas is observational |
+
+**The thing worth noticing, and the reason to fix Axis 1 before answering Axis
+2.** Rulings 4 and 5 may not be scope rulings at all. LAD ligation produces an
+infarct; a Rag1 knockout produces an immunodeficient animal. Both are Axis 1
+model establishment under ruling 7/8's rule, which did not exist when they were
+made. If that is right, then part of triage tier 7 is a **criteria gap wearing a
+scope costume**, and the 46 papers in it should be re-scored under v0.0.15 before
+anyone rules on whether an animal-carried `yes` is in scope — because some of
+them will stop being `yes` at all, for reasons that have nothing to do with
+organism.
