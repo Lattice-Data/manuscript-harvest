@@ -28,6 +28,7 @@ other specie." So no rule may hard-code human.
 | 3 | `10.1038/s41467-025-67643-2` | no | 2026-08-31 |
 | 4 | `10.1038/s41586-022-05060-x` | no | 2026-08-31 |
 | 5 | `10.1126/science.aay3224` | no | 2026-08-31 |
+| 6 | `10.1126/science.aat1699` | no | 2026-09-03 |
 
 ---
 
@@ -159,3 +160,54 @@ trustworthy calls in the set without the reviewer identifying the common cause.
 **Also noted:** the thymic fibroblast explant medium (DMEM + 15% FBS) was suppressed
 under `derivation_formulation`. That is ambient Methods with no bioactive factor —
 mild over-population, harmless here (`would_have_paired: no`).
+
+## 6. `10.1126/science.aat1699` — a therapy that ENRICHED for a cell type is still not the variable
+
+**Ruling: `no`, confirming the v0.0.14 extraction.** 2026-09-03.
+
+> "it is not perturbation that was measured. it is a condition that enriched for
+> certain cell type, but the patient treatment was not goal of the experiment nor
+> was there an attempt to compare with untreated patients or anything along these
+> lines."
+
+Wilms' tumour / kidney atlas. Children received neoadjuvant cytotoxic
+chemotherapy before nephrectomy, and the resected tumours were profiled by
+scRNA-seq — so the sequenced material genuinely is post-treatment tissue.
+
+**Why this ruling is worth recording even though the extraction agreed.** It is
+the **first curator check on the v0.0.14 clinical-therapy fix**, and the fix was
+written for it: under v0.0.12 this paper was `yes`, and its own recorded
+reasoning cited *"(worked example 5)"* — the worked example that resolved a
+neoadjuvant-chemotherapy case on conditions (i) and (ii) while predating (iii).
+Rewriting that example moved the paper to a suppression under
+`incidental_clinical_therapy`, reproducibly in both acceptance runs, with
+`would_have_paired: "yes"` so it surfaces at triage P2 rather than flipping
+silently. See `ACCEPTANCE-v0.0.14.md`.
+
+**The new ground, which the prompt does not yet state.** The extraction reached
+`no` on the AXIS argument — the paper's comparison is tumour clusters against
+normal fetal/mature cell identities, and nothing is attributed to the drug. The
+curator reached `no` on a different and stronger one: the treatment **enriched
+for a cell population** rather than being studied. The paper says so plainly —
+pre-treatment "reduced yield" and the recovered cells "represent therapeutically
+relevant surviving cancer cells".
+
+That matters because under the governing question as written, *"the drug changed
+which cells are here"* can read as attribution, and attribution means report.
+This ruling says it does not: **selecting or enriching a population is not the
+same as the therapy being the studied variable.**
+
+**This is the same principle as ruling 2, now stated positively.** There, P058's
+ZBTB16+ blasts went from 0.67% at day 0 to 97.6% at day 28 and the authors read
+it as selection of a pre-existing clone rather than chemotherapy changing cells.
+Two papers, both with a large treatment-associated shift in cell composition,
+both ruled `no` — so the shift itself carries no weight. What decides is whether
+the paper sets out to characterise what the drug did. Absent a comparator arm and
+absent that intent, a therapy is the setting no matter how much it moved the
+composition.
+
+**Open, and deliberately not acted on here:** whether to state the
+enrichment-versus-attribution line in `prompt.md`. It would strengthen a rule the
+extraction already applies correctly on both known papers, and every criteria
+addition in this project's history has carried an attractor risk, so it needs its
+own two-run acceptance rather than being folded into a ruling record.
