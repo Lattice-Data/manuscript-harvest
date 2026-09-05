@@ -34,6 +34,8 @@ other specie." So no rule may hard-code human.
 | 9 | `10.1016/j.cell.2021.12.018` | **yes** | 2026-09-03 |
 | 10 | `10.1038/s41467-022-33184-1` | **yes** | 2026-09-03 |
 | 11 | `10.1038/s41467-021-21783-3` | no | 2026-09-03 |
+| 12 | `10.3389/fimmu.2023.1211505` | no | 2026-09-03 |
+| 13 | `10.1016/j.isci.2022.104097` | no | 2026-09-03 |
 
 ---
 
@@ -501,3 +503,69 @@ sample characterised for something else — rulings 7 and 8. **Which papers move
 back is a measurement, and it needs the curator's confirmation of the principle
 before the rule is rewritten**, because it partially reverses a version that was
 accepted two hours earlier.
+
+## 12-13. A germline disease genotype is the model, and nothing was applied
+
+Decided 2026-09-03 on two papers chosen specifically to test the line rulings 9
+and 10 had just drawn, on the curator's request for *"2 more papers to examine to
+make sure I got it right"*. Both are **germline genetic disease models where the
+paper characterises the diseased tissue** — the one boundary no ruling had
+touched, and the one where the extraction's calls rested on nobody's judgment.
+
+### 12. `10.3389/fimmu.2023.1211505` — `no`
+
+> "it is more disease vs healthy, and less of a perturbation. we are studying the
+> way sick cells are behaving. So indeed it is a model of the disease, and less of
+> a perturbation."
+
+*Inflammation-mediated fibroblast activation and immune dysregulation in collagen
+VII-deficient skin.* `Col7a1−/−` mice from targeted ablation of exons 14-18, a
+model of recessive dystrophic epidermolysis bullosa, bred from heterozygotes;
+front paw skin of 11-day-old KO (n=2) and WT (n=2) on 10x scRNA-seq. A second
+hypomorphic allele provides a milder model.
+
+### 13. `10.1016/j.isci.2022.104097` — `no`
+
+> "the analysis was of healthy/non healthy and looking on tissues from kidney
+> specifically focusing on tissues with injury or without injury - but **not
+> CAUSING the injury** - instead studying the transcriptional signatures of
+> tissues that appear to exhibit injury signs. Again they have mouse model for DKD
+> that shows injury signs in glomeruli. Not perturbation."
+
+*Slide-seqV2 discovery of disease-specific cell neighborhoods.* Two genotypes,
+both sequenced against controls: BTBR `ob/ob` (a purchased inbred leptin-deficient
+strain, JAX 004824) against BTBR `wt/wt`, and homozygous `UMOD-C125R` knock-in
+against WT littermates.
+
+---
+
+**What these two settle.** Rulings 9 and 10 established that an APPLIED
+manipulation whose response the paper studies is a perturbation, even when the
+Methods say its purpose was to induce a disease. Rulings 12 and 13 establish the
+other end: a genotype the animals were simply BORN with is the model, even though
+it is a functional genetic lesion with a wild-type comparator and both arms
+sequenced.
+
+So the deciding feature is not the comparator, not the contrast structure, and
+not whether the lesion is functional. **It is what the paper is telling you
+about.** The curator's own words are the cleanest statement of the test yet
+recorded — *"studying the way sick cells are behaving"* and *"not causing the
+injury… studying the signatures of tissues that appear to exhibit injury signs"*
+are both descriptions of characterising the MATERIAL, where ruling 10's *"studying
+the response to the trauma"* is a description of characterising an EFFECT.
+
+**And rulings 12 and 13 hand the rule a cheap first test.** In both papers nothing
+was applied during the study at all: the animals were bred or purchased in the
+diseased state. That is mechanically checkable and settles the whole germline
+class without anyone weighing intent, which leaves the harder attribution
+judgment for the cases where something genuinely was applied. A rule that puts
+the cheap test first is easier to apply reproducibly, which matters because
+intent tests are this pipeline's documented instability.
+
+**They also settle a case the curator had not ruled on.** `science.aay3224`'s Rag1
+knockout is still `yes` on criteria, and that was the extraction's call rather
+than a ruling. A Rag1 knockout is a germline genotype the animals are born with,
+so rulings 12 and 13 reach it: the criteria call should be `no`, and ruling 5's
+`no` on scope becomes belt and braces rather than the only ground. **This is a
+prediction, not a measurement** — `science.aay3224` was `yes` in both v0.0.15
+runs and will need re-scoring under the re-keyed rule to confirm it.
