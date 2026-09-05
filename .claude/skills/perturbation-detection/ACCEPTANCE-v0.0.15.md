@@ -1,7 +1,8 @@
 # v0.0.15 acceptance test
 
 Run 2026-09-03 on the 46 papers of `papers-accept-v0015.txt` (twice) and the 6 of
-`papers-accept-v0015b.txt` (once and a half — see **Incomplete** below). Under
+`papers-accept-v0015b.txt` (also twice, the second run completed after a session-limit
+interruption). Under
 test: the disease-model rule of curator rulings 7 and 8, and
 `disease_model_establishment` as the ninth `rule` value.
 
@@ -69,15 +70,14 @@ paper is a human thymus atlas and the Rag1KO mouse is a comparison, so the
 knockout is *"a knockout compared against wild type to ask what the gene does"* —
 the clause the rewritten genetic bullet deliberately preserves — rather than a
 manipulation producing a disease state the paper characterises. **Ruling 5 stays
-a scope ruling, and the prediction that it would not was wrong.** (Single run;
-see **Incomplete**.)
+a scope ruling, and the prediction that it would not was wrong.** Confirmed in
+both runs: `yes` at confidence 0.45 each time, with the Rag1 knockout reported as
+a perturbation and nothing suppressed as a disease model.
 
 **What that means for tier 7.** The criteria gap accounted for part of the tier,
-not all of it. Of the 52 papers whose `yes` rested entirely on a non-human
-pairing, **11 moved** (10 confirmed + 1 single-run), leaving roughly 40 for which
-the scope question is still live and still unanswered. So the tier-7 Group A
-question was worth deferring — and it is now worth asking, on a smaller and
-cleaner set.
+not all of it — see **The scope question, now well-posed** below for the totals.
+So the tier-7 Group A question was worth deferring, and it is now worth asking on
+a smaller and cleaner set.
 
 ## The controls, and where my predictions were wrong
 
@@ -149,30 +149,46 @@ rulings 1, 7 and 8, applied to a physiological state instead of a disease.
 Neither question is settled here, and neither should be settled by the person who
 wrote the rule.
 
-## Incomplete: 3 of the 6 stragglers have no second run
+## The 6 supplementary papers: complete, and 6/6 reproducible
 
 Tier 7 is not the same population as "papers with an animal-carried `yes`",
 because the triage ladder stops at the first matching tier and tier 3 (`yes` with
 confidence < 0.6) is checked first. Six such papers sit in tier 3, including
-ruling 5's own. They were run as a supplementary set.
+ruling 5's own, so they were run as a supplementary set.
 
-**Run 1 completed 6/6. Run 2 completed 3/6 and stopped on a session limit**
-(`You've hit your session limit`), not on anything about the papers. Missing from
-r2: `s41467-025-59997-4`, `2023.10.25.23297558`, `science.aay3224`.
+Run 2 initially stopped at 3/6 on a session limit (`You've hit your session
+limit`) — nothing to do with the papers. `pe.pending` named the three and the
+re-run picked up only those, which is the idempotency rule working. Both runs are
+now complete at 6/6, 78/78 quotes verified.
 
-| paper | v0.0.12 | r1 | r2 |
-|---|---|---|---|
-| `s41467-025-59997-4` | yes | **no** (DME) | — |
-| `s41586-024-07069-w` | yes | yes | yes |
-| `s41586-024-07476-z` | yes | yes | yes |
-| `2023.10.25.23297558` | yes | yes (DME recorded) | — |
-| `2024.10.27.620502` | yes | yes | yes |
-| `science.aay3224` | yes | **yes** | — |
+| paper | v0.0.12 | r1 | r2 | |
+|---|---|---|---|---|
+| `s41467-025-59997-4` | yes | **no** | **no** | DME in both |
+| `s41586-024-07069-w` | yes | yes | yes | |
+| `s41586-024-07476-z` | yes | yes | yes | |
+| `2023.10.25.23297558` | yes | yes | yes | DME recorded, another perturbation carries it |
+| `2024.10.27.620502` | yes | yes | yes | |
+| `science.aay3224` | yes | yes | yes | **ruling 5 — stays `yes`** |
 
-So the refutation of ruling 5's half of the hypothesis rests on **one run**. It is
-the least-supported claim in this document. Completing r2 needs nothing but the
-session limit to reset; `pe.pending` names the three and re-running picks up only
-those.
+**6 of 6 reproducible.** One paper moved, in both runs, under
+`disease_model_establishment`.
+
+## The scope question, now well-posed
+
+Combining both sets, over the full population of 52 papers whose `yes` rested
+entirely on a non-human pairing:
+
+| | papers |
+|---|---|
+| moved off `yes` in BOTH runs — the criteria gap | **11** |
+| still `yes` in BOTH runs — **the genuine scope question** | **38** |
+| unstable across two runs — the two open questions below | 3 |
+
+So the criteria gap was real and accounted for about a fifth of the population,
+and 38 papers remain where the `yes` is correct under the rules and rests on an
+animal. That is a scope call and nothing else — which is what the tier-7 reading
+packet's Group A question was always asking, now asked of a smaller and cleaner
+set with the criteria confound removed.
 
 ## What this licenses, and what it does not
 
@@ -185,8 +201,6 @@ reproducibility. The ninth `rule` value is populated and countable.
 
 **Not licensed.**
 
-- **Ruling 5's refutation is single-run.** Three of the six supplementary papers
-  have no second run.
 - **52 of 392 papers.** Everything here is measured on the population where the
   rule was expected to bite. Whether it moves anything in the other 340 — where a
   human pairing carries the call — is untested, and the 22-of-46 firing rate for
