@@ -31,6 +31,9 @@ other specie." So no rule may hard-code human.
 | 6 | `10.1126/science.aat1699` | no | 2026-09-03 |
 | 7 | `10.1016/j.ccell.2025.12.003` | no | 2026-09-03 |
 | 8 | `10.1016/j.cell.2021.11.031` | no | 2026-09-03 |
+| 9 | `10.1016/j.cell.2021.12.018` | **yes** | 2026-09-03 |
+| 10 | `10.1038/s41467-022-33184-1` | **yes** | 2026-09-03 |
+| 11 | `10.1038/s41467-021-21783-3` | no | 2026-09-03 |
 
 ---
 
@@ -401,3 +404,100 @@ scope costume**, and the 46 papers in it should be re-scored under v0.0.15 befor
 anyone rules on whether an animal-carried `yes` is in scope — because some of
 them will stop being `yes` at all, for reasons that have nothing to do with
 organism.
+
+## 9-11. Three papers that RE-KEY the disease-model rule
+
+Decided together on 2026-09-03, on the three papers that v0.0.15 left unstable —
+each of which flipped across two runs of byte-identical input, because the rule
+did not answer them. **The first two are the first `yes` rulings in this file.**
+
+### 9. `10.1016/j.cell.2021.12.018` — **`yes`**
+
+> "I read and confirm diet as one of the perturbations that have been introduced
+> followed by Visium analysis."
+
+Hepatic macrophage niche atlas. Methods: *"To induce NAFLD and NASH, mice were
+fed a western diet (WD) high in fat, sugar and cholesterol for 24 or 36 weeks"* —
+58% fat, 1% cholesterol, fructose/sucrose water, against a standard-diet arm.
+Both arms sequenced (CITE-seq, snRNA-seq, Visium), diet as the analysis axis.
+
+### 10. `10.1038/s41467-022-33184-1` — **`yes`**
+
+> "I read and i think it is similar to diet in a sense - that the researchers have
+> delivered trauma to the spinal cord and then were studying the response to the
+> trauma (perturbation)."
+
+Spinal cord injury atlas. Methods: *"A severe contusion was delivered to the
+thoracic (vertebral level T9) spinal cord of mice, resulting in paralysis"* —
+IH-0400 impactor at 90 kdyn, sequenced injured against uninjured across a
+post-injury time course.
+
+### 11. `10.1038/s41467-021-21783-3` — `no`
+
+> "timed mating to induce pregnancy is not perturbation"
+
+The `Brca1/p53` model in this paper was suppressed as a disease model in both
+v0.0.15 runs, and that call stands. What was left was *"For the pregnancy time
+points, females were mated with studs. Tissues were then harvested... at gestation
+day 4.5, 9.5, and 14.5"*, with gestation day as the comparison axis against
+nulliparous controls. One run reported it as a perturbation and carried the paper
+to `yes`; the other reported nothing. The ruling settles it as **not** a
+perturbation — obtaining pregnant animals establishes a physiological state, the
+same shape as rulings 1, 7 and 8 applied to normal physiology rather than to
+disease or cell identity.
+
+---
+
+**What rulings 9 and 10 refute, precisely.** v0.0.15 keyed the disease-model rule
+on the manipulation's *purpose* and offered a structural tell: *"the sequenced
+contrast is diseased tissue against healthy — a STATE contrast"*. **Both of these
+papers have exactly that structure and both are `yes`.** Western diet against
+standard diet is steatotic against lean liver; T9 contusion against uninjured is
+injured against intact cord. So the tell is wrong, and a rule that reads "the
+purpose was to induce the disease" reaches cases the curator calls perturbations —
+the WD paper's own Methods say *"To induce NAFLD and NASH"* in as many words.
+
+**The key the curator is actually using is ATTRIBUTION**, and ruling 10 states it
+outright: *"studying the response to the trauma"*. The test is not what the
+manipulation was for, nor what the contrast looks like. It is:
+
+> **Does the paper characterise what the manipulation DID, or characterise the
+> sample the manipulation produced?**
+
+Attributed to the manipulation -> perturbation. Used to obtain the material that
+is then characterised for something else -> model.
+
+On that key every ruling in this file lines up, including the two that look like
+counterexamples:
+
+| ruling | manipulation | what the paper characterises | verdict |
+|---|---|---|---|
+| 1 | differentiation cocktail | the resulting cell type | model |
+| 2 | induction chemotherapy | an intrinsic property visible despite it | setting |
+| 6 | neoadjuvant chemotherapy | tumour vs normal compartments | setting |
+| 7 | AKPS engraftment | tumour-associated neutrophil biology | model |
+| 8 | induced `Apc`/`Braf`/`Kras` alleles | pre-malignant programs by cell of origin | model |
+| **9** | **western diet** | **how macrophage niches respond to the diet** | **perturbation** |
+| **10** | **T9 contusion** | **the response to the trauma over time** | **perturbation** |
+| 11 | timed mating | mammary tumourigenesis across gestation | state, not a perturbation |
+
+**And this is the same test the prompt already states elsewhere.** The
+clinical-therapy governing question added at v0.0.11 reads *"Attributed to the
+treatment = VARIABLE = report it as a perturbation... Used to reveal a difference
+that was already there = SETTING = suppress it."* The disease-model rule is that
+question asked of a bench manipulation instead of a therapy. v0.0.15 wrote it as
+a second, differently-keyed rule when it should have been the same rule with a
+wider subject — which is how this repo has generated a contradiction three times
+before.
+
+**Consequence, not yet implemented.** Re-keying the rule on attribution will
+REVERSE some of the 11 determinations v0.0.15 moved, because several of them are
+injury- or compound-induced models whose papers plainly study the response: nerve
+constriction in a pain atlas, APAP in a liver-regeneration study, topical MC903
+against vehicle in a skin atlas, ischaemia-reperfusion in a kidney study, LAD
+ligation in cardiac-response papers. Those are rulings 9 and 10's shape. The
+papers that should stay `model` are the ones where the manipulation produced a
+sample characterised for something else — rulings 7 and 8. **Which papers move
+back is a measurement, and it needs the curator's confirmation of the principle
+before the rule is rewritten**, because it partially reverses a version that was
+accepted two hours earlier.
