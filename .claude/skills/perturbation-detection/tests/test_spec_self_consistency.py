@@ -319,3 +319,29 @@ def test_the_batch_spec_records_no_field_the_harness_never_writes(spec):
     assert not ghosts, (
         f"the batch spec presents {ghosts} as record fields and nothing in pe/ or "
         f"task/ writes them. Describe what the harness does, or build it.")
+
+
+def test_the_disease_model_rule_does_not_decide_on_the_contrast_shape(spec):
+    """v0.0.15's tell was refuted by the first two papers the curator read.
+
+    The rule offered "the sequenced contrast is diseased tissue against healthy
+    -- a STATE contrast" as the sign of a model. Curator rulings 9 and 10 are
+    `yes` on a western-diet NASH paper and a spinal-contusion injury atlas, both
+    of which have exactly that structure. The rule is keyed on attribution now,
+    and the disclaimer is part of the rule rather than a footnote, because the
+    refuted tell is the intuitive reading and would come back.
+    """
+    rule = _section(spec, "- **A manipulation is the MODEL rather than a perturbation",
+                    "- Transfection/transduction:")
+    assert "NOT the tell" in rule, (
+        "the disease-model rule no longer disclaims the contrast shape as a tell; "
+        "'diseased against healthy' describes both the perturbation cases "
+        "(rulings 9, 10) and the model cases (rulings 7, 8, 12, 13)")
+    assert "was anything applied during the study at all" in rule, (
+        "the rule no longer leads with the cheap mechanical test from rulings 12 "
+        "and 13. An intent test applied first is this pipeline's documented "
+        "instability -- v0.0.15 left three papers flipping across identical runs")
+    # Test 1 must come before Test 2: cheap and mechanical, then judgment.
+    assert rule.index("was anything applied") < rule.index("what does the paper attribute"), (
+        "the judgment test is stated before the mechanical one, which inverts the "
+        "order rulings 12 and 13 were used to establish")
