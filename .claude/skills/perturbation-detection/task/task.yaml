@@ -38,12 +38,21 @@ name: perturbation-detection
 # the spec MEANS, even where a careful reader would already have done the right
 # thing.
 #
-# 0.0.15 changes a criterion too, and this one OVERTURNS a written rule rather
-# than reconciling two: on curator rulings of 2026-09-03, a manipulation whose
-# purpose is to establish the disease state under study is the model and not a
-# perturbation of it. It also grows the closed `rule` set for the first time
-# since v0.0.10, because the case had nowhere to go.
-version: 0.0.15
+# 0.0.15 changed a criterion too, and OVERTURNED a written rule rather than
+# reconciling two: a manipulation whose purpose is to establish the disease state
+# under study is the model, not a perturbation of it. It also grew the closed
+# `rule` set for the first time since v0.0.10, because the case had nowhere to go.
+#
+# 0.0.16 RE-KEYS that rule four rulings later. 0.0.15 keyed it on the
+# manipulation's purpose and offered "the sequenced contrast is diseased against
+# healthy" as the tell; rulings 9 and 10 are `yes` on papers with exactly that
+# structure, so the tell was refuted by the first two papers the curator read.
+# The key is attribution -- does the paper characterise what the manipulation did,
+# or the material it produced -- which is the clinical-therapy governing question
+# widened rather than a second rule beside it. Rulings 12 and 13 add the cheap
+# first test: if the animals were simply born in the diseased state, nothing was
+# applied and it is the model.
+version: 0.0.16
 
 # What the model is asked, in one line, for a reader deciding whether this pack
 # is the one they want. The criteria live in prompt.md and nowhere else.
