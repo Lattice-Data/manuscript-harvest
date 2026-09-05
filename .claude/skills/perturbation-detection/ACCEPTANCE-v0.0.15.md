@@ -1,5 +1,13 @@
 # v0.0.15 acceptance test
 
+> **Superseded in part, 2026-09-03.** The two questions this test left open were
+> answered the same day by curator rulings 9-13, and the answers **refuted the
+> structural tell v0.0.15 shipped** — see `CURATOR-RULINGS.md` and the v0.0.16
+> changelog entry. Read the "3 unstable papers" section below as the diagnosis
+> that produced those rulings, not as an open question. The measurements here
+> stand; the rule they were measuring has been re-keyed.
+
+
 Run 2026-09-03 on the 46 papers of `papers-accept-v0015.txt` (twice) and the 6 of
 `papers-accept-v0015b.txt` (also twice, the second run completed after a session-limit
 interruption). Under
