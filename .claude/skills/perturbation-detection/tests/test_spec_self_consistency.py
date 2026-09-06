@@ -388,3 +388,30 @@ def test_no_boundary_rule_restates_a_competing_test(spec):
         assert "rule of thumb" in line or "ILLUSTRATION" in line or "illustration" in line, (
             f"the identity/factor contrast is stated as the test rather than as a "
             f"rule of thumb the governing question overrides: {line[:160]!r}")
+
+
+def test_the_physiological_state_clause_is_not_a_blanket_exclusion(spec):
+    """v0.0.17 shipped it as one and destabilised a paper within a day.
+
+    The clause read "a normal physiological state the investigators set up is
+    handled the same way", which one run of two took as licence to suppress
+    caesarean delivery -- a manipulation applied against vaginally-born
+    littermates, in a paper reporting the transcriptional shift across the first
+    hour of life. That is applied and attributed, so it is a perturbation.
+
+    Same shape as the NOT-list blanket qualifier removed at v0.0.14: a category
+    named as an exclusion, with the rules under it needing the opposite. The
+    clause must carry the attribution test and an example on the PERTURBATION
+    side, or it reads as "physiological therefore excluded".
+    """
+    clause = [ln for ln in spec.splitlines()
+              if "normal physiological state the investigators set up" in ln]
+    assert clause, "the physiological-state clause is gone; parser found nothing"
+    line = clause[0]
+    assert "GOVERNING QUESTION" in line, (
+        "the physiological-state clause no longer routes through the governing "
+        "question, so it reads as an exclusion in its own right")
+    assert "caesarean" in line.lower(), (
+        "the clause has lost its perturbation-side example. A clause that only "
+        "shows the excluded case is read as a blanket exclusion -- measured: one "
+        "run of two suppressed C-section delivery under v0.0.17")
