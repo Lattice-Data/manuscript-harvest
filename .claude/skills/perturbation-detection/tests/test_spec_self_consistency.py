@@ -321,27 +321,70 @@ def test_the_batch_spec_records_no_field_the_harness_never_writes(spec):
         f"task/ writes them. Describe what the harness does, or build it.")
 
 
-def test_the_disease_model_rule_does_not_decide_on_the_contrast_shape(spec):
-    """v0.0.15's tell was refuted by the first two papers the curator read.
+def test_the_governing_question_is_stated_exactly_once(model_facing):
+    """Three rules keyed three different ways is how this file's findings were made.
 
-    The rule offered "the sequenced contrast is diseased tissue against healthy
-    -- a STATE contrast" as the sign of a model. Curator rulings 9 and 10 are
-    `yes` on a western-diet NASH paper and a spinal-contusion injury atlas, both
-    of which have exactly that structure. The rule is keyed on attribution now,
-    and the disclaimer is part of the rule rather than a footnote, because the
-    refuted tell is the intuitive reading and would come back.
+    The clinical-therapy rule asked "attributed to the treatment, or the study's
+    setting?". v0.0.15's disease-model rule asked "was the purpose to induce the
+    disease?" and offered the contrast shape as a tell. The derivation rule asked
+    "identity or factor?". Those are the same question in three keys, and two of
+    the three were refuted by the first papers read under them -- rulings 9 and 10
+    for the disease tell, and the curator's clarification of 2026-09-06 for the
+    identity/factor one ("if the goal of the research is to study the
+    differentiation cocktail IT WILL BE a PERTURBATION").
+
+    v0.0.17 states it once and has the rules point at it. This guard exists
+    because restating it is the cheap, natural thing to do while editing a rule,
+    and it is exactly what cost v0.0.7 two runs of one paper.
     """
-    rule = _section(spec, "- **A manipulation is the MODEL rather than a perturbation",
-                    "- Transfection/transduction:")
-    assert "NOT the tell" in rule, (
-        "the disease-model rule no longer disclaims the contrast shape as a tell; "
-        "'diseased against healthy' describes both the perturbation cases "
-        "(rulings 9, 10) and the model cases (rulings 7, 8, 12, 13)")
-    assert "was anything applied during the study at all" in rule, (
-        "the rule no longer leads with the cheap mechanical test from rulings 12 "
-        "and 13. An intent test applied first is this pipeline's documented "
-        "instability -- v0.0.15 left three papers flipping across identical runs")
-    # Test 1 must come before Test 2: cheap and mechanical, then judgment.
-    assert rule.index("was anything applied") < rule.index("what does the paper attribute"), (
-        "the judgment test is stated before the mechanical one, which inverts the "
-        "order rulings 12 and 13 were used to establish")
+    marker = "Is the applied thing what the paper is trying to LEARN ABOUT"
+    assert model_facing.count(marker) == 1, (
+        f"the governing question appears {model_facing.count(marker)} times in the "
+        f"model-facing text. It is stated once on purpose: three differently-keyed "
+        f"versions of it are what rulings 9-13 and the 2026-09-06 clarification "
+        f"were needed to reconcile.")
+
+
+def test_the_governing_question_carries_its_three_sharpenings(model_facing):
+    """Each one is a case where the intuitive reading is wrong.
+
+    Dropping any of them re-opens a boundary a curator ruling closed: the axis
+    sharpening is the pregnancy paper, the shape sharpening is the western-diet
+    and contusion papers, and the on-top-of-a-model sharpening is Trem2 on 5XFAD,
+    which was the last paper still unstable under v0.0.16.
+    """
+    gq = _section(model_facing, "### THE GOVERNING QUESTION", "### Rules for tricky cases")
+    for phrase, why in (
+        ("GROUP the data along is not being the SUBJECT",
+         "the axis-versus-subject sharpening (pregnancy paper)"),
+        ("shape of the comparison decides nothing",
+         "the shape-decides-nothing sharpening (diet and contusion papers)"),
+        ("already-established model",
+         "the applied-on-top-of-a-model sharpening (Trem2 on 5XFAD)"),
+    ):
+        assert phrase in gq, f"the governing question has lost {why}"
+    # The mechanical check must precede the judgment sharpenings, as at v0.0.16.
+    assert gq.index("was anything applied during the study at all") < gq.index("Three sharpenings"), (
+        "the cheap mechanical check is stated after the judgment sharpenings; an "
+        "intent test applied first is this pipeline's documented instability")
+
+
+def test_no_boundary_rule_restates_a_competing_test(spec):
+    """The refuted keys must not come back as a rule's own test.
+
+    v0.0.15 keyed the disease-model rule on the contrast being "a STATE contrast";
+    the derivation rule keyed on identity versus factor as THE line. Both are now
+    illustrations subordinate to the governing question, and both readings were
+    refuted by curator rulings. A rule that states one as its test is asserting a
+    second, differently-keyed question again.
+    """
+    body = _section(spec, "### Rules for tricky cases", "## Step 3:")
+    assert "a STATE contrast" not in body, (
+        "a boundary rule keys on the contrast being a state contrast again -- the "
+        "tell rulings 9 and 10 refuted")
+    identity = [ln for ln in body.splitlines() if "identity versus factor" in ln
+                or "IDENTITY is the model" in ln]
+    for line in identity:
+        assert "rule of thumb" in line or "ILLUSTRATION" in line or "illustration" in line, (
+            f"the identity/factor contrast is stated as the test rather than as a "
+            f"rule of thumb the governing question overrides: {line[:160]!r}")
