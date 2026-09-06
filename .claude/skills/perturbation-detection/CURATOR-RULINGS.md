@@ -438,8 +438,19 @@ post-injury time course.
 
 > "timed mating to induce pregnancy is not perturbation"
 
-The `Brca1/p53` model in this paper was suppressed as a disease model in both
-v0.0.15 runs, and that call stands. What was left was *"For the pregnancy time
+The `Brca1/p53` lesion in this paper was suppressed as a disease model by the
+extraction in both v0.0.15 runs. **The curator did not rule on that**, and an
+earlier version of this entry said the call "stands", which overstated it: the
+question put to the curator was only whether timed mating is a perturbation, and
+that is the only thing this ruling settles. Under v0.0.17 the extraction reversed
+itself and reports `Brca1/p53` as the perturbation, quoting the paper's own
+abstract — *"perturbing Brca1/p53 in luminal progenitors induces aberrant alveolar
+differentiation pre-malignancy"* — so the paper is `yes` while timed mating is
+correctly suppressed. **The paper-level call is therefore open**, and it is a real
+question rather than a defect: rulings 7 and 8 concern papers that used induced
+alleles to OBTAIN tissue whose programs were then characterised, whereas this
+paper's stated finding is what the lesion DOES. The governing question separates
+those, and which side this paper falls on is the curator's. What was left was *"For the pregnancy time
 points, females were mated with studs. Tissues were then harvested... at gestation
 day 4.5, 9.5, and 14.5"*, with gestation day as the comparison axis against
 nulliparous controls. One run reported it as a perturbation and carried the paper
