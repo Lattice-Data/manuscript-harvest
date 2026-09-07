@@ -359,14 +359,38 @@ def test_the_governing_question_carries_its_three_sharpenings(model_facing):
          "the axis-versus-subject sharpening (pregnancy paper)"),
         ("shape of the comparison decides nothing",
          "the shape-decides-nothing sharpening (diet and contusion papers)"),
-        ("already-established model",
-         "the applied-on-top-of-a-model sharpening (Trem2 on 5XFAD)"),
+        ("5XFAD",
+         "the two-manipulations-answered-separately sharpening (Trem2 on 5XFAD)"),
     ):
         assert phrase in gq, f"the governing question has lost {why}"
-    # The mechanical check must precede the judgment sharpenings, as at v0.0.16.
-    assert gq.index("was anything applied during the study at all") < gq.index("Three sharpenings"), (
-        "the cheap mechanical check is stated after the judgment sharpenings; an "
-        "intent test applied first is this pipeline's documented instability")
+
+
+def test_the_mechanism_signal_is_subordinate_to_the_question(model_facing):
+    """Ruling 14 inverted the invariant this used to assert.
+
+    v0.0.16 put "was anything applied during the study at all?" FIRST, as a cheap
+    mechanical test, on the reasoning that an intent test applied first is this
+    pipeline's documented instability. Rulings 12 and 13 supported that because
+    nothing was applied AND their papers were not attributing -- the two readings
+    agreed, so the correlation looked like a rule.
+
+    `Blg-Cre;Brca1f/f;p53+/-` separated them, and v0.0.18 went unstable with r1
+    quoting the mechanical check and r2 quoting the question. Ruling 14: "regardless
+    of the mechanism utilized for KO it is a perturbation - because the goal of the
+    experiment is to study result of the KO". So the mechanism is a signal, the
+    question decides, and the text must say which overrides which -- an unranked
+    pair is the v0.0.7 defect and is exactly what made the paper unstable.
+    """
+    gq = _section(model_facing, "### THE GOVERNING QUESTION", "### Rules for tricky cases")
+    assert "SIGNAL rather than a test" in gq, (
+        "the mechanism check is no longer marked as a signal; if it reads as a test "
+        "it collides with the question on a germline lesion the paper attributes to")
+    assert "always overrides it" in gq, (
+        "the text no longer says the question overrides the mechanism signal. An "
+        "unranked pair is what left s41467-021-21783-3 unstable across two runs")
+    assert gq.index("Is the applied thing what the paper is trying to LEARN ABOUT") \
+        < gq.index("SIGNAL rather than a test"), (
+        "the mechanism signal is stated before the question it is subordinate to")
 
 
 def test_no_boundary_rule_restates_a_competing_test(spec):
