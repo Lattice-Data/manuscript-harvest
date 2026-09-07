@@ -408,3 +408,27 @@ def test_mechanism_still_carries_no_weight(model_facing):
     assert "Mechanism carries no weight" in gq, (
         "the spec no longer says the mechanism is irrelevant; ruling 14 turns on "
         "a conditional Cre-lox allele being equivalent to a CRISPANT line")
+
+
+def test_an_exposure_requires_a_contrast(model_facing):
+    """v0.0.20 promoted DSS in ruling 8's paper, in both runs.
+
+    The exposure half was written without saying a variable needs variation, so
+    an insult administered to EVERY arm read as a perturbation. Ruling 8's own
+    Methods settle it -- "Control mice received PBS injections followed by DSS" --
+    so the DSS is how every animal reached a damaged colon and the contrast is
+    carried by the alleles.
+
+    Guarded because the clause is easy to lose while editing the exposure list,
+    and losing it re-promotes every induction protocol that happens to be
+    chemical.
+    """
+    gq = _section(model_facing, "### THE GOVERNING QUESTION", "### Rules for tricky cases")
+    assert "needs a CONTRAST to be a variable" in gq, (
+        "the exposure half no longer requires a contrast; an exposure given to "
+        "every arm is a constant of the protocol, and without this DSS in ruling "
+        "8's paper reads as a perturbation")
+    assert "NOT the v0.0.9 uniformity precondition" in gq, (
+        "the clause no longer distinguishes itself from the uniformity precondition "
+        "ruling 1 removed -- that one asked whether a CONSTRUCTION was uniform, and "
+        "conflating them would re-open ruling 1")
