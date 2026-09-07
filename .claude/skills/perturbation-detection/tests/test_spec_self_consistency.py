@@ -365,77 +365,46 @@ def test_the_governing_question_carries_its_three_sharpenings(model_facing):
         assert phrase in gq, f"the governing question has lost {why}"
 
 
-def test_the_mechanism_signal_is_subordinate_to_the_question(model_facing):
-    """Ruling 14 inverted the invariant this used to assert.
+def test_the_kind_default_is_stated_and_is_subordinate_to_the_question(model_facing):
+    """Fourth attempt at this rule, and the guard now covers what broke each time.
 
-    v0.0.16 put "was anything applied during the study at all?" FIRST, as a cheap
-    mechanical test, on the reasoning that an intent test applied first is this
-    pipeline's documented instability. Rulings 12 and 13 supported that because
-    nothing was applied AND their papers were not attributing -- the two readings
-    agreed, so the correlation looked like a rule.
+    v0.0.17 wrote the physiological clause as a blanket exclusion and suppressed a
+    C-section -- an EXPOSURE. v0.0.19 demoted the mechanical check with nothing to
+    replace it and promoted engraftments and germline lesions -- CONSTRUCTIONS.
+    Each edit removed one half of a rule that needs both halves: a default keyed on
+    the kind of manipulation, subordinate to the question about what the paper is
+    trying to learn.
 
-    `Blg-Cre;Brca1f/f;p53+/-` separated them, and v0.0.18 went unstable with r1
-    quoting the mechanical check and r2 quoting the question. Ruling 14: "regardless
-    of the mechanism utilized for KO it is a perturbation - because the goal of the
-    experiment is to study result of the KO". So the mechanism is a signal, the
-    question decides, and the text must say which overrides which -- an unranked
-    pair is the v0.0.7 defect and is exactly what made the paper unstable.
+    Curator ground, 2026-09-06/07: exposures are "external factors that we could
+    study the mice reaction to"; a construction is an "in vivo modification that
+    simply gets the mice to tumors". Infection is exposure because "the mice react
+    to the pathogen".
     """
     gq = _section(model_facing, "### THE GOVERNING QUESTION", "### Rules for tricky cases")
-    assert "SIGNAL rather than a test" in gq, (
-        "the mechanism check is no longer marked as a signal; if it reads as a test "
-        "it collides with the question on a germline lesion the paper attributes to")
-    assert "always overrides it" in gq, (
-        "the text no longer says the question overrides the mechanism signal. An "
-        "unranked pair is what left s41467-021-21783-3 unstable across two runs")
+    for phrase, why in (
+        ("EXPOSURE", "the exposure half -- without it an applied insult reads as a model (v0.0.17)"),
+        ("CONSTRUCTION", "the construction half -- without it an engraftment reads as a perturbation (v0.0.19)"),
+        ("infection is exposure", "the pathogen ruling of 2026-09-07"),
+        ("BECOME the material, or does the material REACT to it",
+         "the line between the two kinds, which is what separates a graft from a pathogen"),
+        ("DEFAULT, not a competing test",
+         "the subordination -- an unranked pair is the v0.0.7 defect that left "
+         "s41467-021-21783-3 unstable across two runs"),
+    ):
+        assert phrase in gq, f"the governing question has lost {why}"
     assert gq.index("Is the applied thing what the paper is trying to LEARN ABOUT") \
-        < gq.index("SIGNAL rather than a test"), (
-        "the mechanism signal is stated before the question it is subordinate to")
+        < gq.index("the KIND of manipulation does"), (
+        "the kind-default is stated before the question it is subordinate to")
 
 
-def test_no_boundary_rule_restates_a_competing_test(spec):
-    """The refuted keys must not come back as a rule's own test.
+def test_mechanism_still_carries_no_weight(model_facing):
+    """Ruling 14, which must survive the kind-default being added.
 
-    v0.0.15 keyed the disease-model rule on the contrast being "a STATE contrast";
-    the derivation rule keyed on identity versus factor as THE line. Both are now
-    illustrations subordinate to the governing question, and both readings were
-    refuted by curator rulings. A rule that states one as its test is asserting a
-    second, differently-keyed question again.
+    A CRISPANT line and a conditional floxed allele are the same fact about the
+    animal, so a rule that let the delivery method matter would put them on
+    opposite sides.
     """
-    body = _section(spec, "### Rules for tricky cases", "## Step 3:")
-    assert "a STATE contrast" not in body, (
-        "a boundary rule keys on the contrast being a state contrast again -- the "
-        "tell rulings 9 and 10 refuted")
-    identity = [ln for ln in body.splitlines() if "identity versus factor" in ln
-                or "IDENTITY is the model" in ln]
-    for line in identity:
-        assert "rule of thumb" in line or "ILLUSTRATION" in line or "illustration" in line, (
-            f"the identity/factor contrast is stated as the test rather than as a "
-            f"rule of thumb the governing question overrides: {line[:160]!r}")
-
-
-def test_the_physiological_state_clause_is_not_a_blanket_exclusion(spec):
-    """v0.0.17 shipped it as one and destabilised a paper within a day.
-
-    The clause read "a normal physiological state the investigators set up is
-    handled the same way", which one run of two took as licence to suppress
-    caesarean delivery -- a manipulation applied against vaginally-born
-    littermates, in a paper reporting the transcriptional shift across the first
-    hour of life. That is applied and attributed, so it is a perturbation.
-
-    Same shape as the NOT-list blanket qualifier removed at v0.0.14: a category
-    named as an exclusion, with the rules under it needing the opposite. The
-    clause must carry the attribution test and an example on the PERTURBATION
-    side, or it reads as "physiological therefore excluded".
-    """
-    clause = [ln for ln in spec.splitlines()
-              if "normal physiological state the investigators set up" in ln]
-    assert clause, "the physiological-state clause is gone; parser found nothing"
-    line = clause[0]
-    assert "GOVERNING QUESTION" in line, (
-        "the physiological-state clause no longer routes through the governing "
-        "question, so it reads as an exclusion in its own right")
-    assert "caesarean" in line.lower(), (
-        "the clause has lost its perturbation-side example. A clause that only "
-        "shows the excluded case is read as a blanket exclusion -- measured: one "
-        "run of two suppressed C-section delivery under v0.0.17")
+    gq = _section(model_facing, "### THE GOVERNING QUESTION", "### Rules for tricky cases")
+    assert "Mechanism carries no weight" in gq, (
+        "the spec no longer says the mechanism is irrelevant; ruling 14 turns on "
+        "a conditional Cre-lox allele being equivalent to a CRISPANT line")
