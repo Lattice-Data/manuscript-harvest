@@ -36,6 +36,7 @@ other specie." So no rule may hard-code human.
 | 11 | `10.1038/s41467-021-21783-3` | no | 2026-09-03 |
 | 12 | `10.3389/fimmu.2023.1211505` | no | 2026-09-03 |
 | 13 | `10.1016/j.isci.2022.104097` | no | 2026-09-03 |
+| 14 | `10.1038/s41467-021-21783-3` | **yes** | 2026-09-06 |
 
 ---
 
@@ -434,6 +435,19 @@ thoracic (vertebral level T9) spinal cord of mice, resulting in paralysis"* —
 IH-0400 impactor at 90 kdyn, sequenced injured against uninjured across a
 post-injury time course.
 
+**Confirmed 2026-09-06 with the paper's own framing**, which states the
+attribution outright and is better evidence than the Methods line above:
+
+> "First, we performed severe thoracic contusion spinal cord injuries in mice and
+> **tracked the progression of injury responses** from acute to chronic time
+> points. To profile the diverse cell types within the lumbar spinal cord
+> following thoracic injury, we used single nucleus RNA Sequencing (snRNA-seq) and
+> created an atlas of the lumbar cell types after injury"
+
+— *"So in my mind it is relatively clear - injury is investigated, and is assessed
+using single cell/nucleus assay."* The paper is in the 392-paper corpus, in the
+46-paper tier-7 set, and v0.0.18 reproduces `yes` in both runs.
+
 ### 11. `10.1038/s41467-021-21783-3` — `no`
 
 > "timed mating to induce pregnancy is not perturbation"
@@ -580,3 +594,53 @@ so rulings 12 and 13 reach it: the criteria call should be `no`, and ruling 5's
 `no` on scope becomes belt and braces rather than the only ground. **This is a
 prediction, not a measurement** — `science.aay3224` was `yes` in both v0.0.15
 runs and will need re-scoring under the re-keyed rule to confirm it.
+
+## 14. `10.1038/s41467-021-21783-3` — a KO strain is a perturbation whatever made it
+
+**Ruling: `yes`.** 2026-09-06. Stated as a leaning rather than a verdict; recorded
+as the decision because it resolves an unarbitrated precedence gap, and reversible
+on a word.
+
+> "I am leaning towards seeing the conditional Brca1 loss of function as
+> equivalent to CRISPANT (Crispr induced KO zebrafish lines). In other words if we
+> have a strain that has KO of a gene of interest, **regardless of the mechanism
+> utilized for KO it is a perturbation - because the goal of the experiment is to
+> study result of the KO (or knock down) of the gene** on transcription measured by
+> single cell."
+
+**What it settles.** v0.0.18 left this paper unstable because two parts of one
+rule collided with no tiebreak: the cheap germline check (*nothing was applied
+during the study, so it is the model* — rulings 12-13) against the governing
+question (*the paper attributes its findings to the lesion, so the lesion is the
+subject*). Both were in the rule; neither was said to win. **Attribution wins**,
+and the mechanism by which a strain was made — CRISPR, Cre-lox, germline
+breeding, purchase — carries no weight at all.
+
+**So the germline check was never a test.** In rulings 12 and 13 nothing was
+applied AND the paper was not attributing, so both readings pointed the same way
+and the correlation looked like a rule. This paper separates them and shows which
+one was doing the work. The check is demoted to a signal at v0.0.19.
+
+**How this stays consistent with rulings 12 and 13, which are NOT reversed.** All
+three papers use a genetically altered strain. What differs is the question asked:
+
+| ruling | strain | what the paper asks | verdict |
+|---|---|---|---|
+| 12 | `Col7a1−/−` | *what does collagen VII-deficient skin look like?* — "the way sick cells are behaving" | model |
+| 13 | BTBR `ob/ob`, `UMOD-C125R` | *what are the signatures of tissues showing injury?* | model |
+| **14** | `Blg-Cre;Brca1f/f;p53+/−` | ***what does losing Brca1/p53 DO?*** — "perturbing Brca1/p53 in luminal progenitors induces aberrant alveolar differentiation" | **perturbation** |
+
+The lesion is identical in kind across all three. Only the sentence the paper is
+trying to write is different. That is the governing question and nothing else, and
+it is why the mechanism is irrelevant: a CRISPANT line and a conditional floxed
+allele are the same fact about the animal, so they cannot land on different sides.
+
+**The risk this creates, and it is why the ruling is re-tested rather than
+assumed.** Demoting the germline check removes the mechanical shortcut that was
+keeping rulings 12 and 13 stable. Under pure attribution, a reader could take
+*"inflammation-mediated fibroblast activation in collagen VII-deficient skin"* as
+attributing the inflammation to the deficiency and flip ruling 12. Both papers are
+in the 10-paper confirming set for exactly this reason: if they move, the
+attribution test needs a sharpening for *describing a state the lesion causes*
+versus *studying what the lesion does*, and that distinction would then need the
+curator's words rather than mine.
