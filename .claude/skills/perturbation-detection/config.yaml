@@ -2,9 +2,25 @@
 # This file is READ by pe.prepare and pe.validate — it is not documentation.
 
 # Where the extracted papers live: one directory per paper, each containing
-# extracted/blocks.jsonl. Override per run with --corpus, which is the normal
-# way to use this skill; the value here is only a default.
-corpus_dir: ./corpus
+# extracted/blocks.jsonl.
+#
+# There is deliberately no `corpus_dir:` key here any more, and this is the
+# reason. It used to read `./corpus`, which resolves against the CWD -- and
+# every documented invocation runs from this directory, where a stale
+# 382-paper copy sits beside this file. The real corpus is the 392-paper tree
+# at the repo root, which is what `papers-all.txt` names and what SKILL.md and
+# README both pass explicitly as `--corpus ../../../corpus`. So the default
+# could only ever fire when someone FORGOT the flag, and when it fired it
+# silently selected a different, smaller corpus: 10 of the 392 papers simply
+# absent, both trees gitignored, nothing to diff.
+#
+# `--corpus` is now required, by pe.prepare and pe.validate alike. Setting
+# `corpus_dir` here still works if a checkout wants a default, but it has to be
+# written on purpose. Same treatment as `output_dir` below: a default nobody
+# meant to use is worse than no default.
+#
+# The 382-paper copy is not deleted by this change -- that is the curator's
+# call, not the harness's.
 
 # Text reconstruction. Sections are matched as substrings of the block's
 # `section` field. 'back_matter' is what JATS-derived articles actually use for

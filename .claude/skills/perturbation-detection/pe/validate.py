@@ -43,7 +43,7 @@ except ImportError:
 
 from pe.runroot import output_name, work_default  # noqa: E402
 from pe.runstate import (  # noqa: E402
-    RunError, entry_paths, load_manifest, resolve_run_dir,
+    RunError, entry_paths, load_manifest, resolve_corpus, resolve_run_dir,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -408,7 +408,9 @@ def main() -> int:
     parser.add_argument("--config", default=str(ROOT / "config.yaml"))
     parser.add_argument("--prompt", default=str(ROOT / "prompt.md"))
     parser.add_argument("--corpus", default=None,
-                        help="overrides config.yaml corpus_dir (default ./corpus)")
+                        help="the corpus tree, required with --write-corpus; "
+                             "overrides config.yaml corpus_dir, which has no "
+                             "default on purpose (see config.yaml)")
     parser.add_argument("--write-corpus", action="store_true",
                         help="also write the per-paper result into the corpus tree")
     args = parser.parse_args()
@@ -419,12 +421,21 @@ def main() -> int:
     threshold = args.threshold
     if threshold is None:
         threshold = (config.get("fuzzy_match") or {}).get("threshold", 0.85)
-    # Read the same key pe.prepare reads. This used to be a hardcoded "./corpus"
-    # while prepare honoured `corpus_dir`, so a config pointing anywhere else made
-    # prepare read the right tree and --write-corpus mkdir a wrong one beside the
-    # cwd -- which is how the 382 stale v0.0.8 records under
-    # .claude/skills/perturbation-detection/corpus/ came to exist.
-    corpus = Path(args.corpus or config.get("corpus_dir") or "./corpus")
+    # Resolved by the same helper pe.prepare uses, so the two cannot disagree
+    # about which tree a run used. This was once a hardcoded "./corpus" here
+    # while prepare honoured `corpus_dir`, so a config pointing anywhere else
+    # made prepare read the right tree and --write-corpus mkdir a wrong one
+    # beside the cwd -- which is how the 382 stale v0.0.8 records under
+    # .claude/skills/perturbation-detection/corpus/ came to exist. That tree now
+    # cannot be recreated by accident: resolve_corpus has no default and
+    # requires the root to exist already, so a wrong --corpus refuses instead of
+    # quietly building a second corpus.
+    #
+    # Resolved only when it is needed. Nothing but --write-corpus reads the
+    # corpus, so requiring the flag on a read-only validate would refuse a run
+    # that never touches the tree.
+    corpus = (resolve_corpus(args.corpus, config.get("corpus_dir"))
+              if args.write_corpus else None)
 
     pack = None
     try:

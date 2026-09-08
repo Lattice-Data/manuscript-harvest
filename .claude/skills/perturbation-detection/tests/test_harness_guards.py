@@ -19,6 +19,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -310,3 +311,161 @@ def test_prepare_refuses_an_empty_paper_set(tmp_path):
         f"indistinguishable from a successful run.\nstdout: {proc.stdout[-400:]}")
     assert "names no papers" in proc.stderr or "names no papers" in proc.stdout, (
         f"prepare failed on an empty set but did not say why.\n{proc.stderr[-400:]}")
+
+
+# --------------------------------------------------------------------------
+# The abort sentinel covers BOTH ways a session goes unusable
+# --------------------------------------------------------------------------
+
+#: The real line, from work-corpus-v0021-r1's logs. 145 papers received it.
+USAGE_LIMIT_LINE = ("You've hit your session limit · resets 11:50pm "
+                    "(America/Los_Angeles)")
+AUTH_FAILURE_LINE = "OAuth session expired. Please run /login."
+
+RUNNER = ROOT / "pe" / "run_headless.sh"
+
+
+def _shell_predicate(name: str) -> str:
+    """The `grep -qiE '...'` pattern out of one of the runner's predicates.
+
+    Reads the pattern from the script rather than restating it, so this guard
+    tests what actually runs. A copy here would pass while the script rotted.
+    """
+    body = RUNNER.read_text()
+    match = re.search(rf"^{re.escape(name)}\(\) \{{\n\s*grep -qiE '([^']+)'",
+                      body, re.MULTILINE)
+    assert match, f"{name}() is not a single `grep -qiE '...'` in {RUNNER.name}"
+    return match.group(1)
+
+
+def _matches(pattern: str, text: str) -> bool:
+    import subprocess
+    return subprocess.run(["grep", "-qiE", pattern], input=text, text=True).returncode == 0
+
+
+def test_the_usage_limit_signature_trips_the_sentinel():
+    """The defect: `.auth-failed` fired on auth errors only.
+
+    The v0.0.21 corpus run hit a usage limit at 249 of 392 papers. The sentinel
+    stayed clear, so the remaining 145 each paid a `claude -p` spawn to receive
+    one identical line -- the exact waste the sentinel's own comment cites as its
+    reason for existing ("44 copies of the same 73-byte auth error"). Right
+    failure shape, one of two signatures.
+    """
+    assert _matches(_shell_predicate("is_usage_limit"), USAGE_LIMIT_LINE), (
+        f"is_usage_limit does not match the real limit line:\n  {USAGE_LIMIT_LINE}\n"
+        f"Every remaining paper in a limited run spawns to receive it.")
+
+
+def test_the_two_failure_kinds_stay_distinguishable():
+    """Both abort the queue; the REMEDIES differ and so must the predicates.
+
+    A usage limit told "re-authenticate" sends the caller to /login, which
+    cannot move a limit. An auth failure told "wait for the reset" waits for a
+    reset that will never come.
+    """
+    auth, limit = _shell_predicate("is_auth_failure"), _shell_predicate("is_usage_limit")
+    assert _matches(auth, AUTH_FAILURE_LINE)
+    assert not _matches(auth, USAGE_LIMIT_LINE), (
+        "is_auth_failure matches the usage-limit line, so a limited run is told "
+        "to re-authenticate.")
+    assert not _matches(limit, AUTH_FAILURE_LINE), (
+        "is_usage_limit matches the auth line, so a dead session is told to wait "
+        "for a reset.")
+
+
+def test_the_sentinel_is_written_read_and_cleared_under_one_name():
+    """A rename that missed one site would leave the guard permanently armed or
+    permanently clear. Three sites: the early abort, the two writers, the reset.
+    """
+    body = RUNNER.read_text()
+    # Matched with its path prefix, which every FUNCTIONAL reference has. The
+    # comment explaining the rename names the old file too, and a guard that
+    # forbids its own rationale gets the rationale deleted instead.
+    stale = re.findall(r"\$\{?[Ww][Oo][Rr][Kk]\}?/\.auth-failed", body)
+    assert not stale, (
+        f"{stale} -- a functional reference to the old sentinel survives. It is "
+        f"`.session-dead` now because auth is only one of the two failures it "
+        f"covers, and a half-renamed sentinel is never both written and read.")
+    assert body.count(".session-dead") >= 4, (
+        "expected the sentinel at the abort check, both writers and the "
+        "per-run reset")
+    assert 'rm -f "$WORK/.session-dead"' in body, (
+        "a previous run's verdict must be cleared, or one limited run arms the "
+        "sentinel forever and every later run aborts on paper 1.")
+
+
+# --------------------------------------------------------------------------
+# There is no implicit corpus default
+# --------------------------------------------------------------------------
+
+def test_no_module_falls_back_to_a_literal_corpus_path():
+    """The defect this is the regression for.
+
+    `pe.prepare` and `pe.validate` both fell back to `"./corpus"`, which
+    resolves against the CWD -- and every documented invocation runs from the
+    skill directory, where a stale 382-paper copy sits beside the 392-paper tree
+    at the repo root. Forgetting `--corpus` therefore scored a different, smaller
+    corpus: 10 papers of `papers-all.txt` absent, both trees gitignored, nothing
+    to diff. The fallback could only ever fire by mistake.
+    """
+    import ast
+
+    offenders = []
+    for path in sorted((ROOT / "pe").glob("*.py")):
+        tree = ast.parse(path.read_text())
+        # Docstrings are Constants too, and the modules explain the removed
+        # default in prose. Comments never reach the AST, so only docstrings
+        # need excluding -- which is why this walks the tree instead of
+        # grepping: a guard that fires on its own explanation gets deleted.
+        docstrings = {
+            node.body[0].value for node in ast.walk(tree)
+            if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef,
+                                 ast.ClassDef))
+            and node.body and isinstance(node.body[0], ast.Expr)
+            and isinstance(node.body[0].value, ast.Constant)
+            and isinstance(node.body[0].value.value, str)
+        }
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Constant) and node.value == "./corpus"
+                    and node not in docstrings):
+                offenders.append(f"{path.name}:{node.lineno}")
+    assert not offenders, (
+        f"{offenders} -- a corpus default that resolves against the CWD picks "
+        f"the stale copy whenever the flag is forgotten. Use "
+        f"pe.runstate.resolve_corpus, which refuses instead.")
+
+
+def test_prepare_refuses_when_no_corpus_is_named(tmp_path):
+    import subprocess
+    papers = tmp_path / "one.txt"
+    papers.write_text("10.1000_x\n")
+    empty_config = tmp_path / "config.yaml"
+    empty_config.write_text("include_supplementary: true\n")
+    proc = subprocess.run(
+        [sys.executable, "-m", "pe.prepare", "--set", str(papers),
+         "--work", str(tmp_path / "work"), "--config", str(empty_config)],
+        cwd=str(ROOT), capture_output=True, text=True)
+    assert proc.returncode != 0, (
+        f"prepare exited {proc.returncode} with no corpus named; it used to fall "
+        f"back to ./corpus.\nstdout: {proc.stdout[-400:]}")
+    assert "no corpus directory" in proc.stderr, (
+        f"prepare refused but did not say why.\n{proc.stderr[-400:]}")
+
+
+def test_prepare_refuses_a_corpus_path_that_does_not_exist(tmp_path):
+    """Otherwise every paper SKIPs and the run reports "0/N prepared", exit 0 --
+    the vacuous-pass shape the empty-set refusal above was added for.
+    """
+    import subprocess
+    papers = tmp_path / "one.txt"
+    papers.write_text("10.1000_x\n")
+    proc = subprocess.run(
+        [sys.executable, "-m", "pe.prepare", "--set", str(papers),
+         "--work", str(tmp_path / "work"),
+         "--corpus", str(tmp_path / "typo-not-a-corpus")],
+        cwd=str(ROOT), capture_output=True, text=True)
+    assert proc.returncode != 0, (
+        f"prepare exited {proc.returncode} on a nonexistent corpus path.\n"
+        f"stdout: {proc.stdout[-400:]}")
+    assert "does not exist" in proc.stderr, proc.stderr[-400:]
