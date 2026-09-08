@@ -54,17 +54,6 @@ from manuscript_harvest.fetch.sources.pmc_supplements import (
     _springer_url,
 )
 from manuscript_harvest.fetch.validate import PDF_DIAGNOSES, better_pdf_failure
-
-#: `fetch.text_bearing_only` is on by default, and it refuses every extension
-#: `pmc_oa.supplement_or_media` routes to `media/` -- they are all image extensions.
-#: So the tests below that assert on article figures at all have to say which run
-#: they are describing, and this is that run: the one that fetches everything, which
-#: is what this tool did before the policy existed. They keep their value twice over.
-#: The role split they pin is what makes the *filter* per-role -- a refused figure
-#: must not read as a missing supplement -- and pinning them here is what makes
-#: `text_bearing_only: false` a promise rather than a claim.
-EVERYTHING = {"text_bearing_only": False}
-
 from tests.fakes import (
     DOI,
     PAYWALL_HTML,
@@ -81,6 +70,16 @@ from tests.fakes import (
     s3_http,
     s3_listing,
 )
+
+#: `fetch.text_bearing_only` is on by default, and it refuses every extension
+#: `pmc_oa.supplement_or_media` routes to `media/` -- they are all image extensions.
+#: So the tests below that assert on article figures at all have to say which run
+#: they are describing, and this is that run: the one that fetches everything, which
+#: is what this tool did before the policy existed. They keep their value twice over.
+#: The role split they pin is what makes the *filter* per-role -- a refused figure
+#: must not read as a missing supplement -- and pinning them here is what makes
+#: `text_bearing_only: false` a promise rather than a claim.
+EVERYTHING = {"text_bearing_only": False}
 
 PREPRINT = "10.1101/2024.01.23.576878"
 
