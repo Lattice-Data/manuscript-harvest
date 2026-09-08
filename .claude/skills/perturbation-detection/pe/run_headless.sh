@@ -41,14 +41,22 @@ run_one() {
   local raw_file="$work/raw/$doi.json"
   local log="$work/logs/$doi.log"
 
-  # An expired session fails every remaining paper identically, and each failure
+  # An unusable session fails every remaining paper identically, and each failure
   # still costs a process spawn and a round trip. Observed in practice: a 22-paper
   # run x2 burned ~60 minutes to produce 44 copies of the same 73-byte auth error.
-  # Once one paper has proved the session is dead, the rest abort in milliseconds.
-  # A sentinel file rather than killing xargs: the remaining invocations are
-  # already queued, and a fast no-op is simpler than tearing down the pipeline.
-  if [ -f "$work/.auth-failed" ]; then
-    echo "ABORT $doi (session died earlier this run; re-authenticate and re-run)"
+  # Once one paper has proved the session is unusable, the rest abort in
+  # milliseconds. A sentinel file rather than killing xargs: the remaining
+  # invocations are already queued, and a fast no-op is simpler than tearing down
+  # the pipeline.
+  #
+  # The sentinel was `.auth-failed` and fired on AUTH failures only. A usage
+  # limit is the other way a session goes unusable, and it did not fire: the
+  # 392-paper v0.0.21 corpus run hit one at 249 papers and the remaining 145 each
+  # paid a full spawn to receive the same "You've hit your session limit" line --
+  # exactly the waste this sentinel was written to prevent, missed because the
+  # guard keyed on one signature of a two-signature failure.
+  if [ -f "$work/.session-dead" ]; then
+    echo "ABORT $doi ($(cat "$work/.session-dead" 2>/dev/null || echo 'session unusable') earlier this run; see the summary below)"
     return 1
   fi
   # No `[ -s "$raw_file" ]` skip here. The queue below was computed with
@@ -96,8 +104,15 @@ Reply with only the word DONE when the file is written."
     fi
   else
     if is_auth_failure "$log"; then
-      : > "$work/.auth-failed"
+      printf 'SESSION EXPIRED' > "$work/.session-dead"
       echo "FAIL  $doi (SESSION EXPIRED -- aborting the rest; see $log)"
+    elif is_usage_limit "$log"; then
+      # The limit line carries the reset time. Keep it: the remedy is to wait
+      # until then and re-run, and a caller told only "limit reached" has to go
+      # digging through per-paper logs for the one fact that decides when.
+      limit_line="$(grep -ihE 'session limit|usage limit|rate limit|limit reached|resets [0-9]' "$log" 2>/dev/null | head -1)"
+      printf 'USAGE LIMIT (%s)' "${limit_line:-no reset time reported}" > "$work/.session-dead"
+      echo "FAIL  $doi (USAGE LIMIT -- aborting the rest: ${limit_line:-see $log})"
     else
       echo "FAIL  $doi (claude exited non-zero; see $log)"
     fi
@@ -106,11 +121,24 @@ Reply with only the word DONE when the file is written."
 }
 
 # Shared by the preflight and the per-paper check, so the two cannot disagree
-# about what "the session is dead" looks like.
+# about what "the session is unusable" looks like. Two predicates rather than
+# one because the REMEDIES differ -- re-authenticate, versus wait for the reset
+# -- and telling someone to re-authenticate when they need to wait until 11:50pm
+# is worse than saying nothing. Both abort the queue.
 is_auth_failure() {
   grep -qiE 'failed to authenticate|oauth session expired|not logged in|invalid api key|authentication_error' "$1" 2>/dev/null
 }
-export -f run_one is_auth_failure
+
+# Deliberately broad. The exact wording varies with the CLI version, and the
+# cost of a false positive is one aborted run that resumes cleanly, while the
+# cost of a miss is every remaining paper spawning to receive the same message.
+# Verified against the real line: "You've hit your session limit · resets
+# 11:50pm (America/Los_Angeles)" -- matched on `session limit`, without relying
+# on the typographic apostrophe or the middot surviving a log.
+is_usage_limit() {
+  grep -qiE 'session limit|usage limit|rate limit|limit reached|too many requests|quota exceeded' "$1" 2>/dev/null
+}
+export -f run_one is_auth_failure is_usage_limit
 
 # "Pending" means the same thing here as in pe.pending: a raw file existing
 # and non-empty is NOT enough -- it must parse and carry every required field.
@@ -160,7 +188,7 @@ COUNT=$(printf '%s\n' "$DOIS" | wc -l | tr -d ' ')
 # but only after every paper has spawned and timed out. Runs only when there is
 # work to do, so a fully-cached re-run stays free. PERTURBATION_SKIP_PREFLIGHT=1
 # bypasses it.
-rm -f "$WORK/.auth-failed"          # a previous run's verdict is not this run's
+rm -f "$WORK/.session-dead"         # a previous run's verdict is not this run's
 if [ -z "${PERTURBATION_SKIP_PREFLIGHT:-}" ]; then
   if ! command -v claude >/dev/null 2>&1; then
     echo "PREFLIGHT FAILED: no 'claude' on PATH -- stage 2 needs the Claude Code CLI." >&2
@@ -175,6 +203,11 @@ if [ -z "${PERTURBATION_SKIP_PREFLIGHT:-}" ]; then
       echo "  The logged-in session is dead. Re-authenticate in an interactive" >&2
       echo "  terminal ('claude', then /login) and re-run this script -- it is" >&2
       echo "  resumable and will pick up only what is still missing." >&2
+    elif is_usage_limit "$probe"; then
+      echo "  The session is over its usage limit, not broken. Wait for the reset" >&2
+      echo "  named above and re-run this script -- it is resumable and will pick" >&2
+      echo "  up only what is still missing. Do NOT re-authenticate; that is a" >&2
+      echo "  different failure and /login will not move the limit." >&2
     fi
     exit 3
   fi
@@ -190,6 +223,22 @@ printf '%s\n' "$DOIS" | xargs -P "$JOBS" -I{} bash -c 'run_one "$@"' _ {} "$WORK
   | tee -a "$WORK/run.log"
 
 echo
+# Named once, at the end, where it cannot scroll past. A run that aborted has
+# every remaining paper reporting "ABORT", and the one fact that decides what to
+# do next -- re-authenticate, or wait until the reset -- was previously buried in
+# whichever per-paper log happened to hit the failure first.
+if [ -f "$WORK/.session-dead" ]; then
+  echo "RUN ABORTED: $(cat "$WORK/.session-dead")"
+  if grep -q 'USAGE LIMIT' "$WORK/.session-dead" 2>/dev/null; then
+    echo "  Wait for the reset above, then re-run this exact command. Papers that"
+    echo "  aborted wrote no result at all, so pe.pending sees them as missing and"
+    echo "  the re-run picks up only the gap."
+  else
+    echo "  Re-authenticate ('claude', then /login), then re-run this exact"
+    echo "  command -- it will pick up only what is still missing."
+  fi
+  echo
+fi
 echo "done. next:"
 echo "  $PY -m pe.pending  --work $WORK      # what still needs a rerun"
 echo "  $PY -m pe.validate --work $WORK --write-corpus"

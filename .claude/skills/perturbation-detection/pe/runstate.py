@@ -48,6 +48,43 @@ class RunError(Exception):
     """
 
 
+def resolve_corpus(cli_value: str | None, config_value: str | None) -> Path:
+    """The corpus tree to read papers from, or RunError saying how to name one.
+
+    Shared by pe.prepare and pe.validate so the two cannot disagree about which
+    tree a run used -- they already could: validate defaulted to `./corpus`
+    independently of prepare, so a config pointing elsewhere made them read
+    different trees for the same run.
+
+    There is no fallback default, and that is the fix rather than an oversight.
+    `./corpus` resolves against the CWD, every documented invocation runs from
+    the skill directory, and a stale 382-paper copy lives there beside the
+    392-paper tree at the repo root. The default could therefore only fire when
+    someone forgot `--corpus`, and it then selected a smaller corpus quietly:
+    both trees are gitignored, so nothing downstream could tell.
+
+    The path must also EXIST. Without that check a typo produced a run over zero
+    papers -- "0/392 prepared" and a zero exit, which is the vacuous-pass shape
+    the empty-set refusal in pe.prepare was added for.
+    """
+    if not (cli_value or config_value):
+        raise RunError(
+            "no corpus directory. Pass --corpus (SKILL.md and README both use "
+            "`--corpus ../../../corpus` from the skill directory), or set "
+            "`corpus_dir` in config.yaml on purpose. There is deliberately no "
+            "default: the old one was './corpus', which resolves against the "
+            "CWD onto a stale copy, so forgetting the flag silently scored a "
+            "different set of papers.")
+    corpus = Path(cli_value or config_value)
+    if not corpus.is_dir():
+        raise RunError(
+            f"corpus directory {corpus} does not exist (resolved to "
+            f"{corpus.resolve()}). Refusing to prepare or validate a run that "
+            f"would find no papers at all: '0/N prepared' and a zero exit are "
+            f"indistinguishable from a successful run.")
+    return corpus
+
+
 def _looks_like_two_run_baseline(work: Path) -> list[str]:
     """Which of r1/r2 exist under `work` with a validated/ of their own."""
     return [name for name in RUN_SUBDIRS if (work / name / "validated").is_dir()]

@@ -34,6 +34,7 @@ except ImportError:  # config is optional; defaults live in paper_text.py
 
 from pe.runroot import work_default  # noqa: E402
 from pe.pack import PackError, load as load_pack, spec_version_line  # noqa: E402
+from pe.runstate import RunError, resolve_corpus  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -206,8 +207,6 @@ def main() -> int:
             f"single declaration of the version is task.yaml. Put "
             f"{pack.placeholders['task_version']} there instead -- a literal in "
             f"the spec is the drift that 0.0.13 removed.")
-    corpus = Path(args.corpus or config.get("corpus_dir")
-                  or "./corpus")
     # Resolved to absolute: the manifest records raw_file/prompt_file as strings,
     # and a relative --work made those readable only from the cwd that created
     # them. Running pe.validate/pe.pending from anywhere else then reported every
@@ -229,6 +228,10 @@ def main() -> int:
               f"an empty set: '0/0 prepared' and a zero exit are indistinguishable "
               f"from a successful one.", file=sys.stderr)
         return 2
+    # After the set, on purpose. Both are refusals and both exit 2, but if the
+    # set file is empty the corpus is irrelevant -- reporting the corpus first
+    # answers a question the caller has not got to yet.
+    corpus = resolve_corpus(args.corpus, config.get("corpus_dir"))
     manifest = []
     print(f"task {pack.name} {pack.version}  pack {stamp['pack_sha256'][:12]}")
     print(f"supplementary sources: {'INCLUDED (deduped)' if include_supp else 'EXCLUDED'} "
@@ -318,12 +321,25 @@ def main() -> int:
     n_supp = sum(1 for m in ok if len(m["source_ids"]) > 1)
     print(f"\n{len(ok)}/{len(dois)} prepared | {total:,} chars (~{total // 4:,} tokens) "
           f"| {n_supp} with supplementary | manifest: {work / 'manifest.json'}")
+    # A shortfall is named on stdout beside the count, not left as SKIP lines on
+    # stderr. The batch spec wants a not-found paper carried in the manifest
+    # rather than dropped, so this stays a warning and not an error -- but
+    # "382/392 prepared" scrolling past is exactly how a run over the wrong
+    # corpus tree gets started, and the tree it read is the thing to check.
+    missing = [m["doi"] for m in manifest if "error" in m]
+    if missing:
+        print(f"\n{len(missing)} paper(s) had no blocks.jsonl under {corpus} "
+              f"({corpus.resolve()}) and are carried in the manifest as "
+              f"fetch_status=not_found. If you expected all {len(dois)}, check "
+              f"--corpus names the right tree before running stage 2: "
+              f"{', '.join(missing[:5])}{' ...' if len(missing) > 5 else ''}",
+              file=sys.stderr)
     return 0
 
 
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except PackError as exc:
+    except (PackError, RunError) as exc:
         print(f"pe.prepare: {exc}", file=sys.stderr)
         raise SystemExit(2) from None

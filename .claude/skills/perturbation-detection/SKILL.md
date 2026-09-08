@@ -106,6 +106,16 @@ python -m pe.summarize
   `papers-50b.txt` and `papers-all.txt` (the 392 the corpus run used). There is no
   `papers.txt`, and there never was — this line used to name one, and the argparse
   default named `validation_set.txt`, which has never existed either.
+- `--corpus` is **required** too, by `pe.prepare` and by `pe.validate
+  --write-corpus`. It has no default on purpose. The old default was `./corpus`,
+  which resolves against the CWD — and the CWD is this directory, where a stale
+  382-paper tree sits beside the real 392-paper one at the repo root. So the
+  default could only fire when someone forgot the flag, and it then scored a
+  quietly different set of papers: both trees are gitignored, so nothing could
+  tell you. A path that does not exist is refused rather than created, which is
+  how the stale tree came to exist in the first place (`pe.validate` once
+  hardcoded `./corpus` while `pe.prepare` honoured `config.yaml`, so
+  `--write-corpus` built a second corpus beside the CWD).
 - **Run artifacts land outside this directory**, under
   `~/.manuscript-harvest/perturbation/{work,output}` by default. That is not
   tidiness: `claude -p` subagents cannot write under `.claude/`, and the CLI
