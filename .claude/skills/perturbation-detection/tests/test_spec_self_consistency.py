@@ -319,3 +319,116 @@ def test_the_batch_spec_records_no_field_the_harness_never_writes(spec):
     assert not ghosts, (
         f"the batch spec presents {ghosts} as record fields and nothing in pe/ or "
         f"task/ writes them. Describe what the harness does, or build it.")
+
+
+def test_the_governing_question_is_stated_exactly_once(model_facing):
+    """Three rules keyed three different ways is how this file's findings were made.
+
+    The clinical-therapy rule asked "attributed to the treatment, or the study's
+    setting?". v0.0.15's disease-model rule asked "was the purpose to induce the
+    disease?" and offered the contrast shape as a tell. The derivation rule asked
+    "identity or factor?". Those are the same question in three keys, and two of
+    the three were refuted by the first papers read under them -- rulings 9 and 10
+    for the disease tell, and the curator's clarification of 2026-09-06 for the
+    identity/factor one ("if the goal of the research is to study the
+    differentiation cocktail IT WILL BE a PERTURBATION").
+
+    v0.0.17 states it once and has the rules point at it. This guard exists
+    because restating it is the cheap, natural thing to do while editing a rule,
+    and it is exactly what cost v0.0.7 two runs of one paper.
+    """
+    marker = "Is the applied thing what the paper is trying to LEARN ABOUT"
+    assert model_facing.count(marker) == 1, (
+        f"the governing question appears {model_facing.count(marker)} times in the "
+        f"model-facing text. It is stated once on purpose: three differently-keyed "
+        f"versions of it are what rulings 9-13 and the 2026-09-06 clarification "
+        f"were needed to reconcile.")
+
+
+def test_the_governing_question_carries_its_three_sharpenings(model_facing):
+    """Each one is a case where the intuitive reading is wrong.
+
+    Dropping any of them re-opens a boundary a curator ruling closed: the axis
+    sharpening is the pregnancy paper, the shape sharpening is the western-diet
+    and contusion papers, and the on-top-of-a-model sharpening is Trem2 on 5XFAD,
+    which was the last paper still unstable under v0.0.16.
+    """
+    gq = _section(model_facing, "### THE GOVERNING QUESTION", "### Rules for tricky cases")
+    for phrase, why in (
+        ("GROUP the data along is not being the SUBJECT",
+         "the axis-versus-subject sharpening (pregnancy paper)"),
+        ("shape of the comparison decides nothing",
+         "the shape-decides-nothing sharpening (diet and contusion papers)"),
+        ("5XFAD",
+         "the two-manipulations-answered-separately sharpening (Trem2 on 5XFAD)"),
+    ):
+        assert phrase in gq, f"the governing question has lost {why}"
+
+
+def test_the_kind_default_is_stated_and_is_subordinate_to_the_question(model_facing):
+    """Fourth attempt at this rule, and the guard now covers what broke each time.
+
+    v0.0.17 wrote the physiological clause as a blanket exclusion and suppressed a
+    C-section -- an EXPOSURE. v0.0.19 demoted the mechanical check with nothing to
+    replace it and promoted engraftments and germline lesions -- CONSTRUCTIONS.
+    Each edit removed one half of a rule that needs both halves: a default keyed on
+    the kind of manipulation, subordinate to the question about what the paper is
+    trying to learn.
+
+    Curator ground, 2026-09-06/07: exposures are "external factors that we could
+    study the mice reaction to"; a construction is an "in vivo modification that
+    simply gets the mice to tumors". Infection is exposure because "the mice react
+    to the pathogen".
+    """
+    gq = _section(model_facing, "### THE GOVERNING QUESTION", "### Rules for tricky cases")
+    for phrase, why in (
+        ("EXPOSURE", "the exposure half -- without it an applied insult reads as a model (v0.0.17)"),
+        ("CONSTRUCTION", "the construction half -- without it an engraftment reads as a perturbation (v0.0.19)"),
+        ("infection is exposure", "the pathogen ruling of 2026-09-07"),
+        ("BECOME the material, or does the material REACT to it",
+         "the line between the two kinds, which is what separates a graft from a pathogen"),
+        ("DEFAULT, not a competing test",
+         "the subordination -- an unranked pair is the v0.0.7 defect that left "
+         "s41467-021-21783-3 unstable across two runs"),
+    ):
+        assert phrase in gq, f"the governing question has lost {why}"
+    assert gq.index("Is the applied thing what the paper is trying to LEARN ABOUT") \
+        < gq.index("the KIND of manipulation does"), (
+        "the kind-default is stated before the question it is subordinate to")
+
+
+def test_mechanism_still_carries_no_weight(model_facing):
+    """Ruling 14, which must survive the kind-default being added.
+
+    A CRISPANT line and a conditional floxed allele are the same fact about the
+    animal, so a rule that let the delivery method matter would put them on
+    opposite sides.
+    """
+    gq = _section(model_facing, "### THE GOVERNING QUESTION", "### Rules for tricky cases")
+    assert "Mechanism carries no weight" in gq, (
+        "the spec no longer says the mechanism is irrelevant; ruling 14 turns on "
+        "a conditional Cre-lox allele being equivalent to a CRISPANT line")
+
+
+def test_an_exposure_requires_a_contrast(model_facing):
+    """v0.0.20 promoted DSS in ruling 8's paper, in both runs.
+
+    The exposure half was written without saying a variable needs variation, so
+    an insult administered to EVERY arm read as a perturbation. Ruling 8's own
+    Methods settle it -- "Control mice received PBS injections followed by DSS" --
+    so the DSS is how every animal reached a damaged colon and the contrast is
+    carried by the alleles.
+
+    Guarded because the clause is easy to lose while editing the exposure list,
+    and losing it re-promotes every induction protocol that happens to be
+    chemical.
+    """
+    gq = _section(model_facing, "### THE GOVERNING QUESTION", "### Rules for tricky cases")
+    assert "needs a CONTRAST to be a variable" in gq, (
+        "the exposure half no longer requires a contrast; an exposure given to "
+        "every arm is a constant of the protocol, and without this DSS in ruling "
+        "8's paper reads as a perturbation")
+    assert "NOT the v0.0.9 uniformity precondition" in gq, (
+        "the clause no longer distinguishes itself from the uniformity precondition "
+        "ruling 1 removed -- that one asked whether a CONSTRUCTION was uniform, and "
+        "conflating them would re-open ruling 1")

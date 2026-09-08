@@ -217,6 +217,18 @@ def main() -> int:
     (work / "raw").mkdir(parents=True, exist_ok=True)
 
     dois = [line.strip() for line in Path(args.set).read_text().splitlines() if line.strip()]
+    # An empty set is a broken invocation, not a run with nothing to do. Without
+    # this, `prepare` printed "0/0 prepared" and exited 0 -- so a mistyped or
+    # half-written set file read as a successful stage 1, and stage 2 then found
+    # nothing pending and also exited 0. That is the vacuous-pass shape three
+    # release blockers were fixed for; it survived here because nobody had handed
+    # this module an empty file until one was built by a `cat` of two paths that
+    # did not exist.
+    if not dois:
+        print(f"{args.set} names no papers. Refusing to report a prepared run over "
+              f"an empty set: '0/0 prepared' and a zero exit are indistinguishable "
+              f"from a successful one.", file=sys.stderr)
+        return 2
     manifest = []
     print(f"task {pack.name} {pack.version}  pack {stamp['pack_sha256'][:12]}")
     print(f"supplementary sources: {'INCLUDED (deduped)' if include_supp else 'EXCLUDED'} "

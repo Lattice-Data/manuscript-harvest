@@ -286,3 +286,27 @@ def test_the_verifier_can_actually_fail():
     if not checked:
         pytest.skip("no clean 'yes' record with a long quote in this run")
     assert checked >= 1
+
+
+def test_prepare_refuses_an_empty_paper_set(tmp_path):
+    """Found by hitting it: `cat` of two paths that did not exist.
+
+    `pe.prepare` printed "0/0 prepared" and exited 0 on an empty `--set`, so a
+    mistyped or half-written set file read as a successful stage 1. Stage 2 then
+    found nothing pending and also exited 0, and the whole pipeline reported
+    success over zero papers -- the vacuous-pass shape that three of the seven
+    release blockers were fixed for, surviving in the one module nobody had
+    handed an empty file.
+    """
+    import subprocess
+    empty = tmp_path / "none.txt"
+    empty.write_text("\n  \n")          # blank lines only: parses to zero papers
+    proc = subprocess.run(
+        [sys.executable, "-m", "pe.prepare", "--set", str(empty),
+         "--work", str(tmp_path / "work"), "--corpus", str(tmp_path / "corpus")],
+        cwd=str(ROOT), capture_output=True, text=True)
+    assert proc.returncode != 0, (
+        f"prepare exited {proc.returncode} on an empty set; a zero exit here is "
+        f"indistinguishable from a successful run.\nstdout: {proc.stdout[-400:]}")
+    assert "names no papers" in proc.stderr or "names no papers" in proc.stdout, (
+        f"prepare failed on an empty set but did not say why.\n{proc.stderr[-400:]}")
