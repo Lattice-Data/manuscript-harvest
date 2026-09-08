@@ -10,11 +10,6 @@ import re
 from typing import List, Optional, Tuple
 from urllib.parse import urljoin, urlparse
 
-# ScienceDirect article URLs carry the Elsevier PII, from which the PDF URL can be
-# constructed when the page exposes no link. Public because the browser tier reads
-# the same PII out of a URL to reach Cell Press -- one shape, defined once.
-PII_RX = re.compile(r"/pii/([A-Z0-9]+)", re.IGNORECASE)
-
 from .base import (
     Adapter,
     collect_links,
@@ -25,6 +20,11 @@ from .base import (
     supplements_from_links,
 )
 from .generic import GenericAdapter
+
+# ScienceDirect article URLs carry the Elsevier PII, from which the PDF URL can be
+# constructed when the page exposes no link. Public because the browser tier reads
+# the same PII out of a URL to reach Cell Press -- one shape, defined once.
+PII_RX = re.compile(r"/pii/([A-Z0-9]+)", re.IGNORECASE)
 
 
 class NatureAdapter(Adapter):
