@@ -99,7 +99,6 @@ if _REF_POINTS_AT != _ITEM_PATH:
 
 CC_TEXT = dict(_DEC["checks"])
 _CAP = _DEC["cap"]
-_DOWNGRADE = _REC["downgrade_confidence"]
 
 
 def _open_field_issues(obj: dict, prefix: str, declared: dict) -> list[str]:
@@ -431,7 +430,6 @@ def progress_line(doi: str, result: dict) -> str:
             f"sc={str(result.get('has_single_cell_assay', '?')):8}"
             f"{str(result.get('perturbation_present', '?')):8}"
             f"(any={str(result.get('perturbation_present_any_assay', '?')):8}) "
-            f"conf={str(result.get('paper_confidence', '?')):<5} "
             f"perts={v['perturbations_kept']:<3} "
             f"y/n/u={v['paired_yes']}/{v['paired_no']}/{v['paired_unclear']:<2} "
             f"q={quotes_ok}/{v['quotes_checked']}{flags}")
@@ -639,8 +637,12 @@ def validate_items(result: dict, verify, issues: list[str],
                 f"perturbations[{i}] ({pert.get(_ITEM_NAME)!r}) DROPPED: no evidence "
                 f"quote could be verified against any source")
             pert["dropped_reason"] = "no verifiable evidence quote"
-            pert["confidence_original"] = pert.get("confidence")
-            pert["confidence"] = _DOWNGRADE
+            # The item's own confidence is left as the model stated it. It used
+            # to be overwritten with a floor and preserved under
+            # `confidence_original` -- a rewrite that existed only because the
+            # rewrite destroyed the original, and that nothing ever read. A
+            # dropped item is removed from `perturbations` entirely, so it
+            # advertises nothing and there is nothing to walk back.
             dropped.append(pert)
         else:
             index_map[i] = len(kept)

@@ -214,6 +214,3 @@ normalisers:
     synonyms: [human, humans, homo sapiens, "h. sapiens", hsapiens, patient,
                "human (patient)", "9606"]
 
-# Confidence below which a dropped item's stated confidence is rewritten, so a
-# pruned item cannot keep advertising the confidence it had with its evidence.
-downgrade_confidence: 0.2

@@ -128,15 +128,14 @@ def render(loaded, text_for) -> tuple[list[str], dict[str, int]]:
         lines.append(f"{doi}")
         lines.append(f"  present={result.get('perturbation_present')} "
                      f"any_assay={result.get('perturbation_present_any_assay')} "
-                     f"has_sc_assay={result.get('has_single_cell_assay')} "
-                     f"conf={result.get('paper_confidence')}")
+                     f"has_sc_assay={result.get('has_single_cell_assay')}")
         types = result.get("single_cell_assay_types") or []
         if isinstance(types, str):
             types = [types]
         lines.append(f"  sc assays reported: {', '.join(str(t) for t in types) or '(none)'}")
         for i, pert in enumerate(result.get("perturbations") or []):
             lines.append(f"    [{i}] paired={pert.get('single_cell_paired')} "
-                         f"conf={pert.get('confidence')} {str(pert.get('agent'))[:58]}")
+                         f"{str(pert.get('agent'))[:58]}")
             lines.append(f"        assay_applied: {str(pert.get('assay_applied') or '(unstated)')[:110]}")
             assay_ev = pert.get("assay_evidence")
             quote = (assay_ev.get("quote") if isinstance(assay_ev, dict) else "") or ""
@@ -194,7 +193,7 @@ def render(loaded, text_for) -> tuple[list[str], dict[str, int]]:
         found = screen(text, _bank("C"))
         total = sum(g["count"] for g in found.values())
         lines.append("")
-        lines.append(f"{doi}   any_assay=no conf={result.get('paper_confidence')} hits={total}")
+        lines.append(f"{doi}   any_assay=no hits={total}")
         if unavailable:
             counts["C"] += 1
             lines.append(f"  NOT SCREENED -- {unavailable}")

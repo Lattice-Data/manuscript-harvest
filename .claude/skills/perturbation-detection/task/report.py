@@ -32,11 +32,6 @@ COLUMNS = list(_REP["columns"])
 #: `tier_labels` renders the queue summary from the same list.
 TIERS = [(int(t["n"]), str(t["label"])) for t in _REP["tiers"]]
 
-#: The confidence below which a positive is worth a second read. A FOURTH
-#: threshold, matching none of prompt.md's three rubric band edges -- it came
-#: from step 10 and is deliberately its own number.
-LOW_CONFIDENCE_YES = float(_REP["low_confidence_yes"])
-
 _LIMITS = _REP.get("column_limits") or {}
 
 
@@ -86,7 +81,6 @@ def triage_priority(result: dict) -> int:
     validation = result.get("validation") or {}
     present = result.get("perturbation_present")
     reason = result.get("unresolved_reason")
-    confidence = result.get("paper_confidence")
 
     if present == "unclear" and reason == "pairing_not_stated":
         return 1
@@ -102,9 +96,11 @@ def triage_priority(result: dict) -> int:
     # contrast; a tier that holds most papers is not a queue.
     if present != "yes" and validation.get("suppressed_would_pair_yes_under_review"):
         return 2
-    if present == "yes" and isinstance(confidence, (int, float)) \
-            and confidence < LOW_CONFIDENCE_YES:
-        return 3
+    # Slot 3 was "yes with paper_confidence < 0.6" and is vacant from 0.0.22.
+    # It is the only place this pack ever compared the confidence number to
+    # anything, and its membership was ~69% unstable on identical input. The
+    # slot is left empty rather than reused, so a priority column stays
+    # comparable across the change.
     if present == "unclear" and reason == "degraded_text":
         return 4
     if present == "no" and result.get("perturbation_present_any_assay") == "yes":
@@ -136,8 +132,6 @@ def row_for(doi: str, result: dict, entry: dict) -> dict:
     perts = result.get("perturbations") or []
     samples = result.get("samples") or []
     validation = result.get("validation") or {}
-    confidences = [p.get("confidence") for p in perts
-                   if isinstance(p.get("confidence"), (int, float))]
 
     assay_types = result.get("single_cell_assay_types") or []
     if isinstance(assay_types, str):
@@ -157,7 +151,6 @@ def row_for(doi: str, result: dict, entry: dict) -> dict:
         "has_single_cell_assay": result.get("has_single_cell_assay", ""),
         "single_cell_assay_types": _join_truncated(
             assay_types, **_LIMITS.get("single_cell_assay_types", {})),
-        "paper_confidence": result.get("paper_confidence", ""),
         "n_perturbations": len(perts),
         "n_paired_yes": validation.get("paired_yes", ""),
         "n_paired_no": validation.get("paired_no", ""),
@@ -193,7 +186,6 @@ def row_for(doi: str, result: dict, entry: dict) -> dict:
         "quotes_failed": validation.get("quotes_failed", ""),
         "quotes_wrong_source": validation.get("quotes_wrong_source", ""),
         "perturbations_dropped": validation.get("perturbations_dropped", ""),
-        "max_pert_confidence": max(confidences) if confidences else "",
         "sources": "|".join(entry.get("source_ids") or []),
         # Full sentences, not truncated: a curator reads this column directly
         # to judge each perturbation, and a cut mid-sentence ("forward genetic

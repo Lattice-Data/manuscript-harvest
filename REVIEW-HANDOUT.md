@@ -27,16 +27,20 @@ single-cell dataset comes from separate, untreated material.
 
 ---
 
-## About the "machine says" and "confidence" columns
+## About the "machine says" column
 
-The confidence number is **not** the probability that the paper is perturbed. It
-answers only: *would a careful curator, reading this same text, agree with me?* So a
-well-evidenced **no** scores **high**. A high number next to a call you disagree with
-is the most interesting kind of disagreement — please flag those especially.
+There used to be a confidence number here. It has been removed, because it could not
+survive its own test: re-running the unchanged system on byte-identical text moved one
+paper from 0.35 to 0.90, and across nine paired re-runs only 37% of papers scored
+identically twice. It was being read as a measurement and it was not one.
 
-Also worth knowing: that number is not stable. Re-running the unchanged system on
-byte-identical text has moved it from 0.35 to 0.90. Treat it as a rough sort order,
-nothing more.
+Nothing replaces it, and that is deliberate. A three-level **high / medium / low**
+label was measured and rejected — it would put four papers in five in the top band and
+hide how close each sat to a boundary, which is less honest than the number, not more.
+
+So there is no ordering to trust here. **Every paper in your group needs the same
+read**, and a call you disagree with is worth flagging whether the machine sounded
+sure or not.
 
 ---
 

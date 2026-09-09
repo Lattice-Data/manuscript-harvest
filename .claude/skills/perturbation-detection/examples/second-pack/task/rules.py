@@ -18,7 +18,6 @@ STATED_WHERE = tuple(_ITEMS["enums"]["stated_where"])
 STATED_EXPLICITLY = tuple(w for w in STATED_WHERE if w != "inferred")
 CC_TEXT = dict(_DEC["checks"])
 _CAP = _DEC["cap"]
-_DOWNGRADE = _REC["downgrade_confidence"]
 
 
 def _items(record: dict) -> list[dict]:
@@ -166,8 +165,6 @@ def validate_items(record: dict, verify, issues: list[str], flags: set[str]) -> 
             issues.append(f"tissues[{i}] ({item.get('name')!r}) DROPPED: no evidence "
                           f"quote could be verified against any source")
             item["dropped_reason"] = "no verifiable evidence quote"
-            item["confidence_original"] = item.get("confidence")
-            item["confidence"] = _DOWNGRADE
             dropped.append(item)
         else:
             index_map[i] = len(kept)

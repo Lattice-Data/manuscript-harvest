@@ -19,7 +19,7 @@
 
 # --------------------------------------------------------------------------
 # The triage ladder. Lower sorts first; 0 is reserved for rows that failed or
-# are still pending, and 8 is unused.
+# are still pending, and 3 and 8 are unused.
 # --------------------------------------------------------------------------
 #
 # **This ladder renumbered once, at prompt v0.0.10**, when tier 2 was inserted
@@ -29,13 +29,18 @@
 # is the pattern to copy.
 renumbered_at: 0.0.10
 
+# **Slot 3 was vacated at 0.0.22 and is deliberately left empty.** It held
+# "yes with paper_confidence < 0.6", the only rule in this pack that read the
+# confidence number. Measured over the nine paired same-input re-runs, 11 of
+# the 16 papers that entered that tier in either run flipped in or out of it --
+# so the queue's membership was ~69% an artefact of which pass you happened to
+# run. Closing the gap by shifting 4-9 up would renumber the ladder a second
+# time; the note above says why that is not done.
 tiers:
   - n: 1
     label: "unclear + pairing_not_stated  (may hide a real match — read first)"
   - n: 2
     label: "not yes + a suppressed candidate under a rule IN REVIEW would have paired yes"
-  - n: 3
-    label: "yes with paper_confidence < 0.6"
   - n: 4
     label: "unclear + degraded_text       (route to re-fetch, not to reading)"
   - n: 5
@@ -46,11 +51,6 @@ tiers:
     label: "yes carried only by a non-human model — scope call  (v0.0.12)"
   - n: 9
     label: "everything else"
-
-# The confidence below which a positive is worth a second read. Note this is a
-# FOURTH threshold, matching none of prompt.md's three rubric band edges
-# (0.80/0.40/0.20) -- it came from step 10 and is deliberately its own number.
-low_confidence_yes: 0.6
 
 # `unresolved_reason` values a tier above 6 already accounts for. Anything else
 # on an `unclear` paper -- including "none", null and an off-enum string -- leaves
@@ -80,7 +80,6 @@ columns:
   - text_completeness
   - has_single_cell_assay
   - single_cell_assay_types
-  - paper_confidence
   - n_perturbations
   - n_paired_yes
   - n_paired_no
@@ -106,7 +105,6 @@ columns:
   - quotes_failed
   - quotes_wrong_source
   - perturbations_dropped
-  - max_pert_confidence
   - sources
   - perturbation_agents
   - n_issues

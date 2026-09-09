@@ -244,21 +244,42 @@ def test_the_triage_tier_numbers_match_the_spec(spec, pack):
     step = step[:step.index("### 11.")]
     declared = [int(n) for n in re.findall(r"^(\d+)\.\s", step, re.MULTILINE)]
     assert declared, "no numbered tiers found in step 10 -- parser stopped matching"
+    # A vacated slot stays in the spec's numbered list so a reader can see why
+    # the ladder has a hole, but it is not a live tier. Slot 3 went this way at
+    # 0.0.22; closing the gap instead would renumber, which is the trap the
+    # ladder's own note exists to prevent.
+    vacant = {int(n) for n in re.findall(r"^(\d+)\.\s+\*\(vacant", step, re.MULTILINE)}
+    declared = [n for n in declared if n not in vacant]
+    assert vacant, ("no vacant slot found in step 10 -- if slot 3 was refilled or "
+                    "the wording changed, this guard needs revisiting")
     tiers = [int(t["n"]) for t in pack["report"]["tiers"] if int(t["n"]) != 9]
     assert tiers == declared, (
         f"triage ladder drift:\n  report.yaml: {tiers}\n  spec step 10: {declared}\n"
         f"A mismatch silently mis-sorts the curator's queue.")
 
 
-def test_the_low_confidence_threshold_matches_the_spec(spec, pack):
-    """0.6, and a fourth threshold matching none of the rubric's three band
-    edges -- so it is easy to "tidy" into one of them by mistake."""
-    threshold = pack["report"]["low_confidence_yes"]
+def test_no_tier_reads_the_confidence_number(spec, pack):
+    """The inverse of the guard this replaces, and the point of 0.0.22.
+
+    There used to be a two-sided check that `report.yaml: low_confidence_yes`
+    and prompt.md step 10 both said 0.6. The threshold is gone: it was the only
+    consumer of `paper_confidence` in the pack, and across nine paired
+    same-input re-runs 11 of the 16 papers it selected flipped in or out of the
+    tier. The field itself stays on the record -- it is the best predictor of a
+    determination flip there is -- but nothing routes on it and nothing prints
+    it, and this is what keeps it that way.
+    """
+    assert "low_confidence_yes" not in pack["report"], (
+        "the confidence threshold is back in report.yaml. It was removed at "
+        "0.0.22 because its tier's membership was ~69% unstable on identical "
+        "input; re-adding it needs that measurement redone.")
     step = spec[spec.index("### 10."):]
     step = step[:step.index("### 11.")]
-    assert f"< {threshold}" in step or f"<{threshold}" in step, (
-        f"report.yaml says paper_confidence < {threshold} but the spec's step 10 "
-        f"does not state that number")
+    live = [line for line in step.splitlines()
+            if "paper_confidence" in line and "vacant" not in line]
+    assert not live, f"step 10 still routes on the confidence number: {live}"
+    assert not [c for c in pack["report"]["columns"] if "confidence" in c], (
+        "a confidence column is back in the summary CSV")
 
 
 def _exclusion_table(spec: str) -> dict[str, str]:

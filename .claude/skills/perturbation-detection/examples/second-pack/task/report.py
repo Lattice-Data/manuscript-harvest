@@ -9,7 +9,6 @@ from pe.pack import tables
 _REP = tables()["report"]
 COLUMNS = list(_REP["columns"])
 TIERS = [(int(t["n"]), str(t["label"])) for t in _REP["tiers"]]
-LOW_CONFIDENCE_YES = float(_REP["low_confidence_yes"])
 _LIMITS = _REP.get("column_limits") or {}
 TRIAGED_REASONS = tuple(_REP["triaged_unresolved_reasons"])
 
@@ -33,15 +32,13 @@ def triage_priority(record: dict) -> int:
     v = record.get("validation") or {}
     present = record.get("tissue_stated")
     reason = record.get("unresolved_reason")
-    confidence = record.get("paper_confidence")
 
     if present == "unclear" and reason == "tissue_not_stated":
         return 1
     if present == "yes" and v.get("inferred_only"):
         return 2
-    if present == "yes" and isinstance(confidence, (int, float)) \
-            and confidence < LOW_CONFIDENCE_YES:
-        return 3
+    # Slot 3 held "yes with paper_confidence < 0.6" and is vacant, mirroring
+    # the primary pack: it was the one rule that read the confidence number.
     if present == "unclear" and reason == "degraded_text":
         return 4
     if v.get("multi_tissue"):
@@ -70,7 +67,6 @@ def row_for(doi: str, record: dict, entry: dict) -> dict:
         "has_sequencing_assay": record.get("has_sequencing_assay", ""),
         "sequencing_assay_types": _join_truncated(
             types, **_LIMITS.get("sequencing_assay_types", {})),
-        "paper_confidence": record.get("paper_confidence", ""),
         "n_tissues": len(record.get("tissues") or []),
         "n_sequenced_yes": v.get("n_sequenced_yes", ""),
         "n_sequenced_no": v.get("n_sequenced_no", ""),

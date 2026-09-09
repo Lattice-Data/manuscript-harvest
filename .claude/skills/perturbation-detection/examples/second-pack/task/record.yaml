@@ -69,4 +69,3 @@ ref_arrays: []
 secondary_arrays: []
 
 normalisers: {}
-downgrade_confidence: 0.2
