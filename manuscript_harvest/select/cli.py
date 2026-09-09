@@ -18,6 +18,7 @@ import json
 import sys
 from pathlib import Path
 
+from .. import supplements
 from ..extract.cli import load_config
 from ..fetch import store
 from ..fetch.identifiers import doi_slug, normalize_doi
@@ -99,6 +100,43 @@ def cmd_readiness(args) -> int:
         Path(args.json).write_text(json.dumps(
             {slug: verdict for slug, verdict in rows}, indent=2, sort_keys=True) + "\n")
     return 0 if trusted == len(directories) else 1
+
+
+def cmd_supplements(args) -> int:
+    """Write each article's supplement ledger beside its extraction.
+
+    Deliberately a writer and not a report. It says what it wrote and which
+    articles have something outstanding; reading a ledger means opening the
+    sidecar, which is where the per-item detail lives.
+    """
+    corpus_dir = _corpus_dir(args)
+    directories = ([corpus_dir / doi_slug(normalize_doi(args.article))] if args.article
+                   else _article_dirs(corpus_dir))
+    if not directories:
+        print(f"{corpus_dir}: no articles with a manifest", file=sys.stderr)
+        return 2
+
+    written = 0
+    lost_items = 0
+    lost_articles = []
+    for directory in directories:
+        ledger = supplements.reconcile(directory)
+        supplements.write_sidecar(directory, ledger)
+        written += 1
+        if ledger.evidence_lost:
+            lost_items += ledger.evidence_lost
+            lost_articles.append((directory.name, ledger))
+
+    for name, ledger in sorted(lost_articles, key=lambda pair: -pair[1].evidence_lost):
+        print(f"{name:38s} {ledger.evidence_lost} declared item(s) never retrieved",
+              file=sys.stderr)
+        for stage, text in supplements.describe(ledger):
+            print(f"{'':38s}   {stage:<12} {text}", file=sys.stderr)
+
+    print(f"\nwrote {written} {supplements.SIDECAR_NAME}; "
+          f"{lost_items} declared text-bearing item(s) never retrieved, "
+          f"across {len(lost_articles)} article(s)", file=sys.stderr)
+    return 0
 
 
 def cmd_candidates(args) -> int:
@@ -375,6 +413,13 @@ def build_parser() -> argparse.ArgumentParser:
     ready.add_argument("--json", default=None)
     add_common(ready)
     ready.set_defaults(func=cmd_readiness)
+
+    supps = subparsers.add_parser(
+        "supplements",
+        help="write each article's declared-vs-fetched-vs-read supplement ledger")
+    supps.add_argument("article", nargs="?", default=None)
+    add_common(supps)
+    supps.set_defaults(func=cmd_supplements)
 
     cands = subparsers.add_parser(
         "candidates", help="accession candidates, with no role assigned")
