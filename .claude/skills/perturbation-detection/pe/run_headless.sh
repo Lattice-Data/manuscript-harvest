@@ -40,6 +40,10 @@ run_one() {
   local prompt_file="$work/prompts/$doi.txt"
   local raw_file="$work/raw/$doi.json"
   local log="$work/logs/$doi.log"
+  # One JSON line per ATTEMPT, appended. The log is truncated on each retry and
+  # 143 of 392 papers in the v0.0.21 corpus run took more than one, so a
+  # per-attempt file that overwrites would silently drop the earlier cost.
+  local usage="$work/meta/$doi.usage.jsonl"
 
   # An unusable session fails every remaining paper identically, and each failure
   # still costs a process spawn and a round trip. Observed in practice: a 22-paper
@@ -85,11 +89,25 @@ Every quote must be copied verbatim from the paper text, and each quote's \
 source_id must name the <<<SOURCE>>> block you actually copied it from. \
 Reply with only the word DONE when the file is written."
 
+  # `--output-format json` rather than `text`: the envelope carries usage,
+  # total_cost_usd, num_turns and duration_api_ms, none of which the text form
+  # reports and all of which pe.usage otherwise has to reconstruct from CLI
+  # transcripts. stdout and stderr are SPLIT -- merging them, as this did, would
+  # interleave progress chatter into the JSON and leave neither parseable.
+  # Kept on disk rather than a temp, and NOT deleted after it is folded into the
+  # usage file: the failure predicates below read it. An earlier draft removed it
+  # first and passed the (now absent) path to them, so they silently fell back to
+  # the log alone -- the exact narrowing that let a usage limit through once
+  # before. The tests passed anyway, because the auth message reaches stderr and
+  # the limit message reached the log via the digest. Accidentally right is the
+  # failure mode this guard exists to catch, so the file stays.
+  local envelope="$work/meta/$doi.envelope.json"
   if claude -p "$task" \
        --model "$MODEL" \
        --permission-mode acceptEdits \
        --allowedTools Read Write Bash Grep \
-       --output-format text >"$log" 2>&1; then
+       --output-format json >"$envelope" 2>"$log"; then
+    keep_envelope "$envelope" "$usage" "$log"
     if [ -s "$raw_file" ]; then
       # Which model produced this result. The model is pinned (MODEL above) so
       # results are attributable across machines and across time, but nothing
@@ -103,14 +121,15 @@ Reply with only the word DONE when the file is written."
       return 1
     fi
   else
-    if is_auth_failure "$log"; then
+    keep_envelope "$envelope" "$usage" "$log"
+    if is_auth_failure "$log" "$envelope"; then
       printf 'SESSION EXPIRED' > "$work/.session-dead"
       echo "FAIL  $doi (SESSION EXPIRED -- aborting the rest; see $log)"
-    elif is_usage_limit "$log"; then
+    elif is_usage_limit "$log" "$envelope"; then
       # The limit line carries the reset time. Keep it: the remedy is to wait
       # until then and re-run, and a caller told only "limit reached" has to go
       # digging through per-paper logs for the one fact that decides when.
-      limit_line="$(grep -ihE 'session limit|usage limit|rate limit|limit reached|resets [0-9]' "$log" 2>/dev/null | head -1)"
+      limit_line="$(limit_message "$envelope" "$log")"
       printf 'USAGE LIMIT (%s)' "${limit_line:-no reset time reported}" > "$work/.session-dead"
       echo "FAIL  $doi (USAGE LIMIT -- aborting the rest: ${limit_line:-see $log})"
     else
@@ -120,13 +139,53 @@ Reply with only the word DONE when the file is written."
   fi
 }
 
+# Append one attempt's envelope to the per-paper usage file, and leave the
+# human-readable log human-readable.
+#
+# The log used to hold stdout, which under `--output-format text` was the single
+# word DONE. Splitting the streams left it holding only stderr -- usually empty,
+# so a reader opening it after a successful paper saw nothing at all and could
+# not tell success from a truncated write. A one-line digest is appended so the
+# log still answers "what happened here" without anyone parsing JSON.
+#
+# Normalised to exactly one line before appending: `--output-format json` emits
+# a single object today, but a pretty-printed one would corrupt every later
+# reader of this file, and stripping newlines costs nothing.
+keep_envelope() {
+  local envelope="$1" usage="$2" log="$3"
+  [ -s "$envelope" ] || { rm -f "$envelope"; return 0; }
+  mkdir -p "$(dirname "$usage")"
+  { tr -d '\r\n' < "$envelope"; printf '\n'; } >> "$usage"
+  "$PY" - "$envelope" >> "$log" 2>/dev/null <<'PYEOF'
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(0)
+usage = d.get("usage") or {}
+creation = usage.get("cache_creation") or {}
+print("result={} turns={} cost=${:.4f} api={}ms in={} out={} cache_read={} cache_write={}".format(
+    str(d.get("result"))[:200], d.get("num_turns"), d.get("total_cost_usd") or 0.0,
+    d.get("duration_api_ms"), usage.get("input_tokens"), usage.get("output_tokens"),
+    usage.get("cache_read_input_tokens"),
+    (creation.get("ephemeral_1h_input_tokens") or 0) + (creation.get("ephemeral_5m_input_tokens") or 0)))
+PYEOF
+}
+
 # Shared by the preflight and the per-paper check, so the two cannot disagree
 # about what "the session is unusable" looks like. Two predicates rather than
 # one because the REMEDIES differ -- re-authenticate, versus wait for the reset
 # -- and telling someone to re-authenticate when they need to wait until 11:50pm
 # is worse than saying nothing. Both abort the queue.
+#
+# Both take ANY number of files and match if the signature appears in any of
+# them. Under `--output-format json` the CLI reports a refusal in the envelope's
+# `result` string, on stdout, while a crash still goes to stderr -- so a
+# predicate reading one stream is a predicate that misses half the failures.
+# This guard is what stopped a usage limit from spawning 145 doomed papers, and
+# narrowing it by accident is exactly how it failed the first time.
 is_auth_failure() {
-  grep -qiE 'failed to authenticate|oauth session expired|not logged in|invalid api key|authentication_error' "$1" 2>/dev/null
+  grep -qiE 'failed to authenticate|oauth session expired|not logged in|invalid api key|authentication_error' "$@" 2>/dev/null
 }
 
 # Deliberately broad. The exact wording varies with the CLI version, and the
@@ -136,9 +195,38 @@ is_auth_failure() {
 # 11:50pm (America/Los_Angeles)" -- matched on `session limit`, without relying
 # on the typographic apostrophe or the middot surviving a log.
 is_usage_limit() {
-  grep -qiE 'session limit|usage limit|rate limit|limit reached|too many requests|quota exceeded' "$1" 2>/dev/null
+  grep -qiE 'session limit|usage limit|rate limit|limit reached|too many requests|quota exceeded' "$@" 2>/dev/null
 }
-export -f run_one is_auth_failure is_usage_limit
+
+# The one line worth surfacing: it carries the reset time, and the remedy is to
+# wait until then. Read out of the envelope's own `result` field first, because
+# grepping the log now also matches the digest keep_envelope wrote there -- which
+# is a paraphrase of the same message and, being truncated, dropped "11:50pm"
+# down to "1". Falls back to the log for the case where the CLI dies before
+# emitting an envelope at all.
+limit_message() {
+  local envelope="$1" log="$2" line=""
+  if [ -s "$envelope" ]; then
+    line="$("$PY" - "$envelope" 2>/dev/null <<'"'"'PYEOF'"'"'
+import json, re, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(0)
+text = " ".join(str(d.get(k) or "") for k in ("result", "api_error_status"))
+m = re.search(r"[^.\n]*(?:session limit|usage limit|rate limit|limit reached)[^.\n]*", text, re.I)
+if m:
+    print(m.group(0).strip())
+PYEOF
+)"
+  fi
+  if [ -z "$line" ]; then
+    line="$(grep -ihoE '"'"'[^"]*(session limit|usage limit|rate limit|limit reached)[^"]*'"'"' "$log" 2>/dev/null | head -1)"
+  fi
+  printf '%s' "$line"
+}
+export -f run_one is_auth_failure is_usage_limit keep_envelope limit_message
+export PY
 
 # "Pending" means the same thing here as in pe.pending: a raw file existing
 # and non-empty is NOT enough -- it must parse and carry every required field.

@@ -33,7 +33,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from pe.pricing import CACHE_READ, CACHE_WRITE_1H, CACHE_WRITE_5M, RATES, canonical, cost  # noqa: E402
-from pe.usage import collect, read_session, render  # noqa: E402
+from pe.usage import collect, from_envelopes, read_session, render  # noqa: E402
 
 
 # --------------------------------------------------------------- pricing
@@ -295,3 +295,119 @@ def test_it_reproduces_the_v0021_corpus_run():
     # The whole run used 1-hour caching; a 5-minute write here would mean the
     # CLI changed its caching behaviour and the price table needs revisiting.
     assert sum(t.cache_write_5m for t in opus) == 0
+
+
+# --------------------------------------------------------- envelopes
+
+#: A real `claude -p --output-format json` envelope from the smoke run that
+#: exercised the invocation change, trimmed to the fields the reader uses.
+REAL_ENVELOPE = {
+    "type": "result", "subtype": "success", "is_error": False, "result": "DONE",
+    "num_turns": 5, "duration_ms": 148000, "duration_api_ms": 145686,
+    "total_cost_usd": 1.0141,
+    "usage": {"input_tokens": 10, "output_tokens": 13100,
+              "cache_read_input_tokens": 193525,
+              "cache_creation": {"ephemeral_1h_input_tokens": 58974,
+                                 "ephemeral_5m_input_tokens": 0}},
+    "modelUsage": {"claude-opus-5": {
+        "inputTokens": 10, "outputTokens": 13100,
+        "cacheReadInputTokens": 193525, "cacheCreationInputTokens": 58974,
+        "costUSD": 1.0141, "costBasis": "list"}},
+}
+
+
+def _run(tmp_path, doi="10.1000_a", envelopes=(REAL_ENVELOPE,)):
+    work = tmp_path / "work-x"
+    (work / "meta").mkdir(parents=True)
+    (work / "meta" / f"{doi}.usage.jsonl").write_text(
+        "".join(json.dumps(e) + "\n" for e in envelopes), encoding="utf-8")
+    return work
+
+
+def test_an_envelope_reproduces_the_clis_own_cost(tmp_path):
+    """The live check: our table against the CLI's figure on a real Opus-5 call."""
+    sessions = from_envelopes(_run(tmp_path))
+    report = render(sessions, "work-x")
+    assert "$1.01" in report
+    # No drift warning means the two agree within 1%.
+    assert "pricing.py:RATES is probably stale" not in report
+
+
+def test_a_price_change_is_reported_rather_than_absorbed(tmp_path):
+    """If Anthropic's rates move, the table is wrong and must say so."""
+    envelope = dict(REAL_ENVELOPE, total_cost_usd=99.0)
+    report = render(from_envelopes(_run(tmp_path, envelopes=[envelope])), "work-x")
+    assert "pricing.py:RATES is probably stale" in report
+
+
+def test_every_attempt_in_the_file_is_counted(tmp_path):
+    """143 of 392 papers were retried; the file appends one line per attempt."""
+    sessions = from_envelopes(_run(tmp_path, envelopes=[REAL_ENVELOPE, REAL_ENVELOPE]))
+    assert len(sessions) == 2
+    assert sum(t.output for s in sessions for t in s.by_model.values()) == 26200
+
+
+def test_the_cache_write_ttl_comes_from_the_flat_block(tmp_path):
+    """`modelUsage` gives no TTL, and the 1h rate is 1.6x the 5m one."""
+    tokens = from_envelopes(_run(tmp_path))[0].by_model["claude-opus-5"]
+    assert tokens.cache_write_1h == 58974
+    assert tokens.cache_write_5m == 0
+
+
+def test_an_envelope_without_a_ttl_split_is_priced_at_the_cheaper_rate(tmp_path):
+    """Guessing high would overstate a bill; guessing low is visible in the drift
+    line rather than silently inflating a number somebody quotes."""
+    envelope = json.loads(json.dumps(REAL_ENVELOPE))
+    envelope["usage"]["cache_creation"] = {}
+    envelope["usage"]["cache_creation_input_tokens"] = 58974
+    tokens = from_envelopes(_run(tmp_path, envelopes=[envelope]))[0].by_model["claude-opus-5"]
+    assert tokens.cache_write_1h == 0
+    assert tokens.cache_write_5m == 58974
+
+
+def test_model_time_is_reported_apart_from_the_agent_span(tmp_path):
+    """A transcript cannot make this distinction; an envelope can."""
+    report = render(from_envelopes(_run(tmp_path)), "work-x")
+    assert "of agent wall-clock" in report
+    assert "was model time" in report
+
+
+def test_a_truncated_envelope_line_does_not_lose_the_others(tmp_path):
+    work = _run(tmp_path, envelopes=[REAL_ENVELOPE])
+    path = work / "meta" / "10.1000_a.usage.jsonl"
+    path.write_text(path.read_text() + '{"type": "res\n', encoding="utf-8")
+    assert len(from_envelopes(work)) == 1
+
+
+def test_a_run_with_no_envelopes_yields_nothing_rather_than_erroring(tmp_path):
+    """Every run before the invocation changed. The caller falls back to
+    transcripts, and an exception here would break that path."""
+    empty = tmp_path / "work-old"
+    empty.mkdir()
+    assert from_envelopes(empty) == []
+
+
+def test_a_partly_instrumented_run_defers_to_the_transcripts(tmp_path):
+    """A run resumed across the invocation change has envelopes for some papers
+    and not others. Reporting the instrumented subset would describe part of a
+    run as if it were the whole one, with nothing to signal the gap."""
+    work = _run(tmp_path, doi="10.1000_a")
+    (work / "manifest.json").write_text(json.dumps([
+        {"doi": "10.1000_a"}, {"doi": "10.1000_b"},
+    ]), encoding="utf-8")
+    assert from_envelopes(work) == []
+
+    # Once every paper is instrumented it is used again.
+    (work / "meta" / "10.1000_b.usage.jsonl").write_text(
+        json.dumps(REAL_ENVELOPE) + "\n", encoding="utf-8")
+    assert len(from_envelopes(work)) == 2
+
+
+def test_a_manifest_error_entry_does_not_block_the_envelopes(tmp_path):
+    """`run_headless.sh` skips entries carrying an `error`, so they never get an
+    envelope and must not count against coverage."""
+    work = _run(tmp_path, doi="10.1000_a")
+    (work / "manifest.json").write_text(json.dumps([
+        {"doi": "10.1000_a"}, {"doi": "10.1000_b", "error": "unfetched"},
+    ]), encoding="utf-8")
+    assert len(from_envelopes(work)) == 1
