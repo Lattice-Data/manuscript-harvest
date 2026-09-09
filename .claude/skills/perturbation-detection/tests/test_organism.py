@@ -204,11 +204,23 @@ def test_unpaired_human_does_not_rescue_an_animal_only_yes():
 
 def test_tier_7_does_not_displace_tiers_1_to_6():
     """The v0.0.10 renumber is a documented trap. A paper that qualifies for both
-    an earlier tier and 7 must still sort to the earlier one."""
-    # yes + low confidence is tier 3; it is also animal-only.
-    got = _validate(_record(paper_confidence=0.45))
-    assert got["validation"]["paired_organism_human"] is False
-    assert triage_priority(got) == 3
+    an earlier tier and 7 must still sort to the earlier one.
+
+    The earlier tier used to be 3 (`yes` with confidence < 0.6), which read the
+    confidence number and was vacated at 0.0.22. Tier 6 replaces it as the
+    anchor: an unverifiable quote drops one perturbation and raises an evidence
+    flag, while the other keeps the paper `yes` and animal-only.
+    """
+    flagged = _validate(_record(perturbations=[
+        _pert(),
+        _pert(agent="phantom treatment",
+              evidence_quotes=[{"source_id": "main",
+                                "quote": "This sentence is nowhere in the text."}]),
+    ]))
+    assert flagged["perturbation_present"] == "yes"
+    assert flagged["validation"]["evidence_flags"]
+    assert flagged["validation"]["paired_organism_human"] is False
+    assert triage_priority(flagged) == 6
 
     # a plain animal-only yes with nothing else wrong lands in 7, not 9.
     plain = _validate(_record())

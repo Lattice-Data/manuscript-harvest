@@ -8,9 +8,6 @@ tiers:
   - n: 2
     summary: "yes carried only by an inferred tissue"
     label: "yes, but every paired tissue is `inferred` rather than stated"
-  - n: 3
-    summary: "yes with low confidence"
-    label: "yes with paper_confidence < 0.6"
   - n: 4
     summary: "unclear + degraded_text"
     label: "unclear because the text was incomplete  (re-fetch, do not read)"
@@ -24,7 +21,6 @@ tiers:
     summary: "everything else"
     label: "everything else"
 
-low_confidence_yes: 0.6
 
 triaged_unresolved_reasons:
   - tissue_not_stated
@@ -44,7 +40,6 @@ columns:
   - text_completeness
   - has_sequencing_assay
   - sequencing_assay_types
-  - paper_confidence
   - n_tissues
   - n_sequenced_yes
   - n_sequenced_no

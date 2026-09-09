@@ -91,8 +91,7 @@ def render(loaded, text_for) -> tuple[list[str], dict[str, int]]:
             continue
         counts["C"] += 1
         lines.append("")
-        lines.append(f"{doi}   stated={record.get('tissue_stated')}  "
-                     f"conf={record.get('paper_confidence')}")
+        lines.append(f"{doi}   stated={record.get('tissue_stated')}")
         for t in record.get("tissues") or []:
             if t.get("is_sequenced") == "yes":
                 lines.append(f"    INFERRED: {str(t.get('name'))[:60]}")

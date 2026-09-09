@@ -378,6 +378,10 @@ def test_suppression_without_would_pair_yes_is_not_priority_2():
 def test_renumbered_ladder_matches_prompt_step_10():
     """The old 2-5 shifted to 3-6. If these drift from prompt.md step 10 the
     curator's queue silently mis-sorts."""
+    # Slot 3 held this exact record until 0.0.22 and is now vacant, so it falls
+    # to the catch-all. Asserted rather than deleted: the whole point of leaving
+    # the slot empty is that a low-confidence positive stops being routed, and a
+    # silent return of tier 3 would be the regression.
     low_conf_yes = _scored(
         perturbation_present="yes", perturbation_present_any_assay="yes",
         paper_confidence=0.3,
@@ -389,7 +393,7 @@ def test_renumbered_ladder_matches_prompt_step_10():
             "assay_applied": "10x scRNA-seq", "single_cell_paired": "yes",
             "assay_evidence": None, "confidence": 0.3, "reasoning": "",
         }])
-    assert triage_priority(low_conf_yes) == 3
+    assert triage_priority(low_conf_yes) == 9
 
     degraded = _scored(processing_status="partial", text_completeness="truncated",
                        unresolved_reason="degraded_text")

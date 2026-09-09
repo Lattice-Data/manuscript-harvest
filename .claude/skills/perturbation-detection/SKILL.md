@@ -172,7 +172,7 @@ python -m pe.compare --baseline <old_run_dir>   # version-to-version diff
   |---|---|
   | P1 | `unclear` because the pairing was never stated — most likely to hide a real match, read first |
   | P2 | not `yes`, but a suppressed candidate **under one of the four rules still in review** would have paired `yes` — one toggle flips the paper. Restricted on purpose: `observational_disease_state` pairs `yes` on any disease-vs-healthy contrast, and a tier holding most papers is not a queue |
-  | P3 | `yes` with confidence < 0.6 |
+  | P3 | *vacant from 0.0.22.* Held `yes` with confidence < 0.6 — the only rule that read the confidence number. 11 of the 16 papers it selected across paired same-input re-runs flipped in or out of it, so the slot is empty rather than reused; the 7 papers it held moved to P7 (3) and P9 (4) |
   | P4 | `unclear` because the text was incomplete — send to re-fetch, do not read |
   | P5 | `no` but a perturbation exists elsewhere in the paper — the pairing filter fired; sample these |
   | P6 | any consistency or evidence flag — **or** an `unclear` with no usable reason, which used to sink to P9 |
