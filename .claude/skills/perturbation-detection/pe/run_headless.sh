@@ -117,20 +117,39 @@ Reply with only the word DONE when the file is written."
       printf '%s\n' "$MODEL" > "$work/meta/$doi.model"
       echo "OK    $doi"
     else
-      echo "FAIL  $doi (claude returned 0 but wrote no file; see $log)"
+      # Exit 0 and no result is not automatically a per-paper problem. The CLI
+      # can report an in-band refusal and still exit 0 -- that is what
+      # `is_error` and `api_error_status` are for -- and this branch used to
+      # skip the sentinel entirely, so a session that died this way would let
+      # every remaining paper spawn to discover the same thing. The exact waste
+      # the sentinel exists to prevent, reachable by a path it did not cover.
+      local verdict
+      verdict="$(envelope_verdict "$envelope")"
+      if [ "$verdict" = auth ] || is_auth_failure "$log" "$envelope"; then
+        set_session_dead "$work" 'SESSION EXPIRED'
+        echo "FAIL  $doi (SESSION EXPIRED, reported with exit 0 -- aborting the rest; see $log)"
+      elif [ "$verdict" = limit ] || is_usage_limit "$log" "$envelope"; then
+        limit_line="$(limit_message "$envelope" "$log")"
+        set_session_dead "$work" "USAGE LIMIT (${limit_line:-no reset time reported})"
+        echo "FAIL  $doi (USAGE LIMIT, reported with exit 0 -- aborting the rest: ${limit_line:-see $log})"
+      else
+        echo "FAIL  $doi (claude returned 0 but wrote no file; see $log)"
+      fi
       return 1
     fi
   else
     keep_envelope "$envelope" "$usage" "$log"
-    if is_auth_failure "$log" "$envelope"; then
-      printf 'SESSION EXPIRED' > "$work/.session-dead"
+    local verdict
+    verdict="$(envelope_verdict "$envelope")"
+    if [ "$verdict" = auth ] || is_auth_failure "$log" "$envelope"; then
+      set_session_dead "$work" 'SESSION EXPIRED'
       echo "FAIL  $doi (SESSION EXPIRED -- aborting the rest; see $log)"
-    elif is_usage_limit "$log" "$envelope"; then
+    elif [ "$verdict" = limit ] || is_usage_limit "$log" "$envelope"; then
       # The limit line carries the reset time. Keep it: the remedy is to wait
       # until then and re-run, and a caller told only "limit reached" has to go
       # digging through per-paper logs for the one fact that decides when.
       limit_line="$(limit_message "$envelope" "$log")"
-      printf 'USAGE LIMIT (%s)' "${limit_line:-no reset time reported}" > "$work/.session-dead"
+      set_session_dead "$work" "USAGE LIMIT (${limit_line:-no reset time reported})"
       echo "FAIL  $doi (USAGE LIMIT -- aborting the rest: ${limit_line:-see $log})"
     else
       echo "FAIL  $doi (claude exited non-zero; see $log)"
@@ -184,8 +203,22 @@ PYEOF
 # predicate reading one stream is a predicate that misses half the failures.
 # This guard is what stopped a usage limit from spawning 145 doomed papers, and
 # narrowing it by accident is exactly how it failed the first time.
+# The vocabularies live in variables because three things read each of them --
+# the predicate, the preflight and limit_message -- and the version that shipped
+# had them written out twice with different words.
+#
+# WIDENED after measuring against the strings the CLI binary actually carries.
+# The old patterns matched neither `Authentication failed` (what a 403 renders
+# as), nor `permission_error`, nor `rate_limit_error` -- that last one because
+# the pattern said `rate limit` with a space while the CLI emits an underscore.
+# Six of eleven realistic failure strings matched nothing at all, which is the
+# same too-narrow shape that let a usage limit burn 145 spawns.
+AUTH_RE='failed to authenticate|authentication[ _-]?(failed|error)|oauth[^.]{0,30}expired|session expired|not logged in|invalid (api key|bearer token)|permission_error|please run /login'
+LIMIT_RE='(session|usage|rate)[ _-]?limit|limit reached|too many requests|quota exceeded|credit balance|\\b429\\b'
+export AUTH_RE LIMIT_RE
+
 is_auth_failure() {
-  grep -qiE 'failed to authenticate|oauth session expired|not logged in|invalid api key|authentication_error' "$@" 2>/dev/null
+  grep -qiE "$AUTH_RE" "$@" 2>/dev/null
 }
 
 # Deliberately broad. The exact wording varies with the CLI version, and the
@@ -195,7 +228,41 @@ is_auth_failure() {
 # 11:50pm (America/Los_Angeles)" -- matched on `session limit`, without relying
 # on the typographic apostrophe or the middot surviving a log.
 is_usage_limit() {
-  grep -qiE 'session limit|usage limit|rate limit|limit reached|too many requests|quota exceeded' "$@" 2>/dev/null
+  grep -qiE "$LIMIT_RE" "$@" 2>/dev/null
+}
+
+# The structured read, and the one that should decide. `--output-format json`
+# reports a refusal in fields built for the purpose -- `is_error`,
+# `api_error_status`, `subtype` -- and the harness was writing all three to disk
+# and then classifying by regex over prose anyway. HTTP status is unambiguous
+# where wording drifts between CLI versions: 401 and 403 mean re-authenticate,
+# 429 means wait. 529/overloaded is deliberately NOT a session death -- it is
+# transient, and aborting a 392-paper queue on one overloaded response would
+# cost more than the retry it replaces.
+#
+# Prints `auth`, `limit`, or nothing. Silent when there is no envelope, which is
+# every pre-json run and every case where the CLI died before emitting one.
+envelope_verdict() {
+  [ -s "$1" ] || return 0
+  "$PY" - "$1" 2>/dev/null <<'PYEOF'
+import json, re, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(0)
+status = str(d.get("api_error_status") or "")
+text = " ".join(str(d.get(k) or "") for k in ("result", "subtype", "error"))
+if status in ("401", "403"):
+    print("auth"); sys.exit(0)
+if status == "429":
+    print("limit"); sys.exit(0)
+if not d.get("is_error"):
+    sys.exit(0)
+if re.search(r"authentication_error|permission_error", text, re.I):
+    print("auth")
+elif re.search(r"rate_limit_error", text, re.I):
+    print("limit")
+PYEOF
 }
 
 # The one line worth surfacing: it carries the reset time, and the remedy is to
@@ -213,19 +280,45 @@ try:
     d = json.load(open(sys.argv[1]))
 except Exception:
     sys.exit(0)
-text = " ".join(str(d.get(k) or "") for k in ("result", "api_error_status"))
-m = re.search(r"[^.\n]*(?:session limit|usage limit|rate limit|limit reached)[^.\n]*", text, re.I)
+# Same vocabulary as LIMIT_RE, underscores included: the CLI renders a 429 as
+# the bare token `rate_limit_error`, which a pattern written with a space misses
+# -- and the fall-through then matched our own digest line in the log instead.
+text = str(d.get("result") or "")
+m = re.search(r"[^.\n]*(?:(?:session|usage|rate)[ _-]?limit|limit reached|"
+              r"too many requests|quota exceeded|credit balance)[^.\n]*", text, re.I)
+status = str(d.get("api_error_status") or "")
 if m:
-    print(m.group(0).strip())
+    line = m.group(0).strip()
+    # A bare error token says nothing about when to come back; the status at
+    # least says what happened. A real limit message already carries the reset
+    # time and is left alone.
+    print(f"{line} (HTTP {status})" if status and " " not in line else line)
+elif status:
+    print(f"HTTP {status}: {text[:120]}".strip())
 PYEOF
 )"
   fi
   if [ -z "$line" ]; then
-    line="$(grep -ihoE '"'"'[^"]*(session limit|usage limit|rate limit|limit reached)[^"]*'"'"' "$log" 2>/dev/null | head -1)"
+    # Wrapped in context, because the reset time is what makes this line worth
+    # printing and `-o` without it returns the bare words "session limit".
+    line="$(grep -ihoE "[^\"]*(${LIMIT_RE})[^\"]*" "$log" 2>/dev/null | head -1)"
   fi
   printf '%s' "$line"
 }
-export -f run_one is_auth_failure is_usage_limit keep_envelope limit_message
+# Two workers failing in the same instant both open `.session-dead` with
+# O_TRUNC and both write at offset 0, so the shorter verdict overwrites only its
+# own prefix and the summary prints the wrong remedy. Measured at 3 garbles in
+# 400 trials at -P 8. A write-then-rename is atomic on the same filesystem, so
+# the file is only ever one whole verdict or the other -- and which of two
+# simultaneous failures wins does not matter, since both abort the queue.
+set_session_dead() {
+  local work="$1" text="$2" tmp
+  tmp="$work/.session-dead.$$"
+  printf '%s' "$text" > "$tmp" && mv -f "$tmp" "$work/.session-dead"
+}
+
+export -f run_one is_auth_failure is_usage_limit keep_envelope limit_message \
+          envelope_verdict set_session_dead
 export PY
 
 # "Pending" means the same thing here as in pe.pending: a raw file existing

@@ -315,21 +315,9 @@ def from_envelopes(work_dir: Path) -> list[Session]:
     # run as if it were all of it, silently and with no way to tell. The
     # transcript path covers every paper either way, so a partial set defers to
     # it rather than competing with it.
-    manifest = work_dir / "manifest.json"
-    if manifest.is_file():
-        try:
-            entries = json.loads(manifest.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            entries = []
-        expected = {str(e.get("doi")) for e in entries
-                    if isinstance(e, dict) and e.get("doi") and "error" not in e}
-        have = {p.name[: -len(".usage.jsonl")]
-                for p in work_dir.glob(ENVELOPE_GLOB)}
-        if expected and not expected <= have:
-            return []
-
     sessions: list[Session] = []
     for path in sorted(work_dir.glob(ENVELOPE_GLOB)):
+
         doi = path.name[: -len(".usage.jsonl")]
         for attempt, line in enumerate(path.read_text(encoding="utf-8",
                                                       errors="replace").splitlines()):
@@ -366,6 +354,20 @@ def from_envelopes(work_dir: Path) -> list[Session]:
             long_lived = hour > 0 and hour >= five
 
             per_model = envelope.get("modelUsage")
+            # An API-error envelope carries `modelUsage: {}` and no top-level
+            # `model`, so the fallback below would book it under "unknown" with
+            # zero tokens -- inventing a row the report then flags as spend it
+            # could not price. Nothing was billed; count it as a refusal and
+            # move on. That also restores the wasted-spawn tally on this path,
+            # which the transcript reader has and this one silently lacked.
+            if not (isinstance(per_model, dict) and per_model) and not (
+                    envelope.get("usage") or {}).get("output_tokens"):
+                if envelope.get("is_error"):
+                    refusals_only = Session(work=work_dir.name, doi=doi,
+                                            session_id=session.session_id, path=path)
+                    refusals_only.limit_refusals = 1
+                    sessions.append(refusals_only)
+                continue
             if isinstance(per_model, dict) and per_model:
                 for name, counts in per_model.items():
                     if not isinstance(counts, dict):
@@ -375,7 +377,16 @@ def from_envelopes(work_dir: Path) -> list[Session]:
                     tokens.output += int(counts.get("outputTokens") or 0)
                     tokens.cache_read += int(counts.get("cacheReadInputTokens") or 0)
                     written = int(counts.get("cacheCreationInputTokens") or 0)
-                    if long_lived:
+                    # `modelUsage` gives a total with no TTL; the flat block
+                    # gives the TTL with no model. Collapsing the flat split to
+                    # one boolean sent every model's writes to whichever side
+                    # won, so a genuinely mixed envelope priced part of itself
+                    # at the wrong rate. Apply the flat block's own ratio.
+                    if hour and five:
+                        share = hour / (hour + five)
+                        tokens.cache_write_1h += round(written * share)
+                        tokens.cache_write_5m += written - round(written * share)
+                    elif long_lived:
                         tokens.cache_write_1h += written
                     else:
                         tokens.cache_write_5m += written
@@ -403,6 +414,25 @@ def from_envelopes(work_dir: Path) -> list[Session]:
             if isinstance(reported, (int, float)):
                 session.reported_cost = float(reported)
             sessions.append(session)
+
+    # Coverage is checked against the DOIs that actually parsed, not against the
+    # files on disk. An envelope truncated mid-write still creates a file, so a
+    # filename-level check passes while the loop above silently drops that
+    # paper -- and the report then describes part of a run as all of it, which
+    # is the exact thing this guard exists to stop. Same reasoning as the
+    # partial-instrumentation case: the transcript path covers every paper, so
+    # anything short defers to it.
+    manifest = work_dir / "manifest.json"
+    if manifest.is_file():
+        try:
+            entries = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            entries = []
+        expected = {str(e.get("doi")) for e in entries
+                    if isinstance(e, dict) and e.get("doi") and "error" not in e}
+        if expected and not expected <= {s.doi for s in sessions}:
+            return []
+
     return sessions
 
 
@@ -465,6 +495,12 @@ def _table(by_model: dict[str, Tokens]) -> list[str]:
         grand.add(tokens)
     if len(by_model) > 1:
         rows.append(("All models", "", "", "", "", _thousands(grand.total)))
+
+    if not rows:
+        # Every attempt errored, so nothing was billed. `max(x, *())` raises,
+        # which turned a run of pure refusals into a crash in the reporter
+        # rather than a report saying no tokens were spent.
+        return ["(no billable usage: every attempt returned an error)"]
 
     widths = [max(len(head[i]), *(len(r[i]) for r in rows)) for i in range(6)]
     lines = ["  ".join(h.ljust(widths[i]) if i == 0 else h.rjust(widths[i])
@@ -545,7 +581,10 @@ def render(sessions: list[Session], work: str, per_paper: bool = False) -> str:
     # Only envelopes carry the CLI's own figure. A gap means the price table
     # here and Anthropic's published rates have parted company; the table is
     # what to fix, and until then the CLI's number is the right one to believe.
-    if reported and total > 0:
+    # Skipped when a model could not be priced: `total` excludes it while the
+    # CLI's figure includes it, so the gap is guaranteed and says nothing about
+    # the table. The missing price is already reported on its own line above.
+    if reported and total > 0 and not unknown:
         drift = abs(sum(reported) - total) / total
         if drift > 0.01:
             out.append(f"  ! the CLI reported ${sum(reported):,.2f} for the same work, "
@@ -555,7 +594,9 @@ def render(sessions: list[Session], work: str, per_paper: bool = False) -> str:
         f"{_thousands(requests)} API requests across {_thousands(len(sessions))} sessions, "
         f"{len(papers)} papers, {_duration(seconds)} of agent wall-clock."
     )
-    if api_seconds:
+    # `seconds` can be 0 while `api_seconds` is not: an envelope may carry
+    # duration_api_ms and no duration_ms, and the transcript path sets neither.
+    if api_seconds and seconds > 0:
         # Only an envelope reports this. Named separately from the span above
         # because the two differ by tool execution and queueing -- on the smoke
         # run, 146 s of inference inside a 151 s agent span.
@@ -622,13 +663,10 @@ def main() -> int:
     parser.add_argument("--projects", nargs="*", help="override the transcript directories")
     args = parser.parse_args()
 
-    directories = project_dirs(args.projects)
-    if not directories:
-        raise UsageError(
-            f"no transcript directories matched {PROJECTS}/{PROJECT_GLOB}. "
-            f"Pass --projects to name them explicitly."
-        )
-
+    # Envelopes first, and BEFORE insisting a transcript directory exists: a
+    # fully instrumented run is completely readable without one, and the CLI
+    # prunes transcripts. Demanding them anyway turned "your history is gone"
+    # into "this run cannot be reported", which is false.
     sessions = []
     source = "CLI transcripts"
     if args.work and not args.projects:
@@ -636,7 +674,15 @@ def main() -> int:
         sessions = from_envelopes(work_dir)
         if sessions:
             source = f"envelopes in {work_dir}"
+
+    directories = project_dirs(args.projects)
     if not sessions:
+        if not directories:
+            raise UsageError(
+                f"no envelopes under {run_root()}/{args.work or '<run>'} and no "
+                f"transcript directories matching {PROJECTS}/{PROJECT_GLOB}. "
+                f"Pass --projects to name them explicitly."
+            )
         sessions = collect(args.work, args.projects)
 
     if args.listing:
