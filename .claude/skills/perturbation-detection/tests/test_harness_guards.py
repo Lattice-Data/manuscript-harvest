@@ -526,3 +526,49 @@ def test_prepare_refuses_a_corpus_path_that_does_not_exist(tmp_path):
         f"prepare exited {proc.returncode} on a nonexistent corpus path.\n"
         f"stdout: {proc.stdout[-400:]}")
     assert "does not exist" in proc.stderr, proc.stderr[-400:]
+
+
+# --------------------------------------------------------------------------
+# Shell quoting, which `bash -n` on this machine cannot check for us.
+# --------------------------------------------------------------------------
+
+def test_no_shell_escaping_artifact_leaked_into_the_runner():
+    """The `\'"\'"\'` idiom is for embedding a quote in a single-quoted string
+    typed at a shell. Written into a FILE by a generator it is just five stray
+    characters, and it shipped twice: once in a grep pattern, which silently
+    returned nothing, and once as a heredoc delimiter, which made the whole
+    script unparseable.
+
+    It got through because `bash -n` cannot see either. Both sites live inside
+    `$( )`, and bash 3.2 -- what macOS ships and what this repo is developed on
+    -- parses command substitutions lazily. CI runs bash 5, which parses them
+    eagerly and failed with "unexpected EOF". A grep is version-independent and
+    costs nothing.
+    """
+    offenders = [
+        (n, line.strip())
+        for n, line in enumerate(RUNNER.read_text().splitlines(), 1)
+        if "\'\"\'\"\'" in line
+    ]
+    assert not offenders, (
+        "shell-escaping artifact in " + RUNNER.name + ":\n"
+        + "\n".join(f"  line {n}: {text}" for n, text in offenders)
+        + "\nA generator wrote the quote-escaping idiom into the file verbatim.")
+
+
+def test_every_heredoc_delimiter_is_a_bare_word():
+    """The failure above, stated as the property rather than the symptom.
+
+    A delimiter carrying quote characters does not match its own closing line,
+    so the heredoc swallows the rest of the file.
+    """
+    import re
+    bad = [(n, line.strip())
+           for n, line in enumerate(RUNNER.read_text().splitlines(), 1)
+           # `(?<!<)` and `(?!<)` keep the prompt's own `<<<SOURCE>>>` markers
+           # out of it: those are the paper-assembly delimiters, not heredocs.
+           if (m := re.search(r"(?<!<)<<-?(?!<)\s*(\S+)", line))
+           and not re.fullmatch(r"'?[A-Za-z_][A-Za-z0-9_]*'?", m.group(1))]
+    assert not bad, (
+        "heredoc delimiter is not a bare word (optionally single-quoted):\n"
+        + "\n".join(f"  line {n}: {text}" for n, text in bad))

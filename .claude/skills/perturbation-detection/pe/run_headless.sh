@@ -274,7 +274,7 @@ PYEOF
 limit_message() {
   local envelope="$1" log="$2" line=""
   if [ -s "$envelope" ]; then
-    line="$("$PY" - "$envelope" 2>/dev/null <<'"'"'PYEOF'"'"'
+    line="$("$PY" - "$envelope" 2>/dev/null <<'PYEOF'
 import json, re, sys
 try:
     d = json.load(open(sys.argv[1]))
