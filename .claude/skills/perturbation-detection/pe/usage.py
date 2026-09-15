@@ -62,6 +62,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from pe.pricing import RATES, canonical, cost  # noqa: E402
+from pe.runroot import run_root  # noqa: E402
 
 #: Where the CLI persists sessions: one directory per working directory, named
 #: by flattening that path's separators. `run_headless.sh` cd's to the skill
@@ -161,11 +162,23 @@ class Session:
     path: Path
     by_model: dict[str, Tokens] = field(default_factory=lambda: defaultdict(Tokens))
     limit_refusals: int = 0
+    #: The CLI's own list-price figure, when this session came from an envelope.
+    #: Not used for the total -- one arithmetic path serves both sources -- but
+    #: compared against it, so a change to Anthropic's published prices shows up
+    #: as a disagreement instead of silently mispricing every later run.
+    reported_cost: float | None = None
     started: datetime | None = None
     ended: datetime | None = None
+    #: From an envelope only. `duration_ms` is the agent's span and
+    #: `duration_api_ms` is time actually spent in inference -- the distinction a
+    #: transcript cannot make, since it carries only per-message timestamps.
+    duration_ms: int = 0
+    api_ms: int = 0
 
     @property
     def seconds(self) -> float:
+        if self.duration_ms:
+            return self.duration_ms / 1000.0
         if self.started is None or self.ended is None:
             return 0.0
         return max(0.0, (self.ended - self.started).total_seconds())
@@ -281,6 +294,148 @@ def read_session(path: Path) -> Session | None:
     )
 
 
+#: Written by `run_headless.sh`, one JSON envelope per ATTEMPT. Present only for
+#: runs made after the invocation switched to `--output-format json`.
+ENVELOPE_GLOB = "meta/*.usage.jsonl"
+
+
+def from_envelopes(work_dir: Path) -> list[Session]:
+    """Read a run's usage from the envelopes it recorded, if it recorded any.
+
+    Preferred over the transcript scan wherever it is available, because it is
+    the CLI's own accounting rather than a reconstruction: it carries
+    `duration_api_ms`, which is real model time, where a transcript can only
+    give the agent's wall-clock span. Runs made before the invocation changed
+    have no envelopes and fall back automatically.
+    """
+    work_dir = Path(work_dir)
+    # Envelopes only exist for papers run after the invocation changed, and a
+    # run can straddle that line -- resumed after a usage limit, or topped up.
+    # Returning the instrumented subset would let the report describe part of a
+    # run as if it were all of it, silently and with no way to tell. The
+    # transcript path covers every paper either way, so a partial set defers to
+    # it rather than competing with it.
+    sessions: list[Session] = []
+    for path in sorted(work_dir.glob(ENVELOPE_GLOB)):
+
+        doi = path.name[: -len(".usage.jsonl")]
+        for attempt, line in enumerate(path.read_text(encoding="utf-8",
+                                                      errors="replace").splitlines()):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                envelope = json.loads(line)
+            except (ValueError, TypeError):
+                continue
+            if not isinstance(envelope, dict):
+                continue
+            session = Session(work=work_dir.name, doi=doi,
+                              session_id=str(envelope.get("session_id") or
+                                             f"{doi}#{attempt}"),
+                              path=path)
+            # `modelUsage` is per-model and already aggregated across turns,
+            # which is the shape the report wants. The flat `usage` block is the
+            # same totals without the model split; its only unique contribution
+            # is the cache-write TTL split, which decides whether those tokens
+            # cost 2.0x or 1.25x the input rate -- a ~$140 difference over the
+            # v0.0.21 corpus run. Its `iterations` array must never be summed:
+            # it lists one entry per turn but not reliably all of them.
+            flat = envelope.get("usage") or {}
+            creation = flat.get("cache_creation") or {}
+            hour = int(creation.get("ephemeral_1h_input_tokens") or 0)
+            five = int(creation.get("ephemeral_5m_input_tokens") or 0)
+            # Absent a split, price at the CHEAPER rate rather than guess high.
+            # `hour >= five` would be true when both are zero, which is the
+            # degenerate case this comment claims to handle and quietly got
+            # backwards -- a run with no TTL reported would have been billed at
+            # 2.0x. Guessing low is self-correcting: the drift line below
+            # compares against the CLI's own total and says so.
+            long_lived = hour > 0 and hour >= five
+
+            per_model = envelope.get("modelUsage")
+            # An API-error envelope carries `modelUsage: {}` and no top-level
+            # `model`, so the fallback below would book it under "unknown" with
+            # zero tokens -- inventing a row the report then flags as spend it
+            # could not price. Nothing was billed; count it as a refusal and
+            # move on. That also restores the wasted-spawn tally on this path,
+            # which the transcript reader has and this one silently lacked.
+            if not (isinstance(per_model, dict) and per_model) and not (
+                    envelope.get("usage") or {}).get("output_tokens"):
+                if envelope.get("is_error"):
+                    refusals_only = Session(work=work_dir.name, doi=doi,
+                                            session_id=session.session_id, path=path)
+                    refusals_only.limit_refusals = 1
+                    sessions.append(refusals_only)
+                continue
+            if isinstance(per_model, dict) and per_model:
+                for name, counts in per_model.items():
+                    if not isinstance(counts, dict):
+                        continue
+                    tokens = session.by_model[canonical(name) or "unknown"]
+                    tokens.input += int(counts.get("inputTokens") or 0)
+                    tokens.output += int(counts.get("outputTokens") or 0)
+                    tokens.cache_read += int(counts.get("cacheReadInputTokens") or 0)
+                    written = int(counts.get("cacheCreationInputTokens") or 0)
+                    # `modelUsage` gives a total with no TTL; the flat block
+                    # gives the TTL with no model. Collapsing the flat split to
+                    # one boolean sent every model's writes to whichever side
+                    # won, so a genuinely mixed envelope priced part of itself
+                    # at the wrong rate. Apply the flat block's own ratio.
+                    if hour and five:
+                        share = hour / (hour + five)
+                        tokens.cache_write_1h += round(written * share)
+                        tokens.cache_write_5m += written - round(written * share)
+                    elif long_lived:
+                        tokens.cache_write_1h += written
+                    else:
+                        tokens.cache_write_5m += written
+            else:
+                tokens = session.by_model[canonical(envelope.get("model")) or "unknown"]
+                tokens.input += int(flat.get("input_tokens") or 0)
+                tokens.output += int(flat.get("output_tokens") or 0)
+                tokens.cache_read += int(flat.get("cache_read_input_tokens") or 0)
+                tokens.cache_write_1h += hour
+                tokens.cache_write_5m += five or (
+                    0 if hour else int(flat.get("cache_creation_input_tokens") or 0))
+
+            # `num_turns` counts the SESSION, not a model, so it cannot be split
+            # when more than one model ran. Attributed to the one that produced
+            # the most output, which is the model doing the work; every run this
+            # harness makes is single-model anyway.
+            turns = int(envelope.get("num_turns") or 0)
+            if turns and session.by_model:
+                busiest = max(session.by_model.values(), key=lambda t: t.output)
+                busiest.requests += turns
+
+            session.duration_ms = int(envelope.get("duration_ms") or 0)
+            session.api_ms = int(envelope.get("duration_api_ms") or 0)
+            reported = envelope.get("total_cost_usd")
+            if isinstance(reported, (int, float)):
+                session.reported_cost = float(reported)
+            sessions.append(session)
+
+    # Coverage is checked against the DOIs that actually parsed, not against the
+    # files on disk. An envelope truncated mid-write still creates a file, so a
+    # filename-level check passes while the loop above silently drops that
+    # paper -- and the report then describes part of a run as all of it, which
+    # is the exact thing this guard exists to stop. Same reasoning as the
+    # partial-instrumentation case: the transcript path covers every paper, so
+    # anything short defers to it.
+    manifest = work_dir / "manifest.json"
+    if manifest.is_file():
+        try:
+            entries = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            entries = []
+        expected = {str(e.get("doi")) for e in entries
+                    if isinstance(e, dict) and e.get("doi") and "error" not in e}
+        if expected and not expected <= {s.doi for s in sessions}:
+            return []
+
+    return sessions
+
+
 def project_dirs(explicit: list[str] | None = None) -> list[Path]:
     if explicit:
         return [Path(p).expanduser() for p in explicit]
@@ -310,6 +465,15 @@ def _thousands(value: int) -> str:
     return f"{value:,}"
 
 
+def _duration(seconds: float) -> str:
+    """Readable at both ends: a smoke run is seconds, a corpus run is hours."""
+    if seconds < 90:
+        return f"{seconds:.0f}s"
+    if seconds < 5400:
+        return f"{seconds / 60:.0f}m"
+    return f"{seconds / 3600:.1f}h"
+
+
 def _table(by_model: dict[str, Tokens]) -> list[str]:
     """The per-model block, in the shape Claude Code's own run summary uses."""
     head = ("Model", "Input", "Output", "Cache read", "Cache write", "Total")
@@ -331,6 +495,12 @@ def _table(by_model: dict[str, Tokens]) -> list[str]:
         grand.add(tokens)
     if len(by_model) > 1:
         rows.append(("All models", "", "", "", "", _thousands(grand.total)))
+
+    if not rows:
+        # Every attempt errored, so nothing was billed. `max(x, *())` raises,
+        # which turned a run of pure refusals into a crash in the reporter
+        # rather than a report saying no tokens were spent.
+        return ["(no billable usage: every attempt returned an error)"]
 
     widths = [max(len(head[i]), *(len(r[i]) for r in rows)) for i in range(6)]
     lines = ["  ".join(h.ljust(widths[i]) if i == 0 else h.rjust(widths[i])
@@ -395,6 +565,7 @@ def render(sessions: list[Session], work: str, per_paper: bool = False) -> str:
 
     requests = sum(t.requests for t in by_model.values())
     total, unknown = _priced(by_model)
+    reported = [s.reported_cost for s in sessions if s.reported_cost is not None]
 
     # The work directory already names the run and the pack version, so the
     # heading does not restate what task this is -- which it also may not do.
@@ -407,10 +578,30 @@ def render(sessions: list[Session], work: str, per_paper: bool = False) -> str:
         out.append(split)
     if unknown:
         out.append(f"  price unknown for: {', '.join(sorted(unknown))} — excluded from the total")
+    # Only envelopes carry the CLI's own figure. A gap means the price table
+    # here and Anthropic's published rates have parted company; the table is
+    # what to fix, and until then the CLI's number is the right one to believe.
+    # Skipped when a model could not be priced: `total` excludes it while the
+    # CLI's figure includes it, so the gap is guaranteed and says nothing about
+    # the table. The missing price is already reported on its own line above.
+    if reported and total > 0 and not unknown:
+        drift = abs(sum(reported) - total) / total
+        if drift > 0.01:
+            out.append(f"  ! the CLI reported ${sum(reported):,.2f} for the same work, "
+                       f"a {drift:.0%} gap — pe/pricing.py:RATES is probably stale")
+    api_seconds = sum(s.api_ms for s in sessions) / 1000.0
     out.append(
         f"{_thousands(requests)} API requests across {_thousands(len(sessions))} sessions, "
-        f"{len(papers)} papers, {seconds / 3600:.1f} h of agent wall-clock."
+        f"{len(papers)} papers, {_duration(seconds)} of agent wall-clock."
     )
+    # `seconds` can be 0 while `api_seconds` is not: an envelope may carry
+    # duration_api_ms and no duration_ms, and the transcript path sets neither.
+    if api_seconds and seconds > 0:
+        # Only an envelope reports this. Named separately from the span above
+        # because the two differ by tool execution and queueing -- on the smoke
+        # run, 146 s of inference inside a 151 s agent span.
+        out.append(f"Of that, {_duration(api_seconds)} was model time "
+                   f"({100 * api_seconds / seconds:.0f}% of the span).")
 
     retried = sum(1 for group in papers.values() if len(group) > 1)
     if retried:
@@ -472,14 +663,27 @@ def main() -> int:
     parser.add_argument("--projects", nargs="*", help="override the transcript directories")
     args = parser.parse_args()
 
-    directories = project_dirs(args.projects)
-    if not directories:
-        raise UsageError(
-            f"no transcript directories matched {PROJECTS}/{PROJECT_GLOB}. "
-            f"Pass --projects to name them explicitly."
-        )
+    # Envelopes first, and BEFORE insisting a transcript directory exists: a
+    # fully instrumented run is completely readable without one, and the CLI
+    # prunes transcripts. Demanding them anyway turned "your history is gone"
+    # into "this run cannot be reported", which is false.
+    sessions = []
+    source = "CLI transcripts"
+    if args.work and not args.projects:
+        work_dir = run_root() / args.work
+        sessions = from_envelopes(work_dir)
+        if sessions:
+            source = f"envelopes in {work_dir}"
 
-    sessions = collect(args.work, args.projects)
+    directories = project_dirs(args.projects)
+    if not sessions:
+        if not directories:
+            raise UsageError(
+                f"no envelopes under {run_root()}/{args.work or '<run>'} and no "
+                f"transcript directories matching {PROJECTS}/{PROJECT_GLOB}. "
+                f"Pass --projects to name them explicitly."
+            )
+        sessions = collect(args.work, args.projects)
 
     if args.listing:
         runs: dict[str, set[str]] = defaultdict(set)
@@ -501,6 +705,10 @@ def main() -> int:
         )
 
     print(render(sessions, args.work, per_paper=args.per_paper))
+    # Named because the two sources are not equivalent: only the envelope
+    # carries `duration_api_ms`, and only the transcript survives a work
+    # directory being deleted.
+    print(f"\nsource: {source}")
     return 0
 
 

@@ -325,17 +325,28 @@ AUTH_FAILURE_LINE = "OAuth session expired. Please run /login."
 RUNNER = ROOT / "pe" / "run_headless.sh"
 
 
-def _shell_predicate(name: str) -> str:
-    """The `grep -qiE '...'` pattern out of one of the runner's predicates.
+#: The predicate name the runner uses, and the variable holding its vocabulary.
+_PREDICATE_VARS = {"is_auth_failure": "AUTH_RE", "is_usage_limit": "LIMIT_RE"}
 
-    Reads the pattern from the script rather than restating it, so this guard
-    tests what actually runs. A copy here would pass while the script rotted.
+
+def _shell_predicate(name: str) -> str:
+    """The regex one of the runner's predicates actually greps with.
+
+    Reads it from the script rather than restating it, so this guard tests what
+    runs; a copy here would pass while the script rotted. The pattern moved out
+    of the function body and into a shared variable when the same vocabulary
+    gained a third reader (`limit_message`), so this follows it there -- and
+    asserts the predicate really does use the variable, which is the part that
+    could silently drift back.
     """
     body = RUNNER.read_text()
-    match = re.search(rf"^{re.escape(name)}\(\) \{{\n\s*grep -qiE '([^']+)'",
-                      body, re.MULTILINE)
-    assert match, f"{name}() is not a single `grep -qiE '...'` in {RUNNER.name}"
-    return match.group(1)
+    variable = _PREDICATE_VARS[name]
+    used = re.search(rf"^{re.escape(name)}\(\) \{{\n\s*grep -qiE \"\${variable}\"",
+                     body, re.MULTILINE)
+    assert used, f"{name}() no longer greps with \"${variable}\" in {RUNNER.name}"
+    match = re.search(rf"^{variable}='([^']+)'$", body, re.MULTILINE)
+    assert match, f"{variable} is not a single-quoted assignment in {RUNNER.name}"
+    return match.group(1).replace("\\\\", "\\")
 
 
 def _matches(pattern: str, text: str) -> bool:
@@ -355,6 +366,52 @@ def test_the_usage_limit_signature_trips_the_sentinel():
     assert _matches(_shell_predicate("is_usage_limit"), USAGE_LIMIT_LINE), (
         f"is_usage_limit does not match the real limit line:\n  {USAGE_LIMIT_LINE}\n"
         f"Every remaining paper in a limited run spawns to receive it.")
+
+
+#: Strings the CLI binary actually carries, checked against `strings` on
+#: version 2.1.251: it maps 401 -> authentication_error, 403 -> permission_error
+#: (rendered "Authentication failed"), 429 -> rate_limit_error. The original
+#: patterns matched six of these eleven not at all -- `rate_limit_error` among
+#: them, because the pattern said "rate limit" with a space.
+_REAL_AUTH_STRINGS = [
+    "Authentication failed", "authentication_error", "permission_error",
+    "OAuth token has expired", "Invalid bearer token", "OAuth session expired",
+]
+_REAL_LIMIT_STRINGS = [
+    "rate_limit_error", "429 Too Many Requests", "Credit balance is too low",
+    USAGE_LIMIT_LINE,
+]
+#: Must trip NEITHER. A transient upstream error is not a dead session, and
+#: aborting a 392-paper queue on one overloaded response costs more than the
+#: retry it replaces. The success strings guard the other direction: a false
+#: positive on the digest line would abort every run.
+_NOT_A_SESSION_DEATH = [
+    "overloaded_error", "invalid_request_error", "DONE",
+    "result=DONE turns=5 cost=$1.01 api=145686ms in=10 out=13100",
+]
+
+
+@pytest.mark.parametrize("text", _REAL_AUTH_STRINGS)
+def test_every_auth_signature_the_cli_emits_is_matched(text):
+    assert _matches(_shell_predicate("is_auth_failure"), text), (
+        f"is_auth_failure misses {text!r}, so a dead session would spawn every "
+        f"remaining paper to rediscover it.")
+
+
+@pytest.mark.parametrize("text", _REAL_LIMIT_STRINGS)
+def test_every_limit_signature_the_cli_emits_is_matched(text):
+    assert _matches(_shell_predicate("is_usage_limit"), text), (
+        f"is_usage_limit misses {text!r}. This is the 145-spawn defect: right "
+        f"failure shape, wrong signature.")
+
+
+@pytest.mark.parametrize("text", _NOT_A_SESSION_DEATH)
+def test_a_transient_error_or_a_success_does_not_abort_the_queue(text):
+    auth = _shell_predicate("is_auth_failure")
+    limit = _shell_predicate("is_usage_limit")
+    assert not _matches(auth, text) and not _matches(limit, text), (
+        f"{text!r} trips a sentinel. Aborting a 392-paper run on a transient "
+        f"error, or on a successful paper's own log line, costs more than it saves.")
 
 
 def test_the_two_failure_kinds_stay_distinguishable():
@@ -469,3 +526,49 @@ def test_prepare_refuses_a_corpus_path_that_does_not_exist(tmp_path):
         f"prepare exited {proc.returncode} on a nonexistent corpus path.\n"
         f"stdout: {proc.stdout[-400:]}")
     assert "does not exist" in proc.stderr, proc.stderr[-400:]
+
+
+# --------------------------------------------------------------------------
+# Shell quoting, which `bash -n` on this machine cannot check for us.
+# --------------------------------------------------------------------------
+
+def test_no_shell_escaping_artifact_leaked_into_the_runner():
+    """The `\'"\'"\'` idiom is for embedding a quote in a single-quoted string
+    typed at a shell. Written into a FILE by a generator it is just five stray
+    characters, and it shipped twice: once in a grep pattern, which silently
+    returned nothing, and once as a heredoc delimiter, which made the whole
+    script unparseable.
+
+    It got through because `bash -n` cannot see either. Both sites live inside
+    `$( )`, and bash 3.2 -- what macOS ships and what this repo is developed on
+    -- parses command substitutions lazily. CI runs bash 5, which parses them
+    eagerly and failed with "unexpected EOF". A grep is version-independent and
+    costs nothing.
+    """
+    offenders = [
+        (n, line.strip())
+        for n, line in enumerate(RUNNER.read_text().splitlines(), 1)
+        if "\'\"\'\"\'" in line
+    ]
+    assert not offenders, (
+        "shell-escaping artifact in " + RUNNER.name + ":\n"
+        + "\n".join(f"  line {n}: {text}" for n, text in offenders)
+        + "\nA generator wrote the quote-escaping idiom into the file verbatim.")
+
+
+def test_every_heredoc_delimiter_is_a_bare_word():
+    """The failure above, stated as the property rather than the symptom.
+
+    A delimiter carrying quote characters does not match its own closing line,
+    so the heredoc swallows the rest of the file.
+    """
+    import re
+    bad = [(n, line.strip())
+           for n, line in enumerate(RUNNER.read_text().splitlines(), 1)
+           # `(?<!<)` and `(?!<)` keep the prompt's own `<<<SOURCE>>>` markers
+           # out of it: those are the paper-assembly delimiters, not heredocs.
+           if (m := re.search(r"(?<!<)<<-?(?!<)\s*(\S+)", line))
+           and not re.fullmatch(r"'?[A-Za-z_][A-Za-z0-9_]*'?", m.group(1))]
+    assert not bad, (
+        "heredoc delimiter is not a bare word (optionally single-quoted):\n"
+        + "\n".join(f"  line {n}: {text}" for n, text in bad))
