@@ -37,6 +37,18 @@ other specie." So no rule may hard-code human.
 | 12 | `10.3389/fimmu.2023.1211505` | no | 2026-09-03 |
 | 13 | `10.1016/j.isci.2022.104097` | no | 2026-09-03 |
 | 14 | `10.1038/s41467-021-21783-3` | **yes** | 2026-09-06 |
+| 15 | `10.1016/j.immuni.2020.03.019` | no | 2026-09-15 |
+| 16 | `10.1038/s41467-021-25125-1` | no — **not adopted**, see 16 below | 2026-09-15 |
+| 17 | `10.1016/j.molmet.2023.101746` | no | 2026-09-15 |
+| 18 | `10.1016/j.cell.2021.11.031` | no — re-confirms ruling 8 | 2026-09-15 |
+| 19 | `10.1016/j.coi.2022.102188` | **not_applicable** | 2026-09-15 |
+| 20 | `10.1016/j.cell.2021.07.023` | **yes** | 2026-09-15 |
+| 21 | `10.1016/j.healun.2026.02.1666` | no — curator leaned `yes?`, **not adopted** | 2026-09-15 |
+| 22 | `10.1016/j.ccell.2025.12.003` | no — re-confirms ruling 7 | 2026-09-15 |
+| 23 | `10.1038/s41586-021-03852-1` | no | 2026-09-15 |
+| 24 | `10.1038/s41467-024-55440-2` | no | 2026-09-15 |
+| 25 | `10.1182/bloodadvances.2023011445` | no | 2026-09-15 |
+| 26 | `10.1016/j.immuni.2022.09.002` | no | 2026-09-15 |
 
 ---
 
@@ -644,3 +656,148 @@ in the 10-paper confirming set for exactly this reason: if they move, the
 attribution test needs a sharpening for *describing a state the lesion causes*
 versus *studying what the lesion does*, and that distinction would then need the
 curator's words rather than mine.
+
+
+---
+
+# The batch of 2026-09-15 — rulings 15-26
+
+Twelve papers, three curators, scored against the stored v0.0.22 corpus without a
+re-run. **6 matched, 4 did not, 2 could not be expressed.** Rulings 18 and 22
+re-confirm rulings 8 and 7 from readers who had not seen them, which is the
+cheapest evidence available that the disease-model rule is holding.
+
+Rulings 17, 25 and 26 confirmed the extraction with no new reasoning and are
+recorded for the acceptance set rather than discussed: a time/lineage adipocyte
+study, a paper whose disease states and germline mutations were correctly not
+promoted, and one with nothing to promote.
+
+## 20. `10.1016/j.cell.2021.07.023` — right answer, and the premise was wrong
+
+**Ruling: `yes`.** Curator 2: *"Covid-19 infection level is a variable in the
+experiment. Looking at how exposure to Covid-19 effects immune and epithelial
+cells in nasal mucosa."*
+
+v0.0.22 also said `yes` — **on corticosteroids.** The naturally acquired
+SARS-CoV-2 infection, the curator's entire stated reason, sat in
+`suppressed_candidates` under `observational_disease_state`. This is ruling 1's
+shape: the right answer resting on a premise the curator would reject.
+
+**It is also why two changes had to ship together.** Suppressing the
+corticosteroids — which ruling 24 below requires — would have left this paper
+with nothing paired and flipped a confirmed `yes` to `no`.
+
+**What it exposed.** `prompt.md` said both *"a pathogen: infection is exposure"*
+and that `observational_disease_state` covers *"a naturally occurring disease
+state... with no bench manipulation"*. A naturally acquired human infection
+satisfies both, with no tiebreak — and the corpus resolved it **both ways on the
+same shape**: 34 papers suppressed a natural infection, 21 landing `no` with
+`would_have_paired: "yes"`, while 13 comparable papers landed `yes`.
+
+**Consequence (v0.0.23):** the tie is broken by **who applied the exposure**. An
+investigator-applied exposure keeps ruling 9's answer, needing only a contrast.
+An exposure that occurred outside the study is a perturbation only where the
+paper's stated question is the response to it. Predicted: ~8 of the 21 move to
+`yes`, 13 atlases stay `no`.
+
+## 24. `10.1038/s41467-024-55440-2` — a grouping label can be nearly invisible
+
+**Ruling: `no`.** Curator 3: *"No experimental perturbation but this fits one of
+your examples where a donor had been given a treatment that changed the tissue...
+the drug induced state is only 1 of 4 states and the other 3 states are completely
+natural. If this is what produced the yes result it was very, very subtle. The
+text has only 1 mention of the contraception."*
+
+v0.0.22 said `yes`, and its stated ground was that the arm *"is used as a grouping
+variable for the single-cell cell-proportion analysis"* — which sharpening 1
+already forbade in as many words. The record's own `ambiguities` argued the other
+side: *"the therapy was patient medication predating the study, the paper's
+headline axes are menopause and cycle phase."*
+
+**Consequence (v0.0.23):** sharpening 1 gains its missing half — WEIGH the
+mention. One body mention, a donor-table footnote and one supplementary panel is
+a cohort attribute the authors recorded, not a question they asked.
+`incidental_clinical_therapy` now points at that sharpening, because it is the
+rule that attracts this error.
+
+## 19. `10.1016/j.coi.2022.102188` — a review has no place in yes/no/unclear
+
+**Ruling: `not_applicable`.** Curator 2: *"This is a review, not an experimental
+publication. There was no experiment conducted."*
+
+v0.0.22 said `unclear`, having harvested **six perturbations and twelve sample
+groups** out of experiments the authors did not perform. `no` would assert the
+opposite of what the text shows; `unclear` would claim a deficiency in text that
+is complete.
+
+**Consequence (v0.0.23):** Step 0b asks whether the paper reports a study of its
+own and returns immediately when it does not, the way a failed extraction does.
+`not_applicable` is added to `determination_labels` **only** — not to `labels`,
+which is also the enum for `has_single_cell_assay`.
+
+## 15 and 23. `unclear` where the reasoning had already said `no`
+
+**Rulings: `no`.** Curator 1 on `immuni.2020.03.019`: *"No perturbation (FACS
+sorted of primary sample)"*. Curator 3 on `s41586-021-03852-1`: *"There are
+organoids treated with cytokines... but there is no UMAP in the paper for these
+results and the samples are not included in the cellxgene collection."*
+
+Both were `unclear` via A5. `immuni.2020.03.019` is the instructive one: its
+perturbation reasoning reads *"every reported readout of it is flow cytometry and
+the scRNaseq populations were sorted separately"* — a verbatim restatement of the
+`"no"` bullet, recorded as `unclear`.
+
+**Consequence (v0.0.23):** `"no"` beats `"unclear"` once you can name the readout.
+`"unclear"` is for when the readout assay cannot be identified, not for residual
+unease about a call already made.
+
+**Curator 3's second reason is OUT OF SCOPE, and deliberately so.** Whether
+samples reached the CELLxGENE collection is a fact about the deposited dataset,
+not about the paper, and no text-only classifier reaches it at any prompt version.
+Determinations describe the paper; collection membership is a curator override.
+
+## 16. `10.1038/s41467-021-25125-1` — NOT ADOPTED
+
+**Curator 1 ruled `no`**, listing each of the six integrated studies as
+unperturbed, Sathyamurthy among them. **The determination stays `yes`.**
+
+The paper's own text, quote-verified against the extraction, says the opposite of
+the premise:
+
+> *"nuclei from the formalin and rotarod conditions accounted for 11.0% of the
+> total neuronal cells/nuclei"*
+>
+> *"we... compared genes that were differentially expressed... between nuclei
+> from an experimental condition and all naïve cells/nuclei from any dataset"*
+
+So perturbed samples really are in the analysed set, and the 2026-09-15 decision
+was that **reused public data still counts**: a collection containing perturbed
+cells should not be reported as unperturbed because another group generated them.
+
+**Open question for curator 1, and the reason this is recorded rather than
+settled:** were the incorporated Sathyamurthy samples the treated ones, or was
+the per-study list made at a coarser grain than the atlas text supports? A ruling
+that the atlas is `no` *despite* containing treated nuclei is a different rule
+from one made on the belief that it contains none.
+
+**Related, and NOT the same case:** a review that describes other groups'
+experiments is `not_applicable` (ruling 19). An integration atlas is primary
+research — Step 0b names it as a negative for exactly this reason.
+
+## 21. `10.1016/j.healun.2026.02.1666` — NOT ADOPTED
+
+**Curator 2 leaned `yes?`**: *"whether the patient had previously had ACR is an
+experimental variable... I think it's the use of the resolved samples that makes
+this perturbed? Since they wouldn't be diseased, but the sample has been affected
+by the disease?"* **The determination stays `no`.**
+
+A resolved rejection episode is a state nobody applied. Ruling 2 (chemotherapy as
+setting), rulings 7 and 8 (the disease state is the model) and curator 3's reading
+of the same boundary in ruling 24 all point the same way, and curator 2's own
+answer on `ccell.2025.12.003` — *"a classic disease stage experiment"*, `no` —
+is the same shape decided the other way in the same batch.
+
+**The one thing that would reopen it:** curator 2's instinct is that *post*-disease
+is neither healthy nor diseased. If that third state is real for curation it needs
+its own rule, not a promotion of the disease state — and it would apply to far
+more than one paper.

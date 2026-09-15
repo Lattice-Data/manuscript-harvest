@@ -26,6 +26,24 @@
 # "looks like it works and does not" failure the rest of this pass was about.
 labels: ["yes", "no", "unclear"]
 
+# `perturbation_present` ONLY. Deliberately not added to `labels` above: that set
+# is also the enum for `has_single_cell_assay` and
+# `perturbation_present_any_assay`, and `has_single_cell_assay:
+# "not_applicable"` is not a thing. Widening the shared set would have made it
+# legal on all three -- the kind of silent over-permission the quoting comment
+# above is also about.
+#
+# `not_applicable` means the paper reports no study of its own (a review,
+# commentary, perspective, editorial). It is NOT a negative: such a paper often
+# describes perturbation experiments at length, so "no" would assert the
+# opposite of what the text shows, and "unclear" would claim a gap in the text
+# when the text is complete and simply belongs to a different article type.
+# QUOTED for the same YAML 1.1 reason as the rest.
+determination_labels: ["yes", "no", "unclear", "not_applicable"]
+
+# The article-type gate's two values. Quoted: bare `yes`/`no` load as booleans.
+primary_research: ["yes", "no"]
+
 # The field a curator reads. `pe.compare` diffs this and nothing else, and
 # `primary_field_gloss` is how the diff describes it to a reader -- "assay-paired"
 # is the whole point of this task and would be lost if the harness just printed
@@ -68,6 +86,10 @@ required_fields:
   - perturbation_present
   - perturbation_present_any_assay
   - unresolved_reason
+  # Required rather than optional-defaulting-to-"yes": a gate that is silently
+  # absent is a gate that never fires, which is the shape six of the seven
+  # detection-review blockers had.
+  - reports_primary_research
   - consistency_flags
   - perturbations
   - suppressed_candidates
@@ -83,8 +105,8 @@ legacy_field_names:
 # carries is unchanged. `message` is the wording; `in` names the set.
 field_checks:
   - path: perturbation_present
-    in: labels
-    message: "{path}={value!r} not in yes/no/unclear"
+    in: determination_labels
+    message: "{path}={value!r} not in yes/no/unclear/not_applicable"
   - path: has_single_cell_assay
     in: labels
     message: "{path}={value!r} not in yes/no/unclear"
@@ -99,6 +121,9 @@ field_checks:
     message: "{path}={value!r} off-schema"
   - path: unresolved_reason
     in: unresolved_reasons
+    message: "{path}={value!r} off-schema"
+  - path: reports_primary_research
+    in: primary_research
     message: "{path}={value!r} off-schema"
 
 # The determinative array. Each item carries evidence quotes that are verified

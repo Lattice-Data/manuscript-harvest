@@ -24,7 +24,14 @@ inputs_from: decide.yaml
 
 # Reading order for the confusion matrix. Not alphabetical -- "yes" first because
 # that is the bucket curation acts on.
-order: ["yes", "unclear", "no"]
+#
+# `not_applicable` is LAST: it is not a call about perturbation at all, it is a
+# statement that the question does not apply to this article type, so it sits
+# outside the yes/unclear/no gradient rather than anywhere within it. Present in
+# the order because a determination the matrix cannot name is a determination
+# the diff drops silently -- the failure the `inputs_from` assertion above
+# exists to prevent, one layer up.
+order: ["yes", "unclear", "no", "not_applicable"]
 
 classes:
   STAGE-B: >-

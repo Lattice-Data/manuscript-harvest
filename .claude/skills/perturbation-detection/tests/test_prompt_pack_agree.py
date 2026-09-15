@@ -96,9 +96,17 @@ GUARDED = {
     "unresolved_reasons": "unresolved_reason",
     "category": "category",
     "suppression_rules": "rule",
+    # v0.0.23. `perturbation_present` left LABEL_FIELDS below because it is no
+    # longer a tri-state: it alone may be `not_applicable`. Guarded here instead
+    # so it is still checked, against its own set rather than against `labels`.
+    "determination_labels": "perturbation_present",
+    "primary_research": "reports_primary_research",
 }
-LABEL_FIELDS = ("has_single_cell_assay", "perturbation_present",
-                "single_cell_paired", "would_have_paired")
+#: Fields that must carry `labels` exactly. `perturbation_present` is NOT one of
+#: them any more -- see `determination_labels` above. Widening `labels` itself
+#: would have made `has_single_cell_assay: "not_applicable"` legal, which is the
+#: over-permission this split exists to avoid.
+LABEL_FIELDS = ("has_single_cell_assay", "single_cell_paired", "would_have_paired")
 
 
 def _pack_set(pack: dict, name: str) -> list[str]:
@@ -109,6 +117,8 @@ def _pack_set(pack: dict, name: str) -> list[str]:
         "unresolved_reasons": rec["unresolved_reasons"],
         "category": rec["item_array"]["enums"]["category"],
         "suppression_rules": rec["secondary_arrays"][0]["reasons"],
+        "determination_labels": rec["determination_labels"],
+        "primary_research": rec["primary_research"],
     }[name]
 
 
@@ -347,3 +357,68 @@ def test_every_exclusion_reason_states_whether_promotion_reaches_it(spec):
             f"{rule}: the promotion column says {verdict[:60]!r}, which does not "
             f"start with a bolded Yes or No. Every reason must state whether a "
             f"biological-variable role can promote it out of the NOT list.")
+
+
+def _exclusion_scope(spec: str, rule: str) -> str:
+    """The middle cell -- "what it covers" -- for one exclusion rule.
+
+    `_exclusion_table` above returns the promotion column, because that is what
+    every guard before v0.0.23 asked about. The scope column matters too now:
+    v0.0.23 resolved a natural infection and a donor's pre-existing medication
+    by naming them in the scopes, and the table is documented as "the only place
+    their scopes are defined".
+    """
+    heading = "**Recording an exclusion from this list.**"
+    body = spec[spec.index(heading):]
+    in_body = False
+    for line in body.splitlines():
+        if re.fullmatch(r"\|[\s\-:|]+\|", line):
+            in_body = True
+            continue
+        if not in_body:
+            continue
+        if not line.startswith("|"):
+            break
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        name = re.fullmatch(r"`([a-z_]+)`", cells[0])
+        if name and name.group(1) == rule:
+            return cells[1]
+    raise AssertionError(f"no exclusion row named {rule!r}")
+
+
+def test_the_observational_rule_names_its_one_promotion_route(spec):
+    """It used to say "**No** -- nothing was applied, so there is nothing to
+    promote", which is true of a donor genotype and false of an infection:
+    something WAS applied, just not by the investigators.
+
+    The row is the authoritative statement of every rule's scope, so the route
+    has to be stated here. Without it a natural infection has no way out of the
+    NOT list, and 34 corpus papers sat on the contradiction -- 21 resolving it
+    one way, 13 the other.
+    """
+    row = _exclusion_table(spec)["observational_disease_state"]
+    assert "acquired EXPOSURE whose response is the paper's own question" in row, (
+        "the observational rule no longer states the route that promotes it")
+    assert "infection the subjects acquired naturally" in _exclusion_scope(
+        spec, "observational_disease_state"), (
+        "the rule no longer says it covers a naturally acquired infection, which "
+        "is the case v0.0.23 resolved")
+
+
+def test_the_clinical_therapy_rule_points_at_the_axis_sharpening(spec):
+    """This is the rule that attracts the error, so the pointer lives on it.
+
+    It must POINT rather than restate: three differently-keyed copies of the
+    governing question are what rulings 9-13 were needed to reconcile, and
+    `test_the_governing_question_is_stated_exactly_once` holds that line.
+    """
+    row = _exclusion_table(spec)["incidental_clinical_therapy"]
+    assert "Read its first sharpening before promoting anything here" in row, (
+        "the clinical-therapy rule no longer points at the axis-versus-subject "
+        "sharpening, and grouping-by-therapy is the promotion it wrongly attracts")
+    assert "Is the applied thing what the paper is trying to LEARN ABOUT" not in row, (
+        "the rule now RESTATES the governing question instead of pointing at it")
+    assert "medication the donor was already taking" in _exclusion_scope(
+        spec, "incidental_clinical_therapy"), (
+        "the rule no longer says it covers a donor's pre-existing medication, "
+        "which is the contraception case")
