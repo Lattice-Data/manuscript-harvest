@@ -49,7 +49,7 @@ scoring the label alone cannot see it.
 | paper | ruling | expected | what would break it |
 |---|---|---|---|
 | `s41467-025-65049-8` | 2 | no | C2 over-reaching into applied clinical therapy |
-| `science.aat1699` | 6 | no | same |
+| `science.aat1699` | 6 | **unclear**, not `no` | the RULING is `no`, but this paper is `methods_missing` and Stage B caps its negative — baseline `unclear` / `degraded_text`. Reading `unclear` here as a failure would be reading the cap as a regression. What must not happen is `yes`: Stage B never caps upward, so a `yes` would mean C2 failed to suppress the therapy |
 | `j.cell.2021.12.018` | 9 | yes | C1 losing the investigator-applied half — a fed diet must stay a perturbation |
 | `s41467-022-33184-1` | 10 | yes | same, for a contusion |
 | `fimmu.2023.1211505` | 12 | no | C1 widening the observational rule's promotion beyond infection |
@@ -90,9 +90,18 @@ From the v0.0.22 baseline of 392 papers (273 `no`, 101 `yes`, 18 `unclear`):
 | C3 | `unclear` → `not_applicable` | 1 |
 | C4 | `unclear` → `no` | ≤4, the whole `pairing_not_stated` population |
 
-Stage B's 14 degraded-text `unclear`s are untouched by every change here, and
-`papers-accept-v0023.txt` deliberately contains none of them — this set cannot
-test a Stage B change and must not be read as if it could.
+Stage B's 14 degraded-text `unclear`s are untouched by every change here.
+
+**One of them IS in this set, and it is the ruling-6 anchor.** `science.aat1699`
+is `methods_missing`, so its Stage A `no` is capped to `unclear` and the baseline
+reads `unclear` / `degraded_text`. That makes it a WEAKER anchor than the others:
+the cap masks the Stage A answer, so it can only prove C2 did not push the paper
+to `yes`, not that C2 left its `no` intact. Checked against the record's
+`validation.stage_a` rather than its determination for that reason.
+
+Nothing in this set exercises a Stage B change, and the set must not be read as
+if it could — see the acceptance-set blind spot that `papers-50b` had for exactly
+this reason.
 
 ## Cost
 
