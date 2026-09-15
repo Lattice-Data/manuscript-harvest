@@ -1,5 +1,16 @@
 """Score the v0.0.23 acceptance runs against ACCEPTANCE-v0.0.23.md's predictions.
 
+**Lives at the skill root, NOT in `pe/`.** `tests/test_seam.py` asserts the
+harness names no task word in code, and this file is nothing but task words:
+hardcoded DOIs, curator groups, `perturbation_present`. It was written into
+`pe/` and the seam test caught it immediately. `task/` is the wrong home too --
+that holds the rule TABLES the harness reads, and a scorer carrying one
+version's expectations is not a rule table. It sits beside the acceptance
+document whose predictions it encodes, and is run directly:
+
+    python score-acceptance-v0023.py    # exits non-zero if any criterion fails
+
+
 Reads `validated/` when present (the harness's recomputed determination) and
 falls back to `raw/`. Reports the four gate criteria separately, because they
 mean different things: a broken anchor is a blocker, a missing mover is a
@@ -184,13 +195,43 @@ if pending:
         print(f"    pending: {pid}")
     raise SystemExit(1)
 
+# Stage A is the layer the criteria live in; Stage B's entry condition is a
+# separate, documented instability that fires off the model's self-report of text
+# quality and flips on byte-identical input. Reporting only determination
+# stability blames the criteria for it, so both are measured.
+sa_flips, tq_flips = [], []
+for pid, group, before, exp, got, note, recs in rows:
+    if not (recs.get(1) and recs.get(2)):
+        continue
+    a = [(r.get("validation") or {}).get("stage_a") for r in (recs[1], recs[2])]
+    q = [(r.get("processing_status"), r.get("text_completeness")) for r in (recs[1], recs[2])]
+    if a[0] != a[1]:
+        sa_flips.append((pid, a[0], a[1]))
+    if q[0] != q[1]:
+        tq_flips.append((pid, q[0], q[1]))
+
+failed = False
 for label, items in (("1. anchors hold (BLOCKER)", blockers),
                      ("2. predicted movers moved", missing_movers),
                      ("3. nothing else moved (ATTRACTOR)", unpredicted),
                      ("4. stable across both runs", unstable)):
     print(f"  {label:38} {'PASS' if not items else 'FAIL: ' + str(items)}")
+    if items:
+        failed = True
+
+print(f"\n  stage_a (CRITERIA) stability     {len(rows) - len(sa_flips)}/{len(rows)}"
+      f"{'' if not sa_flips else '  flips: ' + str(sa_flips)}")
+print(f"  text-quality self-report flips   {len(tq_flips)}/{len(rows)}"
+      f"{'' if not tq_flips else '  ' + str([f[0] for f in tq_flips])}")
+if tq_flips and unstable and not sa_flips:
+    print("  => every determination instability here is Stage B's entry condition, "
+          "not the criteria: Stage A agreed on every paper.")
 if inspected_hits:
     print(f"  note: {len(inspected_hits)} paper(s) moved against prediction and passed "
           f"only on inspection (PASS*). Criterion 3 counts them as predictions I got "
           f"wrong, not as code defects -- but they mean the corpus-wide mover estimate "
           f"is LOW, since the same under-count produced them.")
+
+# A gate that reports FAIL and exits 0 is the vacuous-pass shape one layer up:
+# a caller wiring this into CI would see success. Criteria 1-4 decide the code.
+raise SystemExit(1 if failed else 0)
