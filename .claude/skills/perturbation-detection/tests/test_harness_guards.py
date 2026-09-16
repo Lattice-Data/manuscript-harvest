@@ -610,19 +610,48 @@ def test_prepare_strips_comments_rather_than_only_blank_lines():
         "acceptance set prepares its labels as papers")
 
 
-def test_the_v0023_acceptance_set_names_only_real_corpus_papers():
-    """Every group in the set must resolve, or the acceptance measurement is
-    quietly taken over fewer papers than it claims."""
+def _acceptance_set_ids():
     skill = Path(__file__).resolve().parent.parent
     listing = skill / "papers-accept-v0023.txt"
     assert listing.is_file(), "the v0.0.23 acceptance set is missing"
     dois = [ln.split("#", 1)[0].strip() for ln in listing.read_text().splitlines()]
-    dois = [d for d in dois if d]
+    return skill, [d for d in dois if d]
+
+
+def test_the_v0023_acceptance_set_is_well_formed():
+    """Checks that need no corpus, so they run everywhere including CI.
+
+    The corpus is gitignored and absent on the runner -- that is deliberate, and
+    the workflow says why: each skill must run against ANY directory of
+    extracted papers, so "a run root that does not exist is the cheapest proof
+    that no test depends on one". The first version of this guard asserted every
+    paper resolved against `../../../corpus` and therefore passed locally and
+    failed CI with all 30 papers "absent". Same shape as the heredoc that
+    v0.0.22 shipped: the local machine has something the runner does not.
+    """
+    _, dois = _acceptance_set_ids()
     assert len(dois) == len(set(dois)), "the acceptance set repeats a paper"
-    corpus = skill.parent.parent.parent / "corpus"
-    absent = [d for d in dois if not (corpus / d).is_dir()]
-    assert not absent, f"acceptance set names papers not in the corpus: {absent}"
     assert len(dois) >= 25, (
         f"the acceptance set has shrunk to {len(dois)} papers; it is sized to "
         f"carry the 12 curator papers, the ruling anchors and both sides of the "
         f"predicted infection movement")
+    # Comment lines must not survive as paper ids -- that is the pe.prepare bug
+    # this file also guards, seen from the data side.
+    strays = [d for d in dois if d.startswith("#") or " " in d or "/" in d]
+    assert not strays, f"acceptance set lines that are not paper ids: {strays}"
+
+
+def test_the_v0023_acceptance_set_resolves_against_a_local_corpus():
+    """The resolution check, skipped where there is no corpus to resolve against.
+
+    Split from the well-formedness checks above rather than folded in with a
+    guard: a single test that skips wholesale asserts NOTHING in CI, and the
+    shape of the set is exactly what CI can and should still police.
+    """
+    skill, dois = _acceptance_set_ids()
+    corpus = skill.parent.parent.parent / "corpus"
+    if not corpus.is_dir():
+        pytest.skip(f"no corpus at {corpus} (expected in CI; the skills take a "
+                    f"corpus path as an argument and vendor what they need)")
+    absent = [d for d in dois if not (corpus / d).is_dir()]
+    assert not absent, f"acceptance set names papers not in the corpus: {absent}"
