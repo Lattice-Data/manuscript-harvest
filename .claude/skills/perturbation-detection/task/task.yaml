@@ -52,7 +52,7 @@ name: perturbation-detection
 # widened rather than a second rule beside it. Rulings 12 and 13 add the cheap
 # first test: if the animals were simply born in the diseased state, nothing was
 # applied and it is the model.
-version: 0.0.22
+version: 0.0.23
 
 # What the model is asked, in one line, for a reader deciding whether this pack
 # is the one they want. The criteria live in prompt.md and nowhere else.

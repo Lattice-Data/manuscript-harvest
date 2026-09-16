@@ -215,7 +215,19 @@ def main() -> int:
     (work / "prompts").mkdir(parents=True, exist_ok=True)
     (work / "raw").mkdir(parents=True, exist_ok=True)
 
-    dois = [line.strip() for line in Path(args.set).read_text().splitlines() if line.strip()]
+    # `#` starts a comment, and blank lines are skipped. An acceptance set is
+    # built in GROUPS -- the curator papers, the ruling anchors that must not
+    # move, the predicted movers -- and a list that cannot say which group a
+    # paper is in is a list nobody can audit six weeks later.
+    #
+    # Without this the labels read as DOIs: `papers-accept-v0023.txt` would have
+    # prepared 34 papers, four of them named "# the 12 curator papers (rulings
+    # 15-26)", each failing its corpus lookup. Not silent, but the failure names
+    # the wrong problem, and the corpus-refusal below would have blamed the
+    # corpus for a comment.
+    dois = [line.split("#", 1)[0].strip()
+            for line in Path(args.set).read_text().splitlines()]
+    dois = [d for d in dois if d]
     # An empty set is a broken invocation, not a run with nothing to do. Without
     # this, `prepare` printed "0/0 prepared" and exited 0 -- so a mistyped or
     # half-written set file read as a successful stage 1, and stage 2 then found

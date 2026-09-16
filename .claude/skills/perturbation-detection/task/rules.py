@@ -40,6 +40,12 @@ _DEC = _T["decide"]
 LABELS = tuple(_REC["labels"])
 #: Kept under their historical names because the tests and prompt.md use them.
 TRISTATE = LABELS
+#: `perturbation_present` only -- the tri-state plus `not_applicable`. Kept apart
+#: from TRISTATE because stage_a tests `has_single_cell_assay` and
+#: `perturbation_present_any_assay` against TRISTATE, and neither may be
+#: `not_applicable`.
+DETERMINATION_LABELS = tuple(_REC["determination_labels"])
+PRIMARY_RESEARCH = tuple(_REC["primary_research"])
 PROCESSING_STATUS = tuple(_REC["run_states"]["processing_status"])
 TEXT_COMPLETENESS = tuple(_REC["run_states"]["text_completeness"])
 UNRESOLVED_REASONS = tuple(_REC["unresolved_reasons"])
@@ -148,7 +154,7 @@ def _paired(record: dict) -> list:
 # ---------------------------------------------------------------------------
 
 def stage_a(result: dict) -> str | None:
-    """prompt.md Stage A: evidence-based determination, ordered A0-A6.
+    """prompt.md Stage A: evidence-based determination, ordered A0, A-1, A1-A6.
 
     Returns the implied `perturbation_present`, or None if a required input is
     missing or off-enum. The numbered comments map 1:1 onto the prompt's rules.
@@ -162,6 +168,24 @@ def stage_a(result: dict) -> str | None:
     # A0. Nothing was assessed.
     if status == "failed":
         return "unclear"
+
+    # A-1. The paper reports no study of its own: a review, commentary,
+    # perspective or editorial. Nothing here is this paper's evidence, so there
+    # is nothing to pair and nothing to assess.
+    #
+    # Numbered A-1 because it logically precedes the evidence rules, but
+    # evaluated AFTER A0 on purpose: a failed extraction cannot support a
+    # judgment about article type. A paywall page is "unclear", not "a review".
+    #
+    # Not folded into A1 (empty `perturbations`). A review describes other
+    # people's perturbation experiments, so its array is often NON-empty --
+    # `10.1016/j.coi.2022.102188` yielded six perturbations and twelve samples
+    # harvested from work the authors did not do. A1 would have called that
+    # "unclear" and a naive "no" would assert the opposite of what the text
+    # plainly shows.
+    if result.get("reports_primary_research") == "no":
+        return "not_applicable"
+
     if any_assay not in TRISTATE or has_sc not in TRISTATE:
         return None
 
@@ -231,7 +255,7 @@ def expected_determination(result: dict) -> str | None:
 
 
 def checks(result: dict) -> list[str]:
-    """CC-1 .. CC-6. CC-7 is raised by the harness during quote checking."""
+    """CC-1 .. CC-6 and CC-8. CC-7 is raised by the harness during quote checking."""
     codes: list[str] = []
     has_sc = result.get("has_single_cell_assay")
     any_assay = result.get("perturbation_present_any_assay")
@@ -250,6 +274,12 @@ def checks(result: dict) -> list[str]:
         codes.append("CC-5")
     if result.get("processing_status") == "failed" and perts:
         codes.append("CC-6")
+    # CC-8. The article-type gate returns before Step 2, so a gated paper cannot
+    # have reached a perturbation by following the steps in order. Either the
+    # gate over-fired on a paper with its own experiments, or the experiments
+    # described belong to the papers under review.
+    if result.get("reports_primary_research") == "no" and perts:
+        codes.append("CC-8")
     return codes
 
 

@@ -37,9 +37,13 @@ cap:
   # v0.0.7 shape in miniature, so the unread copy is gone rather than kept for
   # symmetry.
 
-# CC-1 .. CC-6 are computed from the record; CC-7 is raised by the harness during
-# quote checking, when a quote cites a source_id that was never supplied. The
-# messages are the wording a curator reads.
+# CC-1 .. CC-6 and CC-8 are computed from the record; CC-7 is raised by the
+# harness during quote checking, when a quote cites a source_id that was never
+# supplied. The messages are the wording a curator reads.
+#
+# No count of this set is written anywhere, and CC-8 is appended rather than
+# slotted in. Renumbering is the documented trap that has already cost one
+# version boundary, and a stated count is the v0.0.12 failure shape.
 checks:
   CC-1: "has_single_cell_assay='no' but a perturbation is single_cell_paired='yes'"
   CC-2: "perturbation_present_any_assay='yes' with an empty perturbations array"
@@ -48,6 +52,7 @@ checks:
   CC-5: "has_single_cell_assay='unclear' with a single_cell_paired='yes'"
   CC-6: "processing_status='failed' with a non-empty perturbations array"
   CC-7: "a quote citing a source_id that was never supplied"
+  CC-8: "reports_primary_research='no' with a non-empty perturbations array"
 
 # Raised by the harness rather than computed from the record.
 harness_raised_checks: [CC-7]

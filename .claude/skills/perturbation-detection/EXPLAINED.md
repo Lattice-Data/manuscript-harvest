@@ -213,11 +213,14 @@ state it. Quotes are matched allowing for characters mangled by PDF extraction
 
 ## 7 · The verdict is computed, not generated
 
-The model reports **findings**. A fixed 7-line checklist, written in ordinary
-Python, turns findings into the answer. Same inputs → same answer, every time.
+The model reports **findings**. A fixed checklist, written in ordinary Python,
+turns findings into the answer. Same inputs → same answer, every time. (No count
+of the rules is given here on purpose — a stated count is the thing that goes
+stale when one is added, and one just was.)
 
 ```
  A0  text was unusable?                             → unclear
+ A-1 the paper reports no study of its own?         → not_applicable  ← a review
  A1  no perturbations found at all?                 → no  (or unclear)
  A2  no qualifying single-cell assay in the paper?  → no
  A3  assay present but unconfirmable?               → unclear

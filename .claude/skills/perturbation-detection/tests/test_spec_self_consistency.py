@@ -432,3 +432,69 @@ def test_an_exposure_requires_a_contrast(model_facing):
         "the clause no longer distinguishes itself from the uniformity precondition "
         "ruling 1 removed -- that one asked whether a CONSTRUCTION was uniform, and "
         "conflating them would re-open ruling 1")
+
+
+# ---------------------------------------------------------------------------
+# v0.0.23, curator batch 2026-09-15
+# ---------------------------------------------------------------------------
+
+def test_an_exposures_ORIGIN_decides_which_test_it_gets(model_facing):
+    """The contradiction the batch found, and it predated the batch.
+
+    The exposure bullet said "a pathogen: infection is exposure" while the
+    exclusion table said `observational_disease_state` covers "a naturally
+    occurring disease state... with no bench manipulation". A naturally acquired
+    human infection satisfies BOTH, and nothing broke the tie -- so the corpus
+    resolved it both ways on the same shape: 34 papers suppressed a natural
+    infection, 21 landing `no`, while 13 comparable papers landed `yes`.
+
+    Guarded because dropping either half re-opens it. Without the
+    investigator-applied half, ruling 9's western diet stops being a
+    perturbation; without the outside-the-study half, every lung atlas with a
+    COVID donor becomes one.
+    """
+    gq = _section(model_facing, "### THE GOVERNING QUESTION", "### Rules for tricky cases")
+    assert "WHO applied it decides which test the exposure gets" in gq, (
+        "the exposure origin clause is gone; a naturally acquired infection is "
+        "once again both an exposure and an observational state with no tiebreak")
+    assert "occurred outside the study" in gq, (
+        "the outside-the-study half is gone -- this is the half that keeps a "
+        "COVID donor in a lung atlas from being a perturbation")
+    assert "only where the paper's stated question is the response to it" in gq, (
+        "the subject test for an acquired exposure is gone, which is what "
+        "separates curator 2's COVID paper from the atlases")
+    assert "Ruling 9 is why an investigator-applied exposure does not need to be" in gq, (
+        "the clause no longer says which half ruling 9 owns, and ruling 9 is the "
+        "reason a fed diet is a perturbation in a paper about macrophage niches")
+
+
+def test_the_axis_sharpening_weighs_the_mention(model_facing):
+    """`10.1038/s41467-024-55440-2` was called `yes` because the contraception
+    arm "is used as a grouping variable" -- which is what this sharpening already
+    forbade. What was missing is that a grouping label can be nearly invisible:
+    one body mention, a donor-table footnote, one supplementary panel, against
+    headline axes of menopause and cycle phase."""
+    gq = _section(model_facing, "### THE GOVERNING QUESTION", "### Rules for tricky cases")
+    assert "WEIGH the mention" in gq, (
+        "the prominence clause is gone; an incidental attribution in one clause "
+        "promotes a cohort attribute again")
+    assert "ONLY in cohort description and a single supplementary comparison" in gq, (
+        "the clause no longer says what too-little looks like")
+    assert "the title, the abstract, the stated gap, the conclusions" in gq, (
+        "the clause no longer says where a paper states its subject, which is the "
+        "positive half and the part that keeps the COVID paper a perturbation")
+
+
+def test_no_beats_unclear_once_the_readout_is_named(spec):
+    """`10.1016/j.immuni.2020.03.019` scored "unclear" while its own reasoning
+    said "every reported readout of it is flow cytometry and the scRNaseq
+    populations were sorted separately" -- a verbatim restatement of the "no"
+    bullet. The three bullets described the distinction and never enforced it."""
+    step3 = _section(spec, "## Step 3: Pair perturbations", "### Organism of the paired")
+    assert '"no" beats "unclear" once you can NAME the readout' in step3, (
+        "Step 3 no longer states the precedence, so a paper whose treatment arm "
+        "was read by flow cytometry hedges to unclear whenever a single-cell "
+        "dataset exists elsewhere in the paper")
+    assert "not for residual unease about a call you have in fact made" in step3, (
+        "Step 3 no longer names the actual failure mode, which is hedging after "
+        "the call has been made")

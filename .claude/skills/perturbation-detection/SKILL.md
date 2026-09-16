@@ -1,6 +1,6 @@
 ---
 name: perturbation-detection
-description: Classify extracted scientific papers as perturbed / not perturbed / unclear for single-cell biocuration — detecting whether the samples actually profiled by a single-cell or single-nucleus sequencing assay were experimentally perturbed (drug, cytokine, stimulation, knockout/knockdown, hypoxia, diet, etc.). Use when asked to find, detect, score, or curate perturbations across a corpus of papers, to run "the perturbation prompt" or "the perturbation pipeline", to re-score papers under a new prompt version, or to check which papers in a manuscript corpus involve experimental manipulation. Works on directories of extracted paper text (blocks.jsonl), not on PDFs or DOIs directly.
+description: Classify extracted scientific papers as perturbed / not perturbed / unclear / not applicable for single-cell biocuration — detecting whether the samples actually profiled by a single-cell or single-nucleus sequencing assay were experimentally perturbed (drug, cytokine, stimulation, knockout/knockdown, hypoxia, diet, etc.). Use when asked to find, detect, score, or curate perturbations across a corpus of papers, to run "the perturbation prompt" or "the perturbation pipeline", to re-score papers under a new prompt version, or to check which papers in a manuscript corpus involve experimental manipulation. Works on directories of extracted paper text (blocks.jsonl), not on PDFs or DOIs directly.
 ---
 
 # Perturbation detection for single-cell biocuration
@@ -70,6 +70,29 @@ a single-cell/nucleus sequencing assay.** A perturbation somewhere in the paper
 plus a single-cell assay somewhere in the paper is *not* enough. Papers
 routinely perturb cells for a bulk RNA-seq / qPCR / Western / flow readout while
 the single-cell dataset comes from separate untreated samples — that is a "no".
+
+### What a determination is ABOUT, and what it is not
+
+A determination describes **the paper**, judged from its text. It does not
+describe the deposited dataset.
+
+The distinction has already produced a disagreement worth recording. In the
+2026-09-15 curator batch, `10.1038/s41586-021-03852-1` was ruled `no` partly
+because *"the samples are not included in the cellxgene collection"* — cytokine-
+treated organoids that the paper describes and that apparently never reached the
+collection. That is a fact about what was deposited, and it is not recoverable
+from the article at any prompt version.
+
+So: where collection contents and the paper disagree, **the curator overrides the
+pipeline**, and that override is not a pipeline defect. If the determination ever
+needs to follow the deposited data, the collection manifest has to become a
+second input to the run — a pipeline change, not a criteria change. Ruling 23 in
+`CURATOR-RULINGS.md` holds the case.
+
+A related consequence, decided in the same batch: a paper that reanalyses or
+integrates other groups' public data **is** primary research, and perturbed
+samples arriving that way still count. `prompt.md` Step 0b names this explicitly,
+because it is the obvious false positive for the article-type gate.
 
 ## Input
 
@@ -177,7 +200,7 @@ python -m pe.compare --baseline <old_run_dir>   # version-to-version diff
   | P5 | `no` but a perturbation exists elsewhere in the paper — the pairing filter fired; sample these |
   | P6 | any consistency or evidence flag — **or** an `unclear` with no usable reason, which used to sink to P9 |
   | P7 | `yes` carried entirely by a non-human model — a scope call, not a defect (v0.0.12) |
-  | P9 | everything else |
+  | P9 | everything else — including `not_applicable`, the reviews and commentaries the Step 0b gate turned away (v0.0.23). They are settled, not deferred: there is nothing for a curator to decide. Their count is on the `papers by perturbation_present` line of the run report, which is where to check how often the gate fired |
 
   **The ladder renumbered at prompt v0.0.10**, when P2 was inserted: the old
   P2–P5 are now P3–P6. Do not compare a priority column across prompt versions
