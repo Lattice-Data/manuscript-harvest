@@ -143,6 +143,158 @@ get right, both of which have cost a run before:
 
 - **No `--write-corpus` on either run.** An acceptance run is not a corpus
   update, and the stored records are the v0.0.22 baseline these are compared to.
-- **`--corpus ../../../corpus`, explicitly, on `pe.prepare`.** A stale 382-paper
-  tree sits inside this directory; both trees are gitignored, so a run over the
-  wrong one is invisible in git. Confirm `30/30 prepared` before stage 2.
+- **`--corpus <absolute path to the repo's corpus>`, explicitly, on
+  `pe.prepare`.** A stale 382-paper tree sits inside this directory; both trees
+  are gitignored, so a run over the wrong one is invisible in git. Confirm
+  `24/24 prepared` before stage 2. **The relative `../../../corpus` that
+  SKILL.md documents resolves against the CWD, so it is wrong from a git
+  worktree** — there it points at the worktree root, which has no corpus tree at
+  all, both trees being gitignored. `pe.prepare` refuses rather than preparing 0
+  papers and exiting 0, which is how this was caught on the first attempt at the
+  r1 run; pass the absolute path from anywhere but the main checkout.
+
+
+---
+
+# RESULTS, 2026-09-16
+
+Two runs, `work-accept-stageb-r1` and `-r2`, 24/24 each, validated, every quote
+verified, neither given `--write-corpus`. Run in parallel; neither hit a session
+limit and no abort sentinel fired. **Input identity verified before the runs
+rather than after**: all 24 prompt files byte-identical by sha256 across the two
+work dirs, `assembled_text_sha256` equal on all 24, one `pack_sha256`
+(`29fe1a8f…`) throughout.
+
+**Verdict: criterion 1 FAILS at 20 of 24. The diagnosis was half right, and the
+half that was right is now fixed.**
+
+| criterion | result |
+|---|---|
+| 1. self-report agrees across runs (BLOCKER) | **FAIL — 20/24** |
+| 2. harness-proved cap still holds | PASS — but via `pe.validate`'s override, see below |
+| 3. no non-negative was capped | PASS (exercised by 3 papers) |
+| 4. `stage_a` did not move | **FAIL — 1 paper** |
+| 5. expectations met | **FAIL — 2 papers, both prediction errors** |
+| 6. determination stable across runs | FAIL — 5 papers, downstream of 1 and 4 |
+
+## Where the instability went, by group
+
+| group | agreement | flips |
+|---|---|---|
+| **D — the 3 previously-known flippers** | **3/3** | none |
+| **C — the 6 harness-false-positive anchors** | **6/6** | none, all `full` |
+| **A — the 15 formerly-capped papers** | **11/15** | `science.aat1699`, `2021.09.16.460628`, `s41586-023-06981-x`, `atvbaha.122.317953` |
+
+**The three papers the change was written for all stopped flipping.**
+`bloodadvances.2023011445` — whose dangling `Associated Data / Supplementary
+Materials` tail is the artefact `ASSEMBLY:` was written to name — is `ok`/`full`
+and `no` in both runs. `healun.2026.02.1666`, which previously took two different
+routes to one cap, is `ok`/`full` in both. So the dangling-heading diagnosis was
+correct and naming the cuts fixed it.
+
+**And none of the six anchors over-fired**, which is the attractor the block
+could have caused and did not: every paper whose *harness* facts look degraded
+still reported `full`, in both runs.
+
+**10 of 15 caps released**, the predicted effect, landing inside the predicted
+5-to-10 range.
+
+## But the residual instability is a DIFFERENT mechanism, and it is measurable
+
+All four flips are in the degraded-text population, which **no previous
+acceptance set could measure** — `papers-accept-v0023.txt` held one such paper
+and `papers-50b` held none. So this is not a regression from 3/30; it is the
+first measurement of a rate that was never observed. Reading the four:
+
+| paper | r1 | r2 | what the two runs actually said |
+|---|---|---|---|
+| `science.aat1699` | `partial`/`full` | `ok`/`full` | r1: *"three large runs of garbled, non-linguistic characters"* in the SUPPLEMENT. r2: the main source is *"a coherent, complete Science report"*. **Both statements are true, about different sources.** The flip is a choice of which source to characterise, not a disagreement about facts |
+| `2021.09.16.460628` | `partial`/`methods_missing` | `ok`/`full` | r1: *"no methods content anywhere in either source, although the body repeatedly points to one ('see Computational Methods', 'see Methods')"* — specific, checkable, and corroborated by the extractor's own `body_sections_missing`. r2 did not check |
+| `s41586-023-06981-x` | `ok`/`full` | `partial`/`truncated` | r2 quotes the break verbatim: the Results *"break off mid-sentence inside the article at 'Between 18 and 22 GW, tissue growth had pressed these ventricular walls close together (Fig. 3b,c and'"*. **r2 is right and r1 is wrong** |
+| `atvbaha.122.317953` | `ok`/`truncated` | `ok`/`full` | r1 claims `truncated` and names no locus at all |
+
+**Three of the four are adjudicable by a quote, and the fourth is the unevidenced
+claim that would be normalised away.** That is Part 2 of `DESIGN-stage-b-gate.md`
+arriving as a measurement rather than an argument, and this document's own
+falsification clause named it in advance.
+
+**One correction to Part 2 as designed, from `s41586-023-06981-x`:** it specifies
+that `ends_mid_sentence` evidence must sit in the cited source's TAIL. This
+paper's break is mid-article, with content after it. The tail rule would have
+rejected a correct claim, so it must go.
+
+## Criterion 2 passed for the wrong reason, and that is a spec defect
+
+`sciimmunol.adz8650` and `genes15030298` — the two rung-3 papers — **both
+reported `ok`/`full` in both runs**, and `pe.validate` overrode each to
+`truncated` and re-capped (`STAGE-B-CAP MODEL=no`). The cap held, so the
+criterion passes.
+
+But the model was not wrong by the rule as written. Step 0 says `"full"` means
+*nothing missing beyond what `ASSEMBLY:` says was removed* — and for a
+budget-truncated paper, what is missing is exactly what `ASSEMBLY:` reports as
+removed. **`full` is the literally correct answer to the question v0.0.24
+asks**, while `pe.validate` treats that same answer as an error to correct. Two
+parts of one spec, disagreeing, with the harness winning silently. A one-line
+carve-out fixes it: a budget truncation `ASSEMBLY:` reports is not among the cuts
+that may be disregarded.
+
+## Criterion 4: one Stage A flip, unattributed
+
+`s41586-021-03852-1`: self-report stable (`ok`/`full` both runs), pairing moved —
+`stage_a` `unclear` in r1 and `yes` in r2, as two of its three perturbations went
+from `unclear` to `yes`. This is the *"three organoid growth conditions"* paper
+the v0.0.23 acceptance recorded as a genuine textual gap, and it was `unclear` in
+both v0.0.23 runs. One observation cannot say whether `ASSEMBLY:` moved it —
+telling a model that every table was removed is a plausible mechanism for
+re-weighing an unidentified condition — or whether a documented knife-edge simply
+fell the other way. **Recorded as open, not explained.**
+
+## Criterion 5: two prediction errors, not code defects
+
+Both were verified by reading the paired perturbation rather than the label:
+
+- `s41586-021-04345-x` (group C anchor, expected `no`) → `yes`, paired on
+  *"SARS-CoV-2 infection (naturally acquired, RT-qPCR-confirmed)"*.
+- `s41598-022-17832-6` (group A, `yes` disallowed) → `yes`, paired on *"cigarette
+  smoking (healthy current smokers versus never smokers)"*, with the record citing
+  the acquired-exposure subject test explicitly.
+
+Both are **v0.0.23's C1 applied correctly**; both expectations were written from
+the v0.0.22 baseline, which predates C1. This is the attribution gap this
+document predicted would be unavailable — and reading the agent closed it without
+paying for a v0.0.23 baseline run. The gate stays failed on them: an author who
+can relabel his own misses is not running a gate.
+
+## Part 3's premise is refuted by its own evidence
+
+The design called `processing_status: partial` with `text_completeness: full`
+internally contradictory and proposed collapsing the two fields. Both instances
+in these runs carry a located justification that says otherwise —
+`s41586-021-04345-x`: *"supp2 (the Nature Reporting Summary) arrived as a large
+run of mojibake and is essentially unreadable; the main article, including a
+complete Methods section, supp1 and supp3 are complete"*. That pair is the only
+way the current schema can say **"one source is garbage, the article is whole"**,
+and `aat1699`'s flip is caused by the absence of a per-source way to say it.
+Collapsing the fields would delete a distinction the model is using correctly.
+Part 3 needs rewriting: per-source text quality, and a home for `garbled_run`.
+
+## Cost
+
+| | papers | requests | wall-clock | model time | cost |
+|---|---|---|---|---|---|
+| r1 | 24 | 262 | 47m | 45m (96%) | **$36.28** |
+| r2 | 24 | 260 | 47m | 45m (96%) | **$35.63** |
+
+**$71.91 for the pass, $1.50/paper** — under the $88 predicted from v0.0.23's
+$1.84. Run in parallel, so ~50 minutes of wall clock for both. No price-drift
+warning in either run.
+
+## What this means for the corpus run
+
+**It does not start.** The order agreed on 2026-09-16 was this pass and then the
+corpus, conditional on the gate; the gate failed on its blocking criterion. A
+$721 corpus run under v0.0.24 would score 15-odd degraded papers whose cap is
+still a coin flip, and Part 2 is a prompt change, which means a version bump and
+a second $721 pass. The pass cost $72 and it has already paid for itself twice
+over: it found the spec defect in criterion 2 and it refuted Part 3's premise.

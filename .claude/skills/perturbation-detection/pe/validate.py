@@ -62,7 +62,7 @@ ROOT = Path(__file__).resolve().parent.parent
 # the record. None of it knows what a perturbation is.
 from task.rules import (  # noqa: E402
     CC_TEXT, checks as consistency_checks, decide, extra_field_issues, metrics,
-    progress_line, validate_items, validate_secondary,
+    progress_line, validate_defects, validate_items, validate_secondary,
 )
 
 _REC, _DEC = tables()["record"], tables()["decide"]
@@ -210,6 +210,7 @@ def validate_result(result: dict, sources_text: dict[str, str], threshold: float
                     expected_schema: str | None = None,
                     model_id: str | None = None,
                     needs_section_pass: bool = False,
+                    section_chars: dict | None = None,
                     pack_sha256: str | None = None) -> dict:
     """Verify quotes per source, prune, recompute the determination."""
     issues: list[str] = []
@@ -263,6 +264,7 @@ def validate_result(result: dict, sources_text: dict[str, str], threshold: float
 
     # prompt.md batch spec step 3: truncation is a harness fact the model cannot
     # see, so it is enforced here rather than trusted.
+    withheld = bool(truncated_by_harness or needs_section_pass)
     if truncated_by_harness and result.get("text_completeness") == "full":
         issues.append("harness truncated the text but the model reported "
                       "text_completeness='full'; treating it as 'truncated'")
@@ -311,6 +313,19 @@ def validate_result(result: dict, sources_text: dict[str, str], threshold: float
     checked += s_checked
     failed += s_failed
     wrong_source += s_wrong
+
+    # ---- text defects (v0.0.25) -------------------------------------------
+    # Stage B's entry condition. Verified with the same checker and the same
+    # threshold as every other quote, because a sub-field that gates a
+    # determination has to meet its parent's evidence standard or it degenerates
+    # into an emphasis marker -- the v0.0.10 lesson, applied to the gate.
+    # `withheld` is passed rather than read back off the record: the field it
+    # lands in is the PACK's to name, and `pe/` requiring a symbol only one pack
+    # defines is leak 1 of `test_second_pack.py` -- which is exactly how this was
+    # caught, one import too late.
+    defects, d_checked, d_rejected = validate_defects(
+        result, verify, issues, evidence_flags, section_chars, withheld)
+    checked += d_checked
 
     # ---- consistency + recomputation --------------------------------------
     cc_codes = consistency_checks(result)
@@ -504,7 +519,11 @@ def main() -> int:
             expected_schema=expected_schema, model_id=model_of(work, doi),
             pack_sha256=pack_sha,
             needs_section_pass=bool(
-                entry.get("truncation", {}).get("needs_section_pass")))
+                entry.get("truncation", {}).get("needs_section_pass")),
+            # Absent from manifests written before v0.0.25, and None then means
+            # "cannot refute" rather than "nothing was supplied" -- an older run
+            # revalidates without its defect claims being thrown away.
+            section_chars=entry.get("section_chars"))
 
         payload = json.dumps(result, indent=2)
         (work / "validated" / f"{doi}.json").write_text(payload)

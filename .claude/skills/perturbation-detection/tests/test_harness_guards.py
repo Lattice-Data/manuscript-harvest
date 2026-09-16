@@ -30,7 +30,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pe.paper_text import build_sources, split_assembled  # noqa: E402
 from pe.runroot import work_default  # noqa: E402
 from pe.validate import model_of, validate_result  # noqa: E402
-from task.rules import TEXT_COMPLETENESS, stage_b  # noqa: E402
+from task.rules import (  # noqa: E402
+    DEFECT_KINDS, HARNESS_UNREADABLE_FIELD, capping_defects, decide, stage_b,
+    validate_defects,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -38,36 +41,96 @@ ROOT = Path(__file__).resolve().parent.parent
 # --------------------------------------------------------------------------
 # Stage B must fail CLOSED
 # --------------------------------------------------------------------------
+#
+# These guards are v0.0.25 rewrites of the same lesson, on a different trigger.
+# The cap used to key on `text_completeness != "full"`, and the guard tested enum
+# membership FIRST -- so None, "", "Full" and "truncated " all escaped the cap and
+# kept the "no", while an honest "unknown" was capped. A safety mechanism a typo
+# switches off is not one.
+#
+# The trigger is now a verified quote plus a harness fact, so the typo has a new
+# shape: a defect claimed and BOTCHED. That has to be told apart from a defect
+# claimed and REFUTED, and the two must fail in opposite directions.
 
-@pytest.mark.parametrize("completeness", [None, "", "Full", "truncated ", "partial",
-                                          "unknown_value", 0])
-def test_stage_b_caps_a_no_on_any_value_that_is_not_full(completeness):
-    """prompt.md: cap when `text_completeness` is "anything other than 'full'".
-
-    The guard here used to be `text_completeness in TEXT_COMPLETENESS and
-    != "full"`, so every value above skipped the cap and kept the "no" — while
-    an honest "unknown" was capped. The safety mechanism failed OPEN on exactly
-    the input it should distrust most, and a typo switched it off.
-    """
-    assert stage_b("no", "ok", completeness) == ("unclear", True)
+def _clean() -> dict:
+    return {"processing_status": "ok", "text_completeness": "full",
+            "has_single_cell_assay": "yes", "reports_primary_research": "yes",
+            "perturbation_present_any_assay": "no", "perturbations": [],
+            "text_defects": []}
 
 
-def test_stage_b_still_does_not_cap_a_full_text_negative():
-    assert stage_b("no", "ok", "full") == ("no", False)
+@pytest.mark.parametrize("withheld", [True, 1, "yes", ["anything"]])
+def test_any_truthy_harness_fact_caps_a_negative(withheld):
+    """The harness's own finding cannot be argued with, and cannot be typed
+    wrong into oblivion: it is read for truthiness, not matched against a set."""
+    assert stage_b("no", withheld, []) == ("unclear", True)
 
 
-@pytest.mark.parametrize("verdict", ["yes", "unclear"])
-def test_stage_b_never_caps_a_positive(verdict):
+def test_stage_b_does_not_cap_when_neither_fact_is_present():
+    assert stage_b("no", False, []) == ("no", False)
+    assert stage_b("no") == ("no", False)
+
+
+@pytest.mark.parametrize("verdict", ["yes", "unclear", "not_applicable"])
+def test_stage_b_never_caps_a_non_negative(verdict):
     """The asymmetry is the point: missing text can hide the sentence that would
     have paired a perturbation, but it cannot invent one."""
-    assert stage_b(verdict, "partial", "truncated") == (verdict, False)
+    assert stage_b(verdict, True, [{"source_id": "main", "kind": "garbled_run"}]) \
+        == (verdict, False)
 
 
-def test_every_legal_completeness_value_is_still_covered():
-    """A tightened guard must not have loosened the enum it replaced."""
-    for value in TEXT_COMPLETENESS:
-        expected = ("no", False) if value == "full" else ("unclear", True)
-        assert stage_b("no", "ok", value) == expected
+@pytest.mark.parametrize("kind", DEFECT_KINDS)
+def test_every_defect_kind_caps_from_the_main_source(kind):
+    """A tightened trigger must not have loosened the set it replaced: whatever
+    the kind, a verified defect in the text the paper is made of caps."""
+    record = dict(_clean(), text_defects=[{"source_id": "main", "kind": kind}])
+    assert stage_b("no", False, capping_defects(record)) == ("unclear", True)
+
+
+@pytest.mark.parametrize("kind", DEFECT_KINDS)
+def test_a_supplementary_defect_caps_only_when_it_is_missing_methods(kind):
+    """The scope decision of 2026-09-16, as a property over every kind rather
+    than an example. A garbled table in a reporting summary could not have
+    hidden a pairing sentence; an absent methods section could, wherever it is.
+    """
+    record = dict(_clean(), text_defects=[{"source_id": "supp2", "kind": kind}])
+    capped = stage_b("no", False, capping_defects(record))[1]
+    assert capped is (kind == "no_methods_content"), (
+        f"{kind!r} in a supplementary source: capped={capped}")
+
+
+def test_a_botched_claim_caps_and_a_refuted_one_does_not():
+    """The v0.0.25 form of "a typo must not switch the safety off", and the one
+    asymmetry in this file that is easy to get backwards.
+
+    A quote the harness checked and could not find is a claim REFUTED: the
+    negative stands. An entry the harness could not read at all is a claim
+    UNKNOWN -- the model saw something and botched the report of it, which is no
+    evidence that the text is whole -- so the cap applies.
+    """
+    botched = dict(_clean(), text_defects=[
+        {"source_id": "main", "kind": "not_a_kind", "quote": "x"}])
+    validate_defects(botched, lambda q, src: {"verified": True}, [], set())
+    assert botched[HARNESS_UNREADABLE_FIELD] is True
+    assert decide(botched)[0] == "unclear"
+
+    refuted = dict(_clean(), text_defects=[
+        {"source_id": "main", "kind": "garbled_run", "quote": "never appears"}])
+    validate_defects(refuted, lambda q, src: {"verified": False}, [], set())
+    assert refuted[HARNESS_UNREADABLE_FIELD] is False
+    assert decide(refuted)[0] == "no"
+
+
+def test_a_quoteless_claim_is_botched_rather_than_believed():
+    """Only `no_methods_content` may omit its quote, because only it is an
+    absence. Anything else without one is unreadable, not true."""
+    record = dict(_clean(), text_defects=[
+        {"source_id": "main", "kind": "ends_mid_sentence"}])
+    issues: list = []
+    kept, _, _ = validate_defects(record, lambda q, src: {"verified": True},
+                                  issues, set())
+    assert kept == [] and record[HARNESS_UNREADABLE_FIELD] is True
+    assert any("carries no quote" in i for i in issues)
 
 
 # --------------------------------------------------------------------------

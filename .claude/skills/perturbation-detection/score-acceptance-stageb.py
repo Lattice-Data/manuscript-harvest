@@ -1,4 +1,4 @@
-"""Score the Stage B entry-condition acceptance runs (v0.0.24).
+"""Score the Stage B entry-condition acceptance runs (v0.0.25).
 
 **Lives at the skill root, NOT in `pe/`** -- `tests/test_seam.py` asserts the
 harness names no task word in code, and this file is hardcoded DOIs and
@@ -7,13 +7,16 @@ harness names no task word in code, and this file is hardcoded DOIs and
 
     python score-acceptance-stageb.py [--r1 DIR --r2 DIR] [--baseline DIR]
 
-**The primary criterion here is not a determination.** v0.0.24 changes nothing
-below Step 0: it states what the text pipeline removed and defines
-`text_completeness` = "full" against that statement. What it is trying to fix is
-a self-report that flipped on 3 of 30 papers between two byte-identical v0.0.23
-runs and took one determination with it. So criterion 1 is whether
-`(processing_status, text_completeness)` AGREES between the two runs, and it is
-the blocker.
+**The blocking criterion moved at v0.0.25, and the old one is kept for
+continuity.** Through v0.0.24 the cap read `(processing_status,
+text_completeness)`, so the blocker was whether those two agreed between runs:
+27/30 at v0.0.23, 20/24 at v0.0.24. The determination no longer reads them.
+**What blocks now is whether `stage_b_capped` itself agrees**, because the cap is
+keyed on a quote the harness verified rather than on a self-report -- and that is
+the claim this version makes. Both numbers are printed.
+
+The v0.0.24 results this file scored are written up in `ACCEPTANCE-v0.0.24.md`;
+the expectations below are v0.0.25's.
 
 The rest guard the ways this change could go wrong rather than right:
 
@@ -54,8 +57,12 @@ CAPPED = {
     # says "full" on a harness-truncated text; these two are where that fires.
     "10.1126_sciimmunol.adz8650": "unclear",
     "10.3390_genes15030298": "unclear",
+    # v0.0.25's sharpest prediction. Its defect is three garbled runs in a
+    # SUPPLEMENTARY source, and the scope rule says that cannot have hidden a
+    # pairing sentence -- so the cap releases and the paper lands on curator
+    # ruling 6's own answer, which the old trigger overrode to "unclear".
+    "10.1126_science.aat1699": "no",
     # Everything else: either outcome, stability enforced.
-    "10.1126_science.aat1699": None,
     "10.1101_2021.09.16.460628": None,
     "10.1038_s41586-020-2157-4": None,
     "10.1038_s41586-022-04817-8": None,
@@ -137,7 +144,7 @@ def main() -> int:
     print(hdr)
     print("=" * len(hdr))
 
-    quality_flips, stage_a_flips, det_unstable = [], [], []
+    quality_flips, stage_a_flips, det_unstable, _cap_flips = [], [], [], []
     wrong, cap_on_positive, harness_cap_lost = [], [], []
 
     for pid, exp, group, note, recs, base in rows:
@@ -153,6 +160,9 @@ def main() -> int:
 
         if q1 != q2:
             quality_flips.append((pid, q1, q2))
+        c1, c2 = bool(v1.get("stage_b_capped")), bool(v2.get("stage_b_capped"))
+        if c1 != c2:
+            _cap_flips.append((pid, c1, c2))
         if a1 != a2:
             stage_a_flips.append((pid, a1, a2))
 
@@ -210,8 +220,10 @@ def main() -> int:
         for v in ((recs[0].get("validation") or {}),)
         if v.get("stage_a") in ("yes", "unclear", "not_applicable"))
 
+    cap_flips = [(pid, a, b) for pid, a, b in _cap_flips]
     criteria = (
-        ("1. text-quality self-report agrees (BLOCKER)", quality_flips, None),
+        ("1. stage_b_capped agrees across runs (BLOCKER)", cap_flips, None),
+        ("1b. self-report agrees (continuity, not a gate)", quality_flips, None),
         ("2. harness-proved cap still holds", harness_cap_lost, None),
         ("3. no non-negative was capped", cap_on_positive, non_negative),
         ("4. stage_a did not move", stage_a_flips, None),
@@ -233,8 +245,10 @@ def main() -> int:
             verdict = "PASS"
         print(f"  {label:44} {verdict}")
 
-    print(f"\n  self-report stability   {scored - len(quality_flips)}/{scored}"
-          f"   (baseline: 3 flips in the 30 papers of the v0.0.23 acceptance)")
+    print(f"\n  CAP stability           {scored - len(cap_flips)}/{scored}"
+          f"   <- what v0.0.25 claims to fix")
+    print(f"  self-report stability   {scored - len(quality_flips)}/{scored}"
+          f"   (27/30 at v0.0.23, 20/24 at v0.0.24; no longer determinative)")
     print(f"  stage_a stability       {scored - len(stage_a_flips)}/{scored}")
 
     # What the change was FOR, reported as a number rather than an impression.

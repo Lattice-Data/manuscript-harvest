@@ -287,6 +287,40 @@ def build_sources(blocks: list[dict], exclude_sections=EXCLUDE_SECTIONS,
     return sources, stats
 
 
+def section_chars(blocks, exclude_sections=EXCLUDE_SECTIONS,
+                  include_kinds=INCLUDE_KINDS) -> dict[str, int]:
+    """How many characters reached the model under each section label.
+
+    Recorded in the manifest so a later stage can check a claim about an
+    ABSENCE. "There is no methods content" has no substring to verify, so the
+    only auditable question is how much labelled text was actually supplied --
+    and it has to be a QUANTITY rather than a yes/no, because a label can arrive
+    with nothing under it. `10.1126/science.aat1699` carries five
+    `methods`-labelled blocks totalling **228 characters**: two repeats of the
+    heading "Materials and Methods" and a list of supplementary figure captions.
+    Its `methods_missing` report is correct, and a check that asked only whether
+    the label existed would have refuted a true claim and quietly removed the cap
+    from the one corpus text that is genuinely broken.
+
+    Derived from the same filters `build_sources` applies, for the reason the
+    assembly note is derived rather than described: two statements of what was
+    kept would eventually disagree. Supplementary sources count -- a label is a
+    label wherever it was found, and methods frequently live in a supplement.
+
+    No threshold and no vocabulary here. Which labels mean what, and how much is
+    enough, are the task pack's business.
+    """
+    out: dict[str, int] = {}
+    for block in blocks:
+        if not block or block.get("kind") not in include_kinds:
+            continue
+        section = (block.get("section") or "").strip().lower()
+        if not section or any(x in section for x in exclude_sections):
+            continue
+        out[section] = out.get(section, 0) + len(block.get("text") or "")
+    return dict(sorted(out.items()))
+
+
 def source_marker(source: dict) -> str:
     return f"<<<SOURCE id={source['source_id']} type={source['source_type']}>>>"
 

@@ -26,6 +26,8 @@ The interface `pe/` relies on, and all a second pack must supply:
     metrics(record, ctx)                  -> ordered dict of task counters
     validate_secondary(record, verify, issues, flags)
                                           -> (entries, checked, failed, wrong)
+    validate_defects(record, verify, issues, flags, section_chars,
+                     harness_withheld)    -> (entries, checked, rejected)
 """
 
 from __future__ import annotations
@@ -105,6 +107,25 @@ if _REF_POINTS_AT != _ITEM_PATH:
 
 CC_TEXT = dict(_DEC["checks"])
 _CAP = _DEC["cap"]
+
+#: The text-quality array, v0.0.25. Field names and closed sets only -- the rules
+#: that read them are `validate_defects` and `capping_defects` below.
+_DEFECTS = _REC["defect_array"]
+_DEFECT_PATH = _DEFECTS["path"]
+_DEFECT_SOURCE = _DEFECTS["source_field"]
+_DEFECT_KIND = _DEFECTS["kind_field"]
+_DEFECT_QUOTE = _DEFECTS["quote_field"]
+DEFECT_KINDS = tuple(_DEFECTS["kinds"])
+_UNQUOTABLE = frozenset(_DEFECTS["unquotable_kinds"])
+_METHODS_NAMES = tuple(n.lower() for n in _DEFECTS["methods_section_names"])
+_METHODS_MIN_CHARS = int(_DEFECTS["methods_min_chars"])
+
+#: The harness's own fields, by role. Named here so nothing writes them under a
+#: literal of its own, and keyed rather than ordered so inserting one cannot
+#: silently repoint another.
+HARNESS_FIELDS = dict(_REC["harness_written_fields"])
+HARNESS_WITHHELD_FIELD = HARNESS_FIELDS["withheld"]
+HARNESS_UNREADABLE_FIELD = HARNESS_FIELDS["defect_unreadable"]
 
 
 def _open_field_issues(obj: dict, prefix: str, declared: dict) -> list[str]:
@@ -214,23 +235,56 @@ def stage_a(result: dict) -> str | None:
     return "no"
 
 
-def stage_b(stage_a_result: str | None, processing_status: str,
-            text_completeness: str) -> tuple[str | None, bool]:
-    """prompt.md Stage B: cap a negative drawn from degraded text.
+def capping_defects(result: dict) -> list[dict]:
+    """The verified defects that are in scope for the cap, per `decide.yaml`.
 
-    Returns (determination, capped). The asymmetry is deliberate: missing text
-    can hide the sentence that would have paired a perturbation to a single-cell
-    assay, but it cannot invent one, so only "no" is capped.
+    Scope is a curator decision of 2026-09-16, and it follows from what the cap
+    is FOR: missing text can hide the sentence that would pair a perturbation to
+    a qualifying assay. A garbled table in a supplementary reporting summary
+    cannot hide that sentence, so it does not withhold a negative; an absent
+    methods section can, wherever it lives, so it does from any source.
 
-    `decide.yaml: cap.when_completeness_not` is "full", meaning ANYTHING other
-    than "full" -- including a malformed or absent value. The guard here used to
-    test membership of the legal enum first, so None, "", "Full" and "truncated "
-    all escaped the cap and kept the "no" while an honest "unknown" was capped. A
-    safety mechanism a typo switches off is not one.
+    Reads only entries still on the record. `validate_defects` has already
+    dropped the ones whose quote did not verify, so an unevidenced claim is not
+    in this list to begin with.
     """
-    degraded = (processing_status == _CAP["when_status"]
-                or text_completeness != _CAP["when_completeness_not"])
-    if degraded and stage_a_result == _CAP["from"]:
+    in_scope = set(_CAP["when_defect_in_sources"])
+    any_source = set(_CAP["when_defect_kind_any_source"])
+    return [d for d in (result.get(_DEFECT_PATH) or []) if isinstance(d, dict)
+            and (d.get(_DEFECT_KIND) in any_source
+                 or str(d.get(_DEFECT_SOURCE)) in in_scope)]
+
+
+def stage_b(stage_a_result: str | None, harness_withheld: bool = False,
+            defects: list | None = None) -> tuple[str | None, bool]:
+    """prompt.md Stage B: cap a negative drawn from text that is missing content.
+
+    Returns (determination, capped). The asymmetry is deliberate and unchanged:
+    missing text can hide the sentence that would have paired a perturbation to a
+    single-cell assay, but it cannot invent one, so only "no" is capped.
+
+    **What changed at v0.0.25 is the ENTRY CONDITION, not the cap.** It was
+    `processing_status == "partial" OR text_completeness != "full"` -- two
+    paper-level self-reports of the text's quality, with no evidence behind
+    either. Those flipped on byte-identical input in two consecutive acceptance
+    passes: 3 of 30 papers under v0.0.23, and 4 of 24 under v0.0.24 after the
+    assembly block had removed the largest single cause. A safety mechanism whose
+    trigger is an adjective is not reproducible, and the papers it protects are
+    exactly the ones whose determination then depends on which pass you ran.
+
+    So the trigger is now two auditable facts, either of which is sufficient:
+
+    `harness_withheld` -- the truncation ladder ran. The model cannot see this
+    and cannot dispute it, and it is what keeps the cap on the two corpus papers
+    that do not fit the budget with Methods preserved.
+
+    `defects` -- in-scope entries from `capping_defects`, i.e. observations the
+    model made AND the harness could verify against the source they cite. A
+    claim whose quote does not verify never reaches here.
+    """
+    gate = bool(harness_withheld and _CAP["when_harness_withheld"]) or bool(defects)
+
+    if gate and stage_a_result == _CAP["from"]:
         return _CAP["to"], True
     return stage_a_result, False
 
@@ -244,8 +298,12 @@ def decide(result: dict) -> tuple[str | None, str | None, bool]:
     a = stage_a(result)
     if a is None:
         return None, None, False
-    final, capped = stage_b(a, result.get("processing_status"),
-                            result.get("text_completeness"))
+    # Either harness fact opens the gate. `defect_claim_unreadable` is the
+    # fail-closed half: a defect claimed and botched is a claim nobody could
+    # check, which is not the same as a claim checked and found false.
+    withheld = bool(result.get(HARNESS_WITHHELD_FIELD)
+                    or result.get(HARNESS_UNREADABLE_FIELD))
+    final, capped = stage_b(a, withheld, capping_defects(result))
     return final, a, capped
 
 
@@ -297,6 +355,152 @@ def _normalize_quote_entry(entry, default_source: str = "main") -> tuple[str, st
     if isinstance(entry, dict):
         return str(entry.get("source_id") or default_source), str(entry.get("quote") or ""), False
     return default_source, str(entry or ""), True
+
+
+# ---------------------------------------------------------------------------
+# The text-quality array, which IS determinative -- it gates Stage B
+# ---------------------------------------------------------------------------
+
+def methods_claim_refuted(section_chars: dict | None) -> bool:
+    """Is "there is no methods content" contradicted by what was supplied?
+
+    **One-way on purpose.** `True` means a substantial methods-labelled section
+    reached the model, so the claim is false. `False` means only that this cannot
+    refute it -- NOT that the claim is true. 15 of the 392 corpus papers supply
+    zero methods-labelled characters and most of them are correctly "full",
+    because JATS and Science put methods under labels the extractor never
+    matched. The label measures labelling, not content.
+
+    A quantity rather than a presence test, because a label can arrive with
+    nothing under it: see `methods_min_chars` in record.yaml for the measurement
+    and for the paper whose whole methods section is two copies of its heading.
+    """
+    if not isinstance(section_chars, dict):
+        return False
+    total = sum(int(n or 0) for label, n in section_chars.items()
+                if any(name in str(label).lower() for name in _METHODS_NAMES))
+    return total >= _METHODS_MIN_CHARS
+
+
+def validate_defects(result: dict, verify, issues: list[str], flags: set[str],
+                     section_chars: dict | None = None,
+                     harness_withheld: bool = False) -> tuple[list, int, int]:
+    """Verify and normalize `text_defects`. Returns (kept, checked, rejected).
+
+    `verify(quote, claimed_source)` is the harness's own quote check, passed in
+    for the same reason `validate_secondary` takes it: the matching logic stays
+    in `pe/` and only the field names and the wording live here.
+
+    **An unverifiable claim is dropped, not kept.** That is the opposite of
+    `validate_secondary`, which keeps a suppressed candidate whose quote failed,
+    and the asymmetry is the point: a suppression is a record of a decision
+    already made, while a defect entry is a LICENCE TO CAP. Keeping one the
+    harness could not confirm would put the unevidenced adjective back -- which
+    is the entire defect v0.0.25 exists to remove. `atvbaha.122.317953` claimed
+    "truncated" in one v0.0.24 run and named no locus at all; under this function
+    that claim is dropped and the negative stands.
+
+    `no_methods_content` is the one kind that cannot be quoted, because it is an
+    ABSENCE -- there is no substring to find. It is FALSIFIED instead, against
+    the `section_chars` the manifest records, and only ever in the direction that
+    kills a false claim: see `methods_claim_refuted`. Both papers that reported
+    it in the v0.0.24 runs survive that check -- `2021.09.16.460628` supplies no
+    methods-labelled text at all and `science.aat1699` supplies 228 characters of
+    it, which is two copies of the heading.
+    """
+    # The harness's own finding, recorded under the name this pack declares. It
+    # is written here rather than in `pe/` so the harness never names a field
+    # only one pack has -- and it is a field of its own rather than an overwrite
+    # of `text_completeness`, because prompt.md is explicit that two owners for
+    # one field would make it unreadable.
+    result[HARNESS_WITHHELD_FIELD] = bool(harness_withheld)
+
+    raw = result.get(_DEFECT_PATH)
+    if raw is None:
+        issues.append(
+            f"{_DEFECT_PATH} missing; the schema requires it. Use [] when the "
+            f"text has no defect -- which is the normal and common answer")
+        raw = []
+    elif not isinstance(raw, list):
+        issues.append(f"{_DEFECT_PATH} is not a list")
+        raw = []
+
+    kept, checked, rejected, unreadable = [], 0, 0, 0
+    for entry in raw:
+        if not isinstance(entry, dict):
+            issues.append(f"{_DEFECT_PATH} entry is not an object: {entry!r}")
+            rejected += 1
+            unreadable += 1
+            continue
+        kind = entry.get(_DEFECT_KIND)
+        source = str(entry.get(_DEFECT_SOURCE) or "")
+        if kind not in DEFECT_KINDS:
+            issues.append(
+                f"{_DEFECT_PATH}: {kind!r} is not one of {list(DEFECT_KINDS)}")
+            rejected += 1
+            unreadable += 1
+            continue
+
+        if kind in _UNQUOTABLE:
+            # Cannot be confirmed; can be refuted.
+            if methods_claim_refuted(section_chars):
+                issues.append(
+                    f"{_DEFECT_PATH}: {kind!r} claimed, but at least "
+                    f"{_METHODS_MIN_CHARS:,} characters of methods-labelled text "
+                    f"WERE supplied, so the claim is refuted and dropped")
+                flags.add("EV-DEFECT-REFUTED")
+                rejected += 1
+                continue
+            kept.append(entry)
+            continue
+
+        quote = entry.get(_DEFECT_QUOTE)
+        if not isinstance(quote, str) or not quote.strip():
+            issues.append(
+                f"{_DEFECT_PATH}: {kind!r} in {source!r} carries no quote. Only "
+                f"{sorted(_UNQUOTABLE)} may omit one, because only they are an "
+                f"absence; everything else must point at the text it found")
+            flags.add("EV-DEFECT-UNVERIFIED")
+            rejected += 1
+            unreadable += 1
+            continue
+
+        checked += 1
+        check = verify(quote, source)
+        if not check.get("verified"):
+            issues.append(
+                f"{_DEFECT_PATH}: the quote for {kind!r} does not verify against "
+                f"{source!r}, so the claim is dropped and does not cap")
+            flags.add("EV-DEFECT-UNVERIFIED")
+            rejected += 1
+            continue
+        if check.get("source_id") and check["source_id"] != source:
+            # Same treatment the item array gets: the text is real, the
+            # attribution is not, so correct it rather than dropping evidence.
+            entry[_DEFECT_SOURCE] = check["source_id"]
+            flags.add("EV-WRONG-SOURCE")
+        kept.append(entry)
+
+    result[_DEFECT_PATH] = kept
+    # Fails closed. See `decide.yaml: inputs.defect_unreadable` for why this is
+    # the opposite treatment from a quote that simply did not verify.
+    result[HARNESS_UNREADABLE_FIELD] = unreadable > 0
+    if unreadable:
+        issues.append(
+            f"{unreadable} {_DEFECT_PATH} entr{'y' if unreadable == 1 else 'ies'} "
+            f"could not be read at all, so the cap is applied rather than "
+            f"released: an unreadable claim is not a refuted one")
+
+    # A degraded self-report with nothing behind it. Not a consistency code: the
+    # model has not contradicted itself, it has simply asserted something the
+    # harness cannot see, and the assertion no longer decides anything. Reported
+    # so a curator can tell "the text is fine" from "nobody could check".
+    completeness = result.get("text_completeness")
+    if completeness not in (None, "full") and not kept and not harness_withheld:
+        issues.append(
+            f"text_completeness={completeness!r} with no verified {_DEFECT_PATH} "
+            f"entry: the claim carries no evidence, so it does not cap")
+    return kept, checked, rejected
 
 
 # ---------------------------------------------------------------------------
