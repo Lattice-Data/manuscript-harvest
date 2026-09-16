@@ -240,6 +240,9 @@ Echo `task_version` as "{{TASK_VERSION}}".
 PAPER_ID: {{PAPER_ID}}
 SOURCE_IDS: {{SOURCE_IDS}}
 
+ASSEMBLY:
+{{ASSEMBLY}}
+
 PAPER_TEXT:
 {{PAPER_TEXT}}
 ```
@@ -283,7 +286,8 @@ def _minimal_pack(base: Path) -> None:
                  "placeholders": {"paper_id": "{{PAPER_ID}}",
                                   "paper_text": "{{PAPER_TEXT}}",
                                   "source_ids": "{{SOURCE_IDS}}",
-                                  "task_version": "{{TASK_VERSION}}"},
+                                  "task_version": "{{TASK_VERSION}}",
+                                  "assembly": "{{ASSEMBLY}}"},
                  "read_back_marker": "\nPAPER_TEXT:"},
     }, sort_keys=False))
     (base / "task" / "record.yaml").write_text(yaml.safe_dump({

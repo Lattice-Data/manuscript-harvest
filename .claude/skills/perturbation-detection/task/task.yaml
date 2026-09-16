@@ -52,7 +52,14 @@ name: perturbation-detection
 # widened rather than a second rule beside it. Rulings 12 and 13 add the cheap
 # first test: if the animals were simply born in the diseased state, nothing was
 # applied and it is the model.
-version: 0.0.23
+# 0.0.24 changes no criterion at all. It states, to the model, what the text
+# pipeline removed before the model saw anything -- reference lists, back matter,
+# every table, and Discussion/Introduction when the budget ladder ran -- and
+# defines `text_completeness` = "full" against that statement. Step 0 was asking
+# whether a text was complete while nothing told the reader which cuts were the
+# pipeline's own, and 154 of 392 corpus papers end on a bare heading because of
+# one of those cuts. It is a Step 0 change and nothing below Step 0 is touched.
+version: 0.0.24
 
 # What the model is asked, in one line, for a reader deciding whether this pack
 # is the one they want. The criteria live in prompt.md and nowhere else.
@@ -86,6 +93,10 @@ spec:
     paper_text: "{{PAPER_TEXT}}"
     source_ids: "{{SOURCE_IDS}}"
     task_version: "{{TASK_VERSION}}"
+    # What the pipeline removed before the model saw anything, rendered per
+    # paper by `pe.prepare.assembly_note`. A fact about one assembly, so it
+    # cannot be written into the spec -- the same reason `source_ids` is here.
+    assembly: "{{ASSEMBLY}}"
   # The line pe.validate searches for, backwards, to recover exactly the bytes
   # the model was shown. Stated here so the writer and the reader cannot
   # disagree about it.

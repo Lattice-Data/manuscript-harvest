@@ -199,7 +199,8 @@ def test_an_incomplete_pack_names_the_missing_field(field):
                                    "schema_end": "c"},
                        "placeholders": {"paper_id": "{{P}}", "paper_text": "{{T}}",
                                         "source_ids": "{{S}}",
-                                        "task_version": "{{V}}"}}}
+                                        "task_version": "{{V}}",
+                                        "assembly": "{{A}}"}}}
     del config[field]
     with pytest.raises(PackError) as exc:
         TaskPack(config, ROOT)

@@ -1,0 +1,74 @@
+# Acceptance set for the Stage B entry-condition work (v0.0.24). 30 papers.
+#
+# `papers-accept-v0023.txt` CANNOT test a Stage B change: it holds exactly one
+# degraded-text paper, and that one (`science.aat1699`) is capped, so the cap
+# masks its Stage A answer. Same blind spot `papers-50b` had, for the same
+# reason -- an acceptance set has to contain papers the change can act on.
+#
+# Run it TWICE. The primary criterion of this version is not a determination at
+# all: it is whether the text-quality self-report AGREES between two runs of the
+# same paper. Measured baseline, v0.0.23 acceptance: 3 of 30 flipped, and one
+# took a determination with it.
+#
+#   python -m pe.prepare --set papers-accept-stageb.txt --work <W> --corpus <repo>/corpus
+#   ... run stage 2 ...
+#   python score-acceptance-stageb.py
+#
+# Groups, and what each one can prove. Columns after the paper are MEASURED from
+# the v0.0.22 baseline and the corpus extraction sidecars, not guessed.
+
+# --- A. the 15 Stage-B-capped papers: the population at risk ------------------
+# All `unclear` / `degraded_text` today. Allowed outcomes are `unclear` (the cap
+# holds) or `no` (it releases, because the defect was the pipeline's own cut);
+# what must not happen is a disagreement between the two runs, or a `yes`.
+# `rung` is the harness's own truncation ladder; `meth` is whether the extractor
+# found a methods label anywhere in the supplied text.
+10.1126_science.aat1699            # rung 0  meth NO   323 control chars/10k, 3 pages missing: the one genuinely broken text
+10.1101_2021.09.16.460628          # rung 0  meth NO   harness agrees no methods label is present
+10.1126_sciimmunol.adz8650         # rung 3  meth yes  HARNESS truncated: cap must hold whatever the model says
+10.3390_genes15030298              # rung 3  meth yes  HARNESS truncated: cap must hold whatever the model says
+10.1038_s41586-020-2157-4          # rung 0  meth yes
+10.1038_s41586-022-04817-8         # rung 0  meth yes
+10.1038_s41586-023-06981-x         # rung 0  meth NO
+10.1038_s41591-021-01586-1         # rung 0  meth yes  tail is a cut medRxiv licence footer
+10.1038_s41598-022-17832-6         # rung 0  meth yes
+10.1101_2020.03.04.976407          # rung 0  meth yes
+10.1101_2023.03.06.531398          # rung 0  meth yes  15 supplements declared, 0 fetched
+10.1101_2024.09.05.611379          # rung 0  meth yes
+10.1101_2024.10.18.618987          # rung 0  meth yes
+10.1126_science.abo1984            # rung 0  meth yes  reported `unknown`, the self-report with no content
+10.1161_atvbaha.122.317953         # rung 0  meth yes
+
+# --- B. degraded self-report, NOT capped: the asymmetry ----------------------
+# Stage B caps negatives only. These four are `yes` on text the model called
+# degraded and must stay `yes` -- a cap reaching a positive would invert the
+# rule the cap exists to express.
+10.1016_j.mucimm.2026.03.012       # yes, partial/truncated
+10.1016_j.isci.2021.102151         # yes, ok/truncated
+10.1038_s41586-022-04518-2         # yes, partial/truncated
+10.1038_s41586-024-07476-z         # yes, partial/truncated
+# And the review: `not_applicable` under v0.0.23, `methods_missing` because it
+# HAS no methods. v0.0.23 wrote the carve-out that keeps the cap off it.
+10.1016_j.coi.2022.102188          # not_applicable, must never be capped
+
+# --- C. false-positive anchors: all `no`, all self-reported `full` -----------
+# Papers whose HARNESS facts look degraded while the model correctly said the
+# text was complete. They are what a harness-keyed cap would wrongly capture --
+# `coverage < 0.50` fires on 11 papers of 392 and covers 0 of the 15 above --
+# and without them the set cannot detect a gate that over-fires.
+10.1126_science.abo7257            # section coverage 0.00, no body section label anywhere
+10.1096_fj.202300601rrr            # section coverage 0.23
+10.1126_science.aat5031            # coverage 1.00 AND no methods label: the pure labelling miss
+10.1038_s41467-020-19737-2         # 210 control chars/10k, the garbled-run surface
+10.1126_science.abf3041            # 165 control chars/10k and no methods label
+10.1038_s41586-021-04345-x         # 65 control chars/10k, coverage 0.75
+
+# --- D. the three known self-report flippers: the headline probe -------------
+# These flipped `processing_status`/`text_completeness` between two runs of
+# v0.0.23 on byte-identical input. If the assembly block works, they stop.
+10.1182_bloodadvances.2023011445   # full -> truncated; Stage B capped r2 only; determination moved
+10.1016_j.healun.2026.02.1666      # partial/full -> ok/truncated: two routes to one cap
+10.1038_s41586-021-03852-1         # truncated -> full while staying `unclear` through A5
+
+# --- E. a positive whose harness facts look degraded ------------------------
+10.1016_j.ccell.2023.08.015        # yes, section coverage 0.41

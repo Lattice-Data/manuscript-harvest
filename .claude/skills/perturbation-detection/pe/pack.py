@@ -136,7 +136,13 @@ class TaskPack:
                    if not self.anchors.get(k)]
         if missing:
             raise PackError(f"task.yaml spec.anchors is missing {missing}")
-        missing = [k for k in ("paper_id", "paper_text", "source_ids", "task_version")
+        # `assembly` is required, not optional. It carries what the text pipeline
+        # removed before the model saw anything, and a pack that omits it asks the
+        # model to judge the completeness of a text whose cuts nobody declared --
+        # which is the failure it was added for. Optional would mean silently
+        # absent, and a key nobody reads looks like it works and does not.
+        missing = [k for k in ("paper_id", "paper_text", "source_ids",
+                               "task_version", "assembly")
                    if not self.placeholders.get(k)]
         if missing:
             raise PackError(f"task.yaml spec.placeholders is missing {missing}")
