@@ -1,4 +1,4 @@
-# Acceptance set for the Stage B entry-condition work (v0.0.24). 30 papers.
+# Acceptance set for the Stage B entry-condition work (v0.0.24). 24 papers.
 #
 # `papers-accept-v0023.txt` CANNOT test a Stage B change: it holds exactly one
 # degraded-text paper, and that one (`science.aat1699`) is capped, so the cap
@@ -8,7 +8,7 @@
 # Run it TWICE. The primary criterion of this version is not a determination at
 # all: it is whether the text-quality self-report AGREES between two runs of the
 # same paper. Measured baseline, v0.0.23 acceptance: 3 of 30 flipped, and one
-# took a determination with it.
+# took a determination with it. 22 of these 24 are papers that flip or could.
 #
 #   python -m pe.prepare --set papers-accept-stageb.txt --work <W> --corpus <repo>/corpus
 #   ... run stage 2 ...
@@ -39,17 +39,21 @@
 10.1126_science.abo1984            # rung 0  meth yes  reported `unknown`, the self-report with no content
 10.1161_atvbaha.122.317953         # rung 0  meth yes
 
-# --- B. degraded self-report, NOT capped: the asymmetry ----------------------
-# Stage B caps negatives only. These four are `yes` on text the model called
-# degraded and must stay `yes` -- a cap reaching a positive would invert the
-# rule the cap exists to express.
-10.1016_j.mucimm.2026.03.012       # yes, partial/truncated
-10.1016_j.isci.2021.102151         # yes, ok/truncated
-10.1038_s41586-022-04518-2         # yes, partial/truncated
-10.1038_s41586-024-07476-z         # yes, partial/truncated
-# And the review: `not_applicable` under v0.0.23, `methods_missing` because it
-# HAS no methods. v0.0.23 wrote the carve-out that keeps the cap off it.
-10.1016_j.coi.2022.102188          # not_applicable, must never be capped
+# --- B. dropped, and what that costs -----------------------------------------
+# Six papers were cut from a 30-paper draft to 24: the four `yes` papers on
+# degraded text (`j.mucimm.2026.03.012`, `j.isci.2021.102151`,
+# `s41586-022-04518-2`, `s41586-024-07476-z`), the review
+# (`j.coi.2022.102188`), and `j.ccell.2023.08.015`. They were there to prove the
+# cap never reaches a non-negative, and that is a CODE invariant, not a model
+# behaviour: `task.rules.stage_b` rewrites a "no" and nothing else, and
+# `tests/test_harness_guards.py` asserts it over every Stage A value and every
+# legal `text_completeness`. Paying the model to re-confirm a parametrized test
+# was the weakest $22 in the set.
+#
+# What it costs, stated rather than glossed: criterion 3 ("no non-negative was
+# capped") is now exercised by exactly ONE paper -- `s41586-021-03852-1` in
+# group D, which is `unclear` through A5 and whose self-report flipped. If the
+# cap ever reached a non-negative, that is where this set would see it.
 
 # --- C. false-positive anchors: all `no`, all self-reported `full` -----------
 # Papers whose HARNESS facts look degraded while the model correctly said the
@@ -69,6 +73,3 @@
 10.1182_bloodadvances.2023011445   # full -> truncated; Stage B capped r2 only; determination moved
 10.1016_j.healun.2026.02.1666      # partial/full -> ok/truncated: two routes to one cap
 10.1038_s41586-021-03852-1         # truncated -> full while staying `unclear` through A5
-
-# --- E. a positive whose harness facts look degraded ------------------------
-10.1016_j.ccell.2023.08.015        # yes, section coverage 0.41

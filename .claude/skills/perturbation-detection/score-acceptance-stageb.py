@@ -21,7 +21,10 @@ The rest guard the ways this change could go wrong rather than right:
      two papers must stay capped whatever the model reports -- if telling the
      model about the truncation talks it out of reporting one, `pe.validate`'s
      override is the backstop and must be seen to fire.
-  3  no positive is ever capped, and the review is never capped.
+  3  no non-negative is ever capped. Exercised by one paper here rather than by
+     the four degraded-text positives a longer draft carried: that property is a
+     code invariant, and the scorer says NOT EXERCISED rather than PASS if even
+     that one paper does not reach a non-negative Stage A.
   4  Stage A does not move. v0.0.24 touches Step 0 only, so a Stage A flip means
      the assembly block leaked into the criteria -- the v0.0.10 attractor shape.
   5  the false-positive anchors stay `no` and stay uncapped.
@@ -68,14 +71,13 @@ CAPPED = {
 }
 
 # paper -> (expected determination, group, note)
+#
+# The four degraded-text positives, the review and `j.ccell.2023.08.015` were in
+# a 30-paper draft and are deliberately NOT here. They existed to show the cap
+# never reaches a non-negative, which `task.rules.stage_b` guarantees by only
+# ever rewriting a "no" and `tests/test_harness_guards.py` asserts over every
+# Stage A value. See `criterion 3` below for what their absence costs.
 EXPECT = {
-    # B: the cap never reaches a positive
-    "10.1016_j.mucimm.2026.03.012": ("yes", "positive", "degraded text, still yes"),
-    "10.1016_j.isci.2021.102151": ("yes", "positive", "degraded text, still yes"),
-    "10.1038_s41586-022-04518-2": ("yes", "positive", "degraded text, still yes"),
-    "10.1038_s41586-024-07476-z": ("yes", "positive", "degraded text, still yes"),
-    "10.1016_j.coi.2022.102188": ("not_applicable", "review",
-                                  "v0.0.23 carve-out: a review has no pairing to hide"),
     # C: harness facts look degraded, the model was right that they are not
     "10.1126_science.abo7257": ("no", "anchor", "section coverage 0.00"),
     "10.1096_fj.202300601rrr": ("no", "anchor", "section coverage 0.23"),
@@ -89,8 +91,6 @@ EXPECT = {
     "10.1016_j.healun.2026.02.1666": ("no", "flipper", "two routes to one cap"),
     "10.1038_s41586-021-03852-1": ("unclear", "flipper",
                                    "unclear via A5, NOT degraded_text"),
-    # E
-    "10.1016_j.ccell.2023.08.015": ("yes", "positive", "coverage 0.41, still yes"),
 }
 
 for pid, want in CAPPED.items():
@@ -200,22 +200,41 @@ def main() -> int:
             print(f"    pending: {pid}")
         return 1
 
+    # How many papers could actually TRIP criterion 3. With the degraded-text
+    # positives out of the set, "no non-negative was capped" is held by one paper
+    # -- and a criterion that prints PASS over zero applicable papers is the
+    # vacuous-pass shape, so the count is printed beside the verdict rather than
+    # left to be assumed.
+    non_negative = sum(
+        1 for pid, exp, group, note, recs, base in rows if all(recs)
+        for v in ((recs[0].get("validation") or {}),)
+        if v.get("stage_a") in ("yes", "unclear", "not_applicable"))
+
     criteria = (
-        ("1. text-quality self-report agrees (BLOCKER)", quality_flips),
-        ("2. harness-proved cap still holds", harness_cap_lost),
-        ("3. no non-negative was capped", cap_on_positive),
-        ("4. stage_a did not move", stage_a_flips),
-        ("5. expectations met", wrong),
-        ("6. determination stable across runs", det_unstable),
+        ("1. text-quality self-report agrees (BLOCKER)", quality_flips, None),
+        ("2. harness-proved cap still holds", harness_cap_lost, None),
+        ("3. no non-negative was capped", cap_on_positive, non_negative),
+        ("4. stage_a did not move", stage_a_flips, None),
+        ("5. expectations met", wrong, None),
+        ("6. determination stable across runs", det_unstable, None),
     )
     failed = False
-    for label, items in criteria:
-        print(f"  {label:44} {'PASS' if not items else 'FAIL: ' + str(items)}")
+    for label, items, exercised in criteria:
         if items:
+            verdict = "FAIL: " + str(items)
             failed = True
+        elif exercised == 0:
+            verdict = ("NOT EXERCISED -- no paper in this set reached a "
+                       "non-negative Stage A, so this is not a pass. Held by "
+                       "task.rules.stage_b and tests/test_harness_guards.py")
+        elif exercised is not None:
+            verdict = f"PASS (exercised by {exercised} paper(s))"
+        else:
+            verdict = "PASS"
+        print(f"  {label:44} {verdict}")
 
     print(f"\n  self-report stability   {scored - len(quality_flips)}/{scored}"
-          f"   (v0.0.23 baseline: 27/30)")
+          f"   (baseline: 3 flips in the 30 papers of the v0.0.23 acceptance)")
     print(f"  stage_a stability       {scored - len(stage_a_flips)}/{scored}")
 
     # What the change was FOR, reported as a number rather than an impression.

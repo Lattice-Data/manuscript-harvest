@@ -5,8 +5,10 @@ different claims, so the results go at the bottom of this file, appended, with
 nothing above them edited. Score with `python score-acceptance-stageb.py`, which
 exits non-zero when any criterion fails.
 
-Set: `papers-accept-stageb.txt`, 30 papers in five labelled groups. **Two runs**,
-because one run cannot separate an attractor from run-to-run variance.
+Set: `papers-accept-stageb.txt`, **24 papers** in three labelled groups. **Two
+runs**, because one run cannot separate an attractor from run-to-run variance —
+and because a single run cannot measure run-to-run agreement at all, which is
+this version's whole subject.
 
 ## What changed, and what it deliberately did not
 
@@ -24,21 +26,36 @@ proposed in `DESIGN-stage-b-gate.md` are deliberately NOT in this version: if
 stating the cuts is enough, they are unnecessary, and the v0.0.10 episode is why
 a new required field does not ride along with the change that may obviate it.
 
-## Why `papers-accept-v0023.txt` could not be reused
+## Why `papers-accept-v0023.txt` could not be reused, and why this set is 24
 
 It holds exactly one degraded-text paper, `science.aat1699`, and that one is
 capped — so the cap masks its Stage A answer and the set can neither see a cap
 release nor a cap that wrongly fires. Same blind spot `papers-50b` had.
 
+The set was drafted at 30 and cut to 24. Out went the four `yes` papers on
+degraded text, the review, and `j.ccell.2023.08.015`: they were there to show the
+cap never reaches a non-negative, and that is a **code invariant rather than a
+model behaviour** — `task.rules.stage_b` rewrites a `"no"` and nothing else, and
+`tests/test_harness_guards.py` asserts it over every Stage A value and every
+legal `text_completeness`. Paying the model to re-confirm a parametrized test was
+the weakest $22 in the set.
+
+**What the cut costs, stated rather than glossed:** criterion 3 is now exercised
+by exactly one paper, `s41586-021-03852-1` — `unclear` through A5, with a
+self-report that flipped between the v0.0.23 runs. The scorer prints **NOT
+EXERCISED** rather than PASS if even that paper fails to reach a non-negative
+Stage A, because a criterion that passes over zero applicable papers is the
+vacuous-pass shape this repo keeps finding.
+
 ## The gate
 
 | # | criterion | why it is here |
 |---|---|---|
-| 1 | **the text-quality self-report agrees between the two runs, on all 30** | the whole point of the version. BLOCKER |
+| 1 | **the text-quality self-report agrees between the two runs, on all 24** | the whole point of the version. BLOCKER |
 | 2 | the two rung-3 papers stay capped | where the harness itself truncated, the cap must not depend on the model's opinion |
-| 3 | no `yes`, `unclear` or `not_applicable` is ever capped | Stage B's asymmetry is the rule it exists to express |
+| 3 | no `yes`, `unclear` or `not_applicable` is ever capped | Stage B's asymmetry is the rule it exists to express. One paper exercises it; the scorer says so and refuses to call an unexercised criterion a pass |
 | 4 | `stage_a` does not move on any paper | Step 0 only was edited; a Stage A flip means the new block reached the criteria |
-| 5 | every strict expectation is met | the anchors and the positives |
+| 5 | every strict expectation is met | the six false-positive anchors, the three flippers, and the two harness-truncated papers |
 | 6 | determinations agree between the two runs | the consequence criterion 1 is aimed at |
 
 Failing 1 means stating the cuts was not enough, and Part 2 of the design (an
@@ -47,10 +64,12 @@ Failing 4 is the attractor, and is the reason for two runs.
 
 ## Predictions
 
-**Self-report stability: 30 of 30.** Baseline is 27 of 30 — `bloodadvances`
+**Self-report stability: 24 of 24.** The baseline is 3 flips across the 30
+papers of the v0.0.23 acceptance — `bloodadvances`
 (`full` → `truncated`, and the determination moved), `healun`
 (`partial`/`full` → `ok`/`truncated`), `s41586-021-03852-1` (`truncated` →
-`full`). All three are in group D of the new set.
+`full`). All three are in group D of this set, and 22 of these 24 papers are ones that
+flipped or could.
 
 **Caps released: 5 to 10 of the 15.** This is the loosest prediction in the
 document and it is loose on purpose — per paper, the question is whether the
@@ -68,13 +87,13 @@ clearest case: its supplied text ends mid-clause on a medRxiv licence footer
 (`"...in perpetuity. It is made"`) that running-header removal cut in half.
 
 **Determination movement against the v0.0.22 baseline: unattributable, by
-construction.** There is no v0.0.23 corpus run, so a `no` → `yes` on these 30
+construction.** There is no v0.0.23 corpus run, so a `no` → `yes` on these 24
 could be v0.0.23's infection rule rather than anything here. The scorer says so
 rather than absorbing it, and takes `--baseline` for a v0.0.23 run over the same
 set if one is made. **This is a cost of the decision not to run the corpus after
 v0.0.23, not a defect of this set.**
 
-**Stage A: 30 of 30 stable, and 0 movements.** Step 0 does not feed Stage A
+**Stage A: 24 of 24 stable, and 0 movements.** Step 0 does not feed Stage A
 except through the cap.
 
 ## What would falsify the diagnosis
@@ -93,12 +112,19 @@ v0.0.10 attractor in the opposite direction. Criterion 2 catches exactly that.
 
 ## Cost
 
-30 papers x 2 runs at the $1.84/paper measured in the v0.0.23 acceptance ≈
-**$110**. A v0.0.23 baseline over the same set, if wanted for criterion 6, is one
-more run: **+$55**.
+24 papers x 2 runs at the $1.84/paper measured in the v0.0.23 acceptance ≈
+**$88**. A v0.0.23 baseline over the same set, if wanted for criterion 6, is one
+more run: **+$44**.
 
-For comparison: the full 392-paper corpus is ~$720 at the same rate, and it has
-not been run since v0.0.22.
+For comparison: the full 392-paper corpus is **~$721** at the same rate, and it
+has not been run since v0.0.22. So this pass is **12%** of the corpus run — and
+the argument for spending it first is not caution but arithmetic: **a single
+corpus run cannot measure run-to-run agreement**, so $721 would buy an updated
+corpus while leaving this version's own question unanswered. If the flip rate has
+not moved, Part 2 of the design is the next version, and a version bump means
+scoring the corpus again.
+
+Approved order, 2026-09-16: this pass, then the corpus run.
 
 ## How to run it
 
