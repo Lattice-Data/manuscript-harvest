@@ -1,7 +1,44 @@
 # Stage B's entry condition — measurement and proposed design
 
-**Status: approved 2026-09-16. Part 1 is BUILT as v0.0.24; Parts 2 and 3 are held
-until Part 1 is measured.** Written 2026-09-15 against the stored
+**Status: Part 1 BUILT and MEASURED as v0.0.24 — the gate failed on its blocking
+criterion, and the measurement changed both remaining parts.** Results in
+`ACCEPTANCE-v0.0.24.md`; the four findings that bear on this document:
+
+1. **Part 1 worked on what it was aimed at.** The three previously-known
+   flippers all stopped flipping (3/3 agree), none of the six
+   harness-false-positive anchors over-fired (6/6, all `full`), and 10 of 15 caps
+   released. The dangling-heading diagnosis of §2 was correct.
+2. **Part 2 is now indicated by measurement, not argument.** Self-report
+   agreement is 20/24, with all four flips in the degraded-text population — a
+   rate no previous acceptance set could measure. Three of the four are
+   adjudicable by a quote (a verbatim mid-sentence break, dangling
+   cross-references to absent methods, located garbled runs) and the fourth
+   claims `truncated` with no locus at all.
+3. **One correction to Part 2 as specified below:** the requirement that
+   `ends_mid_sentence` evidence sit in the source's TAIL must go.
+   `s41586-023-06981-x` broke off mid-article with content after it, and the tail
+   rule would have rejected a correct claim.
+4. **Part 3's premise is refuted.** §3 calls `partial` + `full` internally
+   contradictory. Both instances in the runs justify it precisely —
+   *"supp2 arrived as a large run of mojibake... the main article, including a
+   complete Methods section, supp1 and supp3 are complete"* — so that pair is
+   the only way this schema can say **one source is garbage, the article is
+   whole**, and `aat1699`'s flip is caused by having no per-source way to say it.
+   Collapsing the fields would delete a distinction the model uses correctly.
+   What Part 3 should become: **per-source text quality, and a home for
+   `garbled_run`**, which currently has none in the `text_completeness` enum.
+
+**Also found, and not yet fixed:** Step 0 defines `"full"` as nothing missing
+beyond what `ASSEMBLY:` reports, which makes `"full"` the literally correct answer
+on a budget-truncated paper — while `pe.validate` overrides that same answer.
+Both rung-3 papers did exactly this in both runs. One spec, two answers, harness
+winning silently; a one-line carve-out in Step 0 fixes it and needs approval like
+any other Step 0 edit.
+
+---
+
+**Original status: approved 2026-09-16. Part 1 is BUILT as v0.0.24; Parts 2 and 3
+are held until Part 1 is measured.** Written 2026-09-15 against the stored
 `work-corpus-v0022-revalidate` records and the corpus's own extraction sidecars.
 Every number below is measured from files on disk; nothing here cost a model call.
 
