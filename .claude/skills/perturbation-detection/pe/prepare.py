@@ -95,7 +95,7 @@ def build_template(pack) -> str:
     marker = f"PAPER_ID: {pack.placeholders['paper_id']}"
     if marker not in instruction:
         raise PackError(f"the instruction block has no {marker!r} line")
-    for key in ("paper_text", "source_ids"):
+    for key in ("paper_text", "source_ids", "assembly"):
         placeholder = pack.placeholders[key]
         if placeholder not in instruction:
             raise PackError(
@@ -155,6 +155,80 @@ def sources_within_budget(blocks, exclude, include, include_supplementary, budge
     sources, stats, truncation = last
     truncation["needs_section_pass"] = True
     return sources, stats, truncation
+
+
+def assembly_note(sources, stats, truncation, exclude_sections, include_kinds,
+                  include_supplementary: bool = True) -> str:
+    """What this pipeline removed before the model saw anything, told to the model.
+
+    The text handed over is not the published article. Every source has had its
+    reference list, acknowledgments, funding, competing-interest and
+    data-availability sections and all back matter removed; no table and no
+    figure image is supplied at all; and on a long paper the ladder above drops
+    Discussion and Introduction to fit the budget. **None of that was stated
+    anywhere the model could read it**, and it was asked in the same breath
+    whether the text was complete.
+
+    That is measurable rather than theoretical. 154 of the 392 corpus papers end
+    on a bare heading with nothing under it -- "Associated Data", "Supplementary
+    Materials", "Footnotes" -- because the excluded sections took the content and
+    left the label; 192 end without terminal punctuation. On
+    `10.1182/bloodadvances.2023011445` every harness fact says complete (JATS
+    origin, 0.98 section coverage, all five body sections found, supplement
+    fetched and read, ladder rung 0) and the text ends on exactly such a
+    dangling heading. Two byte-identical runs of that paper reported "full" and
+    "truncated" and the determination moved with it. Asked whether that text
+    "ends abruptly", a reader with no statement of what was cut is answering a
+    coin flip.
+
+    So the facts are stated. Everything here is derived from the assembly that
+    just happened -- the source list, the config's own exclusion and kind lists,
+    the rung actually used -- rather than restated, because a description of the
+    pipeline maintained by hand beside the pipeline is a description that goes
+    stale. Identical inputs render an identical note, which is the whole point:
+    the field it informs has to stop moving between runs.
+    """
+    kept = ", ".join(f"{s['source_id']} ({s['char_count']:,} chars)" for s in sources)
+    supp_seen = stats.get("supp_files_seen") or 0
+    # Counted from the sources actually handed over, NOT from
+    # `stats['supp_files_kept']`. The last rung of the ladder drops every
+    # supplement but the largest and rebuilds only `chars`, so a paper with five
+    # supplements truncated to one still reports five kept -- and the note would
+    # then tell the model four files reached it that did not. The whole point of
+    # this block is that its facts are the assembly's, so it counts the assembly.
+    supp_kept = sum(1 for s in sources if s["source_type"] == "supplementary")
+    # `--no-supplementary` returns before the counters are filled, so 0-of-0 would
+    # read as "the publisher listed none" when it means "this run asked for none".
+    # Two different facts, and the model's answer to Step 0 turns on which it is.
+    supp_line = (f"supplementary files: {supp_kept} supplied of {supp_seen} found"
+                 if include_supplementary else
+                 "supplementary files: none supplied -- this run was configured to "
+                 "skip them, whatever the publisher listed")
+    lines = [
+        "This block is the text pipeline describing its own output. It is not part "
+        "of the paper: never quote from it.",
+        f"sources supplied: {kept}",
+        supp_line,
+        "sections removed from every source before you saw it: "
+        + ", ".join(exclude_sections),
+        "content supplied as: " + ", ".join(include_kinds)
+        + ". Nothing else reached you -- in particular no tables and no figure images.",
+    ]
+    if truncation.get("truncated"):
+        dropped = ", ".join(truncation.get("dropped_sections") or []) or "none"
+        note = (f"budget truncation applied by the pipeline: yes (rung "
+                f"{truncation['rung']}) -- these sections were dropped to fit the "
+                f"budget: {dropped}")
+        if truncation.get("largest_supp_only"):
+            note += "; only the largest supplementary file was kept"
+        lines.append(note)
+    else:
+        lines.append("budget truncation applied by the pipeline: none")
+    if truncation.get("needs_section_pass"):
+        lines.append(
+            "the pipeline ran out of ways to fit this paper in the budget, so "
+            "content was dropped beyond the sections named above")
+    return "\n".join(lines)
 
 
 def main() -> int:
@@ -264,6 +338,8 @@ def main() -> int:
             blocks, exclude, include, include_supp, budget)
         paper_text = assemble_paper_text(sources)
         source_ids = ", ".join(s["source_id"] for s in sources)
+        assembly = assembly_note(sources, stats, truncation, exclude, include,
+                                 include_supp)
 
         # Only the LAST {{PAPER_TEXT}} is the injection point. The instruction
         # block also mentions `{{PAPER_TEXT}}` as prose in Step 0 ("may be
@@ -273,6 +349,11 @@ def main() -> int:
         filled = (f"{head}{paper_text}{tail}"
                   .replace(pack.placeholders["paper_id"], doi)
                   .replace(pack.placeholders["source_ids"], source_ids)
+                  # What was removed before the model saw anything. Spliced the
+                  # same way as the source ids, and for the same reason: it is a
+                  # fact about THIS assembly, so it cannot be written into the
+                  # spec.
+                  .replace(pack.placeholders["assembly"], assembly)
                   # The version the model echoes, substituted rather than
                   # written into the spec. This is what makes "one version"
                   # structural instead of a rule somebody has to remember.

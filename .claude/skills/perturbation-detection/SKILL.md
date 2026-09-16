@@ -320,6 +320,23 @@ python -m pe.compare --baseline <old_run_dir>   # version-to-version diff
 - `table` blocks are deliberately excluded: a Cell Press KEY RESOURCES TABLE
   lists every reagent in the lab, and this task turns on the *role* a reagent
   plays, not its presence.
+- **The text the model sees is not the published article, and since v0.0.24 the
+  prompt says so.** Every source arrives with its reference list,
+  acknowledgments, funding, competing-interest and data-availability sections and
+  all back matter removed, no tables and no figure images at all, and on a long
+  paper no Discussion or Introduction. Step 0 was asking whether the text was
+  complete with none of that stated: **154 of the 392 corpus papers end on a bare
+  heading with nothing under it** — "Associated Data", "Supplementary Materials" —
+  because the exclusion list took the content and left the label. That is what
+  made `text_completeness` flip on byte-identical input, and the cap flip with
+  it. `pe.prepare.assembly_note` now states the cuts per paper in an `ASSEMBLY:`
+  block rendered from the assembly that just ran, and `"full"` is defined as
+  *nothing missing beyond what `ASSEMBLY:` says was removed*. **If you add a
+  filter to `config.yaml: exclude_sections` or `include_kinds`, the block picks it
+  up automatically — do not restate it in `prompt.md`**, which is the drift this
+  design avoids. Acceptance set: `papers-accept-stageb.txt`, scored by
+  `score-acceptance-stageb.py`, whose blocking criterion is agreement of the
+  self-report between two runs rather than any determination.
 
 ## Changing the criteria
 
