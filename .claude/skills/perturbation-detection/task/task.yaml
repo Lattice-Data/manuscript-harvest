@@ -52,6 +52,7 @@ name: perturbation-detection
 # widened rather than a second rule beside it. Rulings 12 and 13 add the cheap
 # first test: if the animals were simply born in the diseased state, nothing was
 # applied and it is the model.
+#
 # 0.0.24 changes no criterion at all. It states, to the model, what the text
 # pipeline removed before the model saw anything -- reference lists, back matter,
 # every table, and Discussion/Introduction when the budget ladder ran -- and
@@ -59,7 +60,15 @@ name: perturbation-detection
 # whether a text was complete while nothing told the reader which cuts were the
 # pipeline's own, and 154 of 392 corpus papers end on a bare heading because of
 # one of those cuts. It is a Step 0 change and nothing below Step 0 is touched.
-version: 0.0.24
+#
+# 0.0.25 moves Stage B's trigger off two paper-level adjectives and onto two
+# auditable facts: the truncation ladder having run, and a defect the model
+# pointed at with a quote the harness could verify. `text_defects` is the new
+# required array; `processing_status` and `text_completeness` stay on the record
+# and stop deciding anything. Measured cause: the old trigger flipped on 3 of 30
+# byte-identical papers at 0.0.23 and 4 of 24 at 0.0.24, and three quarters of
+# those eight flips were adjudicable by a quote the model had already read.
+version: 0.0.25
 
 # What the model is asked, in one line, for a reader deciding whether this pack
 # is the one they want. The criteria live in prompt.md and nowhere else.

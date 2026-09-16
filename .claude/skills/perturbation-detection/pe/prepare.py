@@ -24,7 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pe.paper_text import (  # noqa: E402
     EXCLUDE_SECTIONS, INCLUDE_KINDS, assemble_paper_text, build_sources,
-    read_blocks_jsonl,
+    read_blocks_jsonl, section_chars,
 )
 
 try:
@@ -394,6 +394,13 @@ def main() -> int:
             } for s in sources],
             "assembled_text_sha256": hashlib.sha256(paper_text.encode()).hexdigest(),
             "truncation": truncation,
+            # What the model can be asked about. A later stage checks claims of
+            # ABSENCE against this: "there is no methods content" has no
+            # substring to verify, so the only auditable question is how much
+            # labelled text was supplied. A QUANTITY, not a yes/no -- a label can
+            # arrive with nothing under it, and one corpus paper's entire
+            # methods section is two copies of its own heading.
+            "section_chars": section_chars(blocks, exclude, include),
             "assembly_stats": {k: v for k, v in stats.items() if v not in ([], 0)},
         })
         supp_note = ""

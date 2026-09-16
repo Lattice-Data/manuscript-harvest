@@ -1,6 +1,23 @@
 # Stage B's entry condition — measurement and proposed design
 
-**Status: Part 1 BUILT and MEASURED as v0.0.24 — the gate failed on its blocking
+**Status: Part 1 measured as v0.0.24; Part 2 BUILT as v0.0.25 and not yet
+measured. Part 3 is WITHDRAWN** — its premise was refuted by v0.0.24's runs (see
+finding 4 below), and what survives of it, per-source quality, shipped inside
+Part 2 as `text_defects[].source_id`.
+
+**Part 2 as built differs from Part 2 as designed in four places, all of them
+because something was measured:** the tail rule is gone (`s41586-023-06981-x`
+breaks mid-article); the methods falsification keys on a measured character
+threshold rather than the label's presence (`aat1699` carries 228 characters of
+`methods` that are two copies of its heading, so the label test would have
+refuted a true claim); an entry that cannot be read caps while one whose quote
+fails verification does not (the two are opposite states, and v0.0.5's lesson
+was that a safety mechanism a typo switches off is not one); and the cap's scope
+is main-source-plus-missing-methods-anywhere, by curator decision.
+
+---
+
+**Earlier status: Part 1 BUILT and MEASURED as v0.0.24 — the gate failed on its blocking
 criterion, and the measurement changed both remaining parts.** Results in
 `ACCEPTANCE-v0.0.24.md`; the four findings that bear on this document:
 
@@ -311,3 +328,100 @@ unauditable adjective over text the pipeline itself cut.
 `science.aat1699` is **`no`**. Stage B reports `unclear` for it. On the single paper in
 this corpus whose text is genuinely broken — three pages missing, 323 control
 characters per 10k — the cap's output is not the curator's answer.
+
+---
+
+# Part 2, as specified for build (2026-09-16)
+
+Approved in direction after the v0.0.24 measurement. Written before any code, and
+one decision is left open at the bottom because it moves determinations.
+
+## The shape, and four things it deliberately does not do
+
+```jsonc
+"text_completeness": "full",          // UNCHANGED: paper-level, same 4 values
+"text_defects": [                     // NEW, required, [] is the normal answer
+  {"source_id": "supp2",
+   "kind": "garbled_run",             // one of 4 closed kinds
+   "quote": "…ÃÂ¢ÃÂÃÂ ÃÂ¢ÃÂÃÂ…"}   // verified against THAT source
+]
+```
+
+- **`text_completeness` keeps its four values and its type.** No new enum value,
+  no per-source rewrite of the field. 392 stored records, the summary CSV,
+  `decide.yaml: inputs` and `change.py` all stay valid, and v0.0.23 set the
+  precedent: `not_applicable` got its own `determination_labels` set rather than
+  widening the shared `labels`. `garbled_run` gets a home as a defect KIND, which
+  is where it was always needed — `processing_status` has been carrying it.
+- **`text_defects` is where per-source lives.** `science.aat1699` flipped because
+  one run described the garbled supplement and the other the intact main text;
+  both were true, and the schema had no way to hold both. Now it does.
+- **No tail rule.** Part 2's first draft required cut evidence to sit in the
+  cited source's tail. `s41586-023-06981-x` breaks off mid-article with content
+  after it, so the tail rule would have rejected the one claim that was right.
+- **`partial` + `full` stays legal.** Measured, justified verbatim, and the only
+  way to say *one source is garbage, the article is whole*. Part 3's collapse is
+  withdrawn.
+
+## What the harness does with it
+
+| kind | how the harness checks it |
+|---|---|
+| `ends_mid_sentence` | `verify_quote_sourced` against the cited source, anywhere in it |
+| `explicit_cut_marker` | same |
+| `garbled_run` | same |
+| `no_methods_content` | **cannot be quoted — it is an absence.** `quote: null` is legal for this kind alone, and the harness FALSIFIES rather than confirms: reject the claim if a methods-labelled block was supplied. `aat1699` and `2021.09.16.460628` both survive that check; the extractor's own `body_sections_missing` names `methods` for both |
+
+A claim whose quote does not verify is **normalised, not obeyed**: the defect
+entry is dropped, an `issue` is filed, and it cannot cap. That is the existing
+one-way override at `pe/validate.py:264` pointed the other way, and it is what
+`atvbaha.122.317953` needs — it claimed `truncated` in r1 and named no locus at
+all.
+
+## What the cap then reads
+
+Stage B's entry condition becomes a harness-computed gate over auditable inputs,
+replacing `processing_status == "partial" OR text_completeness != "full"`:
+
+1. the harness withheld text — `truncation.rung > 0` or `needs_section_pass`; or
+2. at least one **verified** `text_defects` entry is in scope (see below).
+
+`processing_status` and `text_completeness` stay on the record and stay the
+model's own summary. They stop being the trigger.
+
+## Attractor guards, all four from the v0.0.10 episode
+
+1. **Precedence first:** decide the text's integrity, then record why.
+   `text_defects` justifies a judgment and never creates one.
+2. **`[]` is the normal, correct and common answer** — and the prompt says the
+   number: 20 of the 24 acceptance papers, and 372 of 392 corpus papers, report
+   no defect.
+3. **Negatives named concretely, from v0.0.24's own measurement:** the dangling
+   heading, the stripped reference list, the absent table, the unsupplied
+   supplement, the budget-dropped Discussion, a review with no Methods.
+4. **Same evidence standard as `perturbations[]`** — the same verifier, the same
+   threshold.
+
+## The Step 0 carve-out, which v0.0.24's criterion 2 forced
+
+Step 0 defines `"full"` as *nothing missing beyond what `ASSEMBLY:` says was
+removed*, which makes `"full"` correct on a budget-truncated paper while
+`pe.validate` overrides it. Both rung-3 papers did exactly that, twice. The
+carve-out: **a budget truncation `ASSEMBLY:` reports is a defect, not a
+disregardable cut** — so the model reaches the harness's answer instead of being
+corrected into it.
+
+## OPEN: which sources' defects cap
+
+This is the one decision left, because it moves determinations and it touches a
+curator ruling.
+
+The cap exists because missing text can hide the sentence that would pair a
+perturbation to a qualifying assay. A garbled TABLE in a supplementary Reporting
+Summary cannot hide that sentence. A missing Methods section can, wherever it
+lives — including in a supplement.
+
+| option | `aat1699` | note |
+|---|---|---|
+| **any source** | `unclear` | today's behaviour. Contradicts curator ruling 6, which is `no` |
+| **main source, plus `no_methods_content` in any source** | **`no`** | mechanical, follows from the cap's stated purpose, and lands on the curator's own answer |

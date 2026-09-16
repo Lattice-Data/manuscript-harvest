@@ -210,6 +210,11 @@ CONTENT_PARENTS = {
     "signals", "perturbation", "assay",     # keyword banks, and each bank's groups
     "classes",                              # change-class names, looked up by value
     "enums", "run_states", "open_fields",   # value sets and the fields they cover
+    # `inputs` maps a label to a record path and `change.determination_inputs`
+    # walks the whole mapping; the labels are never looked up by name. The five
+    # original ones passed this guard by coincidence -- each happened to appear
+    # as a quoted string elsewhere in the code -- and v0.0.25's two did not.
+    "inputs",
     "normalisers", "field_checks", "checks",
     "column_limits", "single_cell_assay_types",   # {per_item, total} splatted as kwargs
 }
@@ -372,6 +377,11 @@ def validate_items(record, verify, issues, flags):
 
 def validate_secondary(record, verify, issues, flags):
     return [], 0, 0, 0
+
+
+def validate_defects(record, verify, issues, flags, section_chars=None,
+                     harness_withheld=False):
+    return [], 0, 0
 
 
 def metrics(record, ctx):

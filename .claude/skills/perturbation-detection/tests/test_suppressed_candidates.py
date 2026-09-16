@@ -395,8 +395,14 @@ def test_renumbered_ladder_matches_prompt_step_10():
         }])
     assert triage_priority(low_conf_yes) == 9
 
+    # v0.0.25: what caps is a verified defect in the main source, not a
+    # `partial` self-report. The subject here is the TIER, so the record is
+    # built the way the cap now reads it.
     degraded = _scored(processing_status="partial", text_completeness="truncated",
-                       unresolved_reason="degraded_text")
+                       unresolved_reason="degraded_text",
+                       text_defects=[{"source_id": "main",
+                                      "kind": "no_methods_content",
+                                      "quote": None}])
     assert degraded["perturbation_present"] == "unclear"
     assert triage_priority(degraded) == 4
 

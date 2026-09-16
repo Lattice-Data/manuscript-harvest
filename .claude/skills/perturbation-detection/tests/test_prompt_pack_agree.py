@@ -101,6 +101,9 @@ GUARDED = {
     # so it is still checked, against its own set rather than against `labels`.
     "determination_labels": "perturbation_present",
     "primary_research": "reports_primary_research",
+    # v0.0.25. The defect kinds gate Stage B, so the spec and the pack stating
+    # them separately is the shape that split 386 records from 6 at v0.0.12.
+    "defect_kinds": "kind",
 }
 #: Fields that must carry `labels` exactly. `perturbation_present` is NOT one of
 #: them any more -- see `determination_labels` above. Widening `labels` itself
@@ -118,6 +121,7 @@ def _pack_set(pack: dict, name: str) -> list[str]:
         "category": rec["item_array"]["enums"]["category"],
         "suppression_rules": rec["secondary_arrays"][0]["reasons"],
         "determination_labels": rec["determination_labels"],
+        "defect_kinds": rec["defect_array"]["kinds"],
         "primary_research": rec["primary_research"],
     }[name]
 

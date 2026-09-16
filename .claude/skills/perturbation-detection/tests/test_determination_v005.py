@@ -129,20 +129,29 @@ def test_a1_precedes_a2_v005_ordering():
 # --------------------------------------------------------------------------
 
 def test_stage_b_caps_only_negatives():
-    assert stage_b("no", "partial", "full") == ("unclear", True)
-    assert stage_b("no", "ok", "truncated") == ("unclear", True)
-    assert stage_b("no", "ok", "methods_missing") == ("unclear", True)
-    assert stage_b("no", "ok", "unknown") == ("unclear", True)
-    assert stage_b("no", "ok", "full") == ("no", False)
+    """v0.0.25 rewrote the TRIGGER, not the cap. Two facts open the gate now:
+    the harness having withheld text, and a verified in-scope defect."""
+    main_defect = [{"source_id": "main", "kind": "garbled_run"}]
+    assert stage_b("no", True, []) == ("unclear", True)
+    assert stage_b("no", False, main_defect) == ("unclear", True)
+    assert stage_b("no", False, []) == ("no", False)
     # Positives and unclears are never capped: missing text can hide evidence
     # but cannot manufacture it.
-    assert stage_b("yes", "partial", "truncated") == ("yes", False)
-    assert stage_b("unclear", "partial", "truncated") == ("unclear", False)
+    assert stage_b("yes", True, main_defect) == ("yes", False)
+    assert stage_b("unclear", True, main_defect) == ("unclear", False)
 
 
 def test_stage_b_is_the_v004_to_v005_delta():
-    """A paper that was "no" under v0.0.4 becomes "unclear" on degraded text."""
+    """A paper that was "no" under v0.0.4 becomes "unclear" on degraded text.
+
+    Written with `methods_missing` when that self-report WAS the trigger. The
+    delta it guards is unchanged -- a negative drawn from incomplete text is not
+    reported as a negative -- so it is expressed the way v0.0.25 expresses it:
+    the claim of absent methods, verified, from whichever source.
+    """
     degraded = make(status="ok", completeness="methods_missing", paired=("no",))
+    degraded["text_defects"] = [
+        {"source_id": "supp1", "kind": "no_methods_content", "quote": None}]
     assert stage_a(degraded) == "no"
     assert expected_determination(degraded) == "unclear"
 
@@ -167,9 +176,22 @@ def test_worked_examples():
 
 
 def test_worked_example_2_on_degraded_text_is_capped():
-    """The prompt states this explicitly under the worked examples."""
-    assert expected_determination(
-        make(status="partial", paired=("no",))) == "unclear"
+    """The prompt states this explicitly under the worked examples.
+
+    v0.0.25: "degraded text" is a verified defect rather than a `partial`
+    self-report, so the example is built the way the cap now reads it. The
+    supplementary case is asserted too, because that is the half of the scope
+    decision an example could otherwise hide.
+    """
+    degraded = make(paired=("no",))
+    degraded["text_defects"] = [
+        {"source_id": "main", "kind": "ends_mid_sentence", "quote": "cut off"}]
+    assert expected_determination(degraded) == "unclear"
+
+    supp_only = make(paired=("no",))
+    supp_only["text_defects"] = [
+        {"source_id": "supp1", "kind": "garbled_run", "quote": "mojibake"}]
+    assert expected_determination(supp_only) == "no"
 
 
 # --------------------------------------------------------------------------

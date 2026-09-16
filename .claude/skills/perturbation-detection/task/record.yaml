@@ -82,6 +82,7 @@ required_fields:
   - sources_seen
   - processing_status
   - text_completeness
+  - text_defects
   - has_single_cell_assay
   - perturbation_present
   - perturbation_present_any_assay
@@ -164,6 +165,73 @@ ref_arrays:
     # 2026-08-20. Only `is True` counts as perturbed downstream; the unclear
     # count is reported rather than folded into either bucket.
     tristate_bool_fields: [perturbed]
+
+# The text-quality array, v0.0.25. DETERMINATIVE -- Stage B's cap reads it -- but
+# unlike `item_array` it carries no per-item label any rule reads: it is evidence
+# FOR a gate, verified the same way every other quote is.
+#
+# Why it exists. Stage B's entry condition was `processing_status == "partial" OR
+# text_completeness != "full"`, two paper-level adjectives with no evidence
+# behind them, and it flipped on byte-identical input: 3 of 30 papers in the
+# v0.0.23 acceptance, 4 of 24 in v0.0.24's. Reading those eight flips, three
+# quarters of them were adjudicable by a QUOTE the model had already seen --
+# a verbatim mid-article break, dangling cross-references to absent methods,
+# located runs of mojibake -- and the rest named no locus at all.
+#
+# Why per-source. `science.aat1699` flipped because one run described the garbled
+# supplement and the other the intact main text. Both statements were true, and
+# the schema had nowhere to hold both at once.
+defect_array:
+  path: text_defects
+  source_field: source_id
+  kind_field: kind
+  quote_field: quote
+  kinds: [ends_mid_sentence, explicit_cut_marker, garbled_run, no_methods_content]
+  # The one kind that is an ABSENCE, so it cannot be quoted: `quote: null` is
+  # legal for it alone. The harness FALSIFIES it instead of confirming it --
+  # rejecting the claim when a methods-labelled section was in fact supplied --
+  # because "there is no methods text" has no substring to check.
+  unquotable_kinds: [no_methods_content]
+  # Section labels that count as methods content, for that falsification. A list
+  # rather than one name because publishers differ and `pe.prepare` records
+  # whatever the extractor labelled.
+  methods_section_names: [methods, experimental, star methods, online methods,
+                          materials and methods, methodology]
+  # And how much of it has to be there. Measured over the 392-paper corpus: the
+  # median paper supplies 28,467 characters under those labels and the 10th
+  # percentile 8,422, while the heading-only cases -- a label with nothing under
+  # it -- top out at 478. `10.1126/science.aat1699` has 228 (two copies of
+  # "Materials and Methods" plus a list of figure captions) and its
+  # `methods_missing` report is CORRECT, so a check keyed on the label existing
+  # would have refuted a true claim and silently released the cap on the one
+  # text in this corpus that is genuinely broken.
+  #
+  # 2,000 sits above every heading-only case and far below the bulk of real
+  # methods sections. Ten papers fall in the 0-1,949 band where this declines to
+  # refute anything, which is the intended behaviour: **15 corpus papers supply
+  # ZERO methods-labelled characters and most of them are correctly "full"**,
+  # because JATS and Science put methods under labels the extractor never
+  # matched. The label measures LABELLING, not content -- so this check may only
+  # ever refute a claim, never confirm one.
+  methods_min_chars: 2000
+
+# Fields on the record the HARNESS writes, not the model. Kept distinct because
+# prompt.md is explicit that `text_completeness` is the model's call on the text
+# it was given, and that having two owners would make it unreadable -- so the
+# harness's own findings go in fields of their own rather than overwriting the
+# model's, and every one of them is a fact the model could not see.
+# A mapping rather than a list, because both of these are needed BY ROLE and
+# picking them out of a list by index is the positional coupling that breaks
+# silently when somebody inserts a line.
+#
+# Only the two the gate READS are here. `needs_section_pass` and
+# `text_completeness_source` are also harness-written, and are deliberately NOT
+# declared: `pe/` writes both as literals it owns end to end, so a declaration
+# would be a name nothing reads -- which is the defect `cap.reason` was, and
+# `test_no_key_in_a_pack_table_is_read_by_nothing` caught this within the hour.
+harness_written_fields:
+  withheld: harness_withheld            # the truncation ladder ran, or ran out
+  defect_unreadable: defect_claim_unreadable   # a defect was claimed and botched
 
 # Non-determinative arrays: things considered and rejected. Structurally unable
 # to move the determination, because Stage A reads only the fields above.
