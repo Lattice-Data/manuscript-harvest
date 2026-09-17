@@ -31,7 +31,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from pe.paper_text import split_assembled, verify_quote_sourced  # noqa: E402
+from pe.paper_text import (  # noqa: E402
+    _CONTROL_CHARS, split_assembled, verify_quote_sourced,
+)
 from pe.pack import (  # noqa: E402
     PackError, load as load_pack, read_back_marker, tables,
 )
@@ -108,13 +110,47 @@ FIELD_CHECKS = _field_checks()
 
 
 def parse_raw(text: str) -> dict:
-    """Accept the model's JSON whether or not it arrived wrapped in prose/fences."""
+    """Accept the model's JSON whether or not it arrived wrapped in prose/fences.
+
+    **Control characters get one explicit second chance, and only after a strict
+    parse has already failed.** v0.0.25 asks for a verbatim `quote` on a
+    `garbled_run` defect, and garbled text is made of exactly the bytes JSON
+    forbids unescaped inside a string. Two of the 392 papers in the v0.0.25
+    corpus run died on it -- `10.1038_s41586-020-2496-1` and
+    `10.1126_science.aat1699`, both on a `garbled_run` quote carrying raw \x01,
+    \x03 and \x0f -- and both were dropped as "unparseable", leaving those two
+    records at the previous task version while the other 390 advanced. A corpus
+    split across two versions is the state `task.yaml` exists to make
+    impossible, so the model doing precisely what it was told must not be able
+    to cause it.
+
+    The strip uses `paper_text._CONTROL_CHARS`, the SAME set
+    `normalize_text` removes before matching a quote. That is the property that
+    makes this safe rather than merely convenient: a quote recovered here is
+    normalized identically at verification time, so it still has to be found in
+    the source. Nothing is believed that was not already going to be checked.
+
+    Strict first, always: 390 of the 392 parse on the first attempt and are
+    returned byte-for-byte unchanged, so this cannot quietly rewrite a record
+    that was fine. Tab, newline and carriage return are preserved -- they are
+    the JSON's own formatting, and a literal newline inside a string is a
+    different defect this deliberately does not paper over.
+    """
     text = text.strip()
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
 
+    stripped = _CONTROL_CHARS.sub("", text)
+    if stripped != text:
+        try:
+            return json.loads(stripped)
+        except json.JSONDecodeError:
+            pass
+
+    # The remaining fallbacks work on the stripped text for the same reason.
+    text = stripped
     fenced = re.search(r"```(?:json)?\s*\n(.*?)\n\s*```", text, re.DOTALL)
     if fenced:
         try:
