@@ -27,7 +27,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pe.paper_text import section_chars  # noqa: E402
+from pe.paper_text import section_chars, verify_quote_sourced  # noqa: E402
 from task.rules import (  # noqa: E402
     DEFECT_KINDS, capping_defects, methods_claim_refuted, validate_defects,
 )
@@ -35,8 +35,12 @@ from task.rules import (  # noqa: E402
 ROOT = Path(__file__).resolve().parent.parent
 
 #: Verifies any quote containing REAL, and attributes it where it was claimed.
+#: The shape is `verify_quote_sourced`'s, not an invented one -- see
+#: `test_the_fake_speaks_the_real_verifier_s_contract` for why that matters.
 def _verify(quote, source):
-    return {"verified": "REAL" in (quote or ""), "source_id": source}
+    hit = "REAL" in (quote or "")
+    return {"status": "verified" if hit else "unverified",
+            "source_id": source, "ratio": 1.0 if hit else 0.0}
 
 
 def _record(**over):
@@ -87,7 +91,9 @@ def test_a_wrong_source_is_corrected_not_discarded():
         {"source_id": "supp9", "kind": "garbled_run", "quote": "REAL noise"}])
     flags: set = set()
     kept, _, _ = validate_defects(
-        record, lambda q, src: {"verified": True, "source_id": "main"},
+        record,
+        lambda q, src: {"status": "wrong_source", "source_id": "main",
+                        "ratio": 1.0},
         [], flags)
     assert kept[0]["source_id"] == "main"
     assert "EV-WRONG-SOURCE" in flags
@@ -185,3 +191,63 @@ def test_section_chars_counts_what_reached_the_model():
     assert counts == {"methods": 521}, (
         "excluded sections and excluded block kinds must not be counted: "
         f"got {counts}")
+
+
+# --------------------------------------------------------------------------
+# The contract between the fake and the real verifier
+# --------------------------------------------------------------------------
+
+def test_the_fake_speaks_the_real_verifier_s_contract():
+    """The bug every test in this file missed.
+
+    `validate_defects` read `check["verified"]` -- a key `verify_quote_sourced`
+    has never returned -- so the test was always falsy and EVERY quotable defect
+    was dropped: 14 of 14 in the v0.0.25 acceptance run, one of them matching its
+    own cited source at ratio 1.0. Stage B was left firing on `harness_withheld`
+    and `no_methods_content` alone, both deterministic, so the version's two-run
+    cap-agreement criterion would have passed over a mechanism that never ran.
+
+    It survived because `_verify` above returned the same invented shape the code
+    read. A fake that agrees with the code about a contract neither one honours
+    tests nothing. This pins the fake to the real function's own output.
+    """
+    real = verify_quote_sourced("some quote", "main", {"main": "some quote"}, 0.85)
+    assert "verified" not in real, (
+        "verify_quote_sourced returns a `status`, never a `verified` key")
+    assert set(_verify("REAL", "main")) == set(real), (
+        "the fake's keys have drifted from verify_quote_sourced's")
+
+
+def test_a_real_quote_survives_the_real_verifier_end_to_end():
+    """No fake at all. This is the one that would have caught it: the harness's
+    own verifier, wired to `validate_defects` the way `pe.validate` wires it.
+    The quote is `10.1016_j.healun.2026.02.1666`'s, which the v0.0.25 run
+    rejected while `verify_quote_sourced` scored it 1.0 against the same source.
+    """
+    sources = {"main": "Endothelial injury and reduced VE-Cadherin staining "
+                       "in ACR. Compositional"}
+    quote = "and reduced VE-Cadherin staining in ACR. Compositional"
+    record = _record(text_completeness="truncated", text_defects=[
+        {"source_id": "main", "kind": "ends_mid_sentence", "quote": quote}])
+    issues: list = []
+    kept, checked, rejected = validate_defects(
+        record, lambda q, src: verify_quote_sourced(q, src, sources, 0.85),
+        issues, set())
+    assert checked == 1
+    assert rejected == 0, f"the real verifier's pass was rejected: {issues}"
+    assert len(kept) == 1 and kept[0]["kind"] == "ends_mid_sentence"
+
+
+def test_the_real_verifier_still_rejects_an_invented_quote():
+    """The other half: the gate must still close. Without this the fix above
+    could be 'accept everything' and both tests would pass."""
+    sources = {"main": "Endothelial injury and reduced VE-Cadherin staining."}
+    record = _record(text_completeness="truncated", text_defects=[
+        {"source_id": "main", "kind": "ends_mid_sentence",
+         "quote": "a sentence that appears nowhere in this paper at all"}])
+    issues: list = []
+    kept, checked, rejected = validate_defects(
+        record, lambda q, src: verify_quote_sourced(q, src, sources, 0.85),
+        issues, set())
+    assert checked == 1 and rejected == 1 and kept == []
+    assert any("does not verify" in i for i in issues)
