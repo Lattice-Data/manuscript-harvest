@@ -467,7 +467,22 @@ def validate_defects(result: dict, verify, issues: list[str], flags: set[str],
 
         checked += 1
         check = verify(quote, source)
-        if not check.get("verified"):
+        # `verify_quote_sourced` reports a `status`; there has never been a
+        # `verified` key. Reading the absent one dropped EVERY quotable defect in
+        # the v0.0.25 acceptance run -- 14 of 14, one of them matching its own
+        # cited source at ratio 1.0. The gate was then left firing on
+        # `harness_withheld` and `no_methods_content` alone, both deterministic,
+        # so `ACCEPTANCE-v0.0.25.md` criterion 2 -- "the cap agrees across two
+        # runs" -- would have passed over a mechanism that never once ran. A
+        # criterion that cannot distinguish a working gate from an absent one is
+        # the shape this pack keeps re-learning; the companion guard is that the
+        # gate must also be EXERCISED, not merely agree.
+        #
+        # Only "unverified" means the text is not in the paper. "wrong_source"
+        # and "unknown_source" mean the quote IS there under another id, which is
+        # precisely what the attribution fix below exists to correct -- and which
+        # was unreachable for as long as this line rejected all four statuses.
+        if check["status"] == "unverified":
             issues.append(
                 f"{_DEFECT_PATH}: the quote for {kind!r} does not verify against "
                 f"{source!r}, so the claim is dropped and does not cap")

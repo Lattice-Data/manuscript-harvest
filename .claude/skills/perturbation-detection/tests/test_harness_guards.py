@@ -110,13 +110,19 @@ def test_a_botched_claim_caps_and_a_refuted_one_does_not():
     """
     botched = dict(_clean(), text_defects=[
         {"source_id": "main", "kind": "not_a_kind", "quote": "x"}])
-    validate_defects(botched, lambda q, src: {"verified": True}, [], set())
+    validate_defects(botched,
+                     lambda q, src: {"status": "verified",
+                                     "source_id": src, "ratio": 1.0},
+                     [], set())
     assert botched[HARNESS_UNREADABLE_FIELD] is True
     assert decide(botched)[0] == "unclear"
 
     refuted = dict(_clean(), text_defects=[
         {"source_id": "main", "kind": "garbled_run", "quote": "never appears"}])
-    validate_defects(refuted, lambda q, src: {"verified": False}, [], set())
+    validate_defects(refuted,
+                     lambda q, src: {"status": "unverified",
+                                     "source_id": src, "ratio": 0.0},
+                     [], set())
     assert refuted[HARNESS_UNREADABLE_FIELD] is False
     assert decide(refuted)[0] == "no"
 
@@ -127,8 +133,10 @@ def test_a_quoteless_claim_is_botched_rather_than_believed():
     record = dict(_clean(), text_defects=[
         {"source_id": "main", "kind": "ends_mid_sentence"}])
     issues: list = []
-    kept, _, _ = validate_defects(record, lambda q, src: {"verified": True},
-                                  issues, set())
+    kept, _, _ = validate_defects(
+        record,
+        lambda q, src: {"status": "verified", "source_id": src, "ratio": 1.0},
+        issues, set())
     assert kept == [] and record[HARNESS_UNREADABLE_FIELD] is True
     assert any("carries no quote" in i for i in issues)
 
