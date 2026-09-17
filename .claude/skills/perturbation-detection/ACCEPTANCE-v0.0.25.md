@@ -26,11 +26,43 @@ Nothing below Step 0 is touched. No criterion moved.
 | # | criterion | why |
 |---|---|---|
 | 1 | **self-report agreement across the two runs** | still reported, but **no longer the blocker** — the determination does not read those fields any more. Measured for continuity: 27/30 at v0.0.23, 20/24 at v0.0.24 |
-| 2 | **`stage_b_capped` agrees across the two runs, on all 24** | the NEW blocker. This is what the version is for, and it is the first version in which the cap has a trigger that can be checked |
+| 2 | **`stage_b_capped` agrees across the two runs, on all 24** — and the gate must have been **EXERCISED**: at least one cap in either run decided by a QUOTE-VERIFIED `text_defects` entry | the NEW blocker. This is what the version is for, and it is the first version in which the cap has a trigger that can be checked. The exercise half is not decoration — see below |
 | 3 | every kept defect carries a verified quote | asserted by `pe.validate`; a failure here means the verifier was bypassed |
 | 4 | the two rung-3 papers stay capped | `harness_withheld` alone, independent of anything the model says |
 | 5 | no non-negative is capped | the asymmetry |
 | 6 | `stage_a` does not move | a Step 0 change must not reach the criteria |
+
+## Why criterion 2 carries an exercise count
+
+Agreement over a mechanism that never ran is not evidence about the mechanism,
+and at v0.0.25 that was not hypothetical. `task.rules.validate_defects` read
+`check["verified"]`, a key `verify_quote_sourced` has never returned, so **all 14
+quotable defect claims in run 1 were dropped** — including one scoring 1.0
+against the source it cited. The cap fell back to `harness_withheld` and
+`no_methods_content`, both deterministic, and criterion 2 as originally written
+would have agreed 24/24 and certified a dead gate. Fixed in `task/rules.py`; the
+run is re-scorable from stored `raw/` at no model cost.
+
+So the count excludes two routes. A cap from `harness_withheld` would have fired
+under v0.0.24 too. A cap from `no_methods_content` proves nothing either — that
+kind is *falsified* against `section_chars`, never quote-checked, so it is the
+one defect that survives a broken quote path untouched. Under the bug it capped
+`2021.09.16.460628` on its own and made a naive counter read "exercised by 1".
+**Only a quote-verified defect shows the path is alive.**
+
+The bar is **≥ 1**, and zero is a FAIL rather than a remark — unlike criterion 3,
+whose property is independently held by `task.rules.stage_b`. Nothing holds this
+one but the run. A higher threshold would be a number chosen rather than
+measured, and could fail a set that is legitimately clean.
+
+**Measured baseline**, run 1 re-validated after the fix: 13 verified defects
+across 10 papers (6 `garbled_run`, 6 `ends_mid_sentence`, 1 `no_methods_content`),
+7 of 24 papers capped — **4 by a quote-verified defect**, 2 by `harness_withheld`,
+1 by `no_methods_content`. The scorer prints that count beside the verdict.
+
+Verified both ways: against run 1's pre-fix records the criterion reports
+`FAIL: NOT EXERCISED` and exits 1; against the re-validated records it reports
+`PASS (exercised by 4 paper(s))`.
 
 ## Predictions
 

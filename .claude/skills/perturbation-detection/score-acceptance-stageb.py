@@ -45,6 +45,12 @@ from pathlib import Path
 
 RUN_ROOT = Path.home() / ".manuscript-harvest" / "perturbation"
 
+#: Defect kinds the harness cannot confirm by quote. `no_methods_content` is an
+#: absence, so `task.rules` falsifies it against the manifest's `section_chars`
+#: instead -- which means it is the one kind that keeps working when the quote
+#: verifier does not. Named here so criterion 1's exercise count can exclude it.
+UNQUOTABLE_KINDS = {"no_methods_content"}
+
 # The 15 capped papers. Value is the strict expectation where there is one, or
 # None where BOTH outcomes are legitimate: the cap holding ("unclear") and the
 # cap releasing ("no", because the defect was the pipeline's own cut) are both
@@ -145,6 +151,7 @@ def main() -> int:
     print("=" * len(hdr))
 
     quality_flips, stage_a_flips, det_unstable, _cap_flips = [], [], [], []
+    defect_driven: list = []
     wrong, cap_on_positive, harness_cap_lost = [], [], []
 
     for pid, exp, group, note, recs, base in rows:
@@ -163,6 +170,29 @@ def main() -> int:
         c1, c2 = bool(v1.get("stage_b_capped")), bool(v2.get("stage_b_capped"))
         if c1 != c2:
             _cap_flips.append((pid, c1, c2))
+        # Did the NEW half of the trigger actually fire here?
+        #
+        # Two exclusions, and the second one is the whole point. A cap carried by
+        # `harness_withheld` would have fired under v0.0.24 too, so it says
+        # nothing about v0.0.25. And a cap carried by `no_methods_content` says
+        # nothing either: that kind is FALSIFIED against `section_chars`, never
+        # quote-checked, so it is the one defect that survives a broken quote
+        # path untouched -- which is exactly what happened. Under the v0.0.25 bug
+        # all 14 quotable claims were dropped, `2021.09.16.460628` capped on its
+        # methods claim alone, and a counter that accepted it reported
+        # "exercised by 1" over a dead verifier. Only a QUOTE-VERIFIED defect
+        # proves the path is alive.
+        #
+        # Counted across both runs: the question is whether the mechanism ran at
+        # all, not whether it ran twice.
+        def _quote_verified(rec):
+            return any(e.get("kind") not in UNQUOTABLE_KINDS
+                       for e in (rec.get("text_defects") or [])
+                       if isinstance(e, dict))
+
+        if ((c1 and not r1.get("harness_withheld") and _quote_verified(r1))
+                or (c2 and not r2.get("harness_withheld") and _quote_verified(r2))):
+            defect_driven.append(pid)
         if a1 != a2:
             stage_a_flips.append((pid, a1, a2))
 
@@ -221,19 +251,40 @@ def main() -> int:
         if v.get("stage_a") in ("yes", "unclear", "not_applicable"))
 
     cap_flips = [(pid, a, b) for pid, a, b in _cap_flips]
+    # Agreement over a mechanism that never ran is not evidence about the
+    # mechanism. At v0.0.25 that was not hypothetical: `validate_defects` read a
+    # key `verify_quote_sourced` does not return, so all 14 quotable defect
+    # claims in run 1 were dropped and the cap fell back to `harness_withheld`
+    # and `no_methods_content`, both deterministic. Criterion 1 would then have
+    # agreed 24/24 and certified a dead gate. So the blocker now carries the
+    # count of caps the NEW trigger actually decided, and zero is a failure
+    # rather than a remark -- which is where it differs from criterion 3, whose
+    # property is independently held by `task.rules.stage_b`.
+    #
+    # The bar is >= 1 deliberately. Run 1 of v0.0.25, re-validated after the fix,
+    # had 5 defect-driven caps out of 13 verified defects across 10 papers; a
+    # higher threshold would be a number chosen rather than measured, and could
+    # fail a set that is legitimately clean.
     criteria = (
-        ("1. stage_b_capped agrees across runs (BLOCKER)", cap_flips, None),
-        ("1b. self-report agrees (continuity, not a gate)", quality_flips, None),
-        ("2. harness-proved cap still holds", harness_cap_lost, None),
-        ("3. no non-negative was capped", cap_on_positive, non_negative),
-        ("4. stage_a did not move", stage_a_flips, None),
-        ("5. expectations met", wrong, None),
-        ("6. determination stable across runs", det_unstable, None),
+        ("1. stage_b_capped agrees across runs (BLOCKER)",
+         cap_flips, len(set(defect_driven)), True),
+        ("1b. self-report agrees (continuity, not a gate)", quality_flips, None, False),
+        ("2. harness-proved cap still holds", harness_cap_lost, None, False),
+        ("3. no non-negative was capped", cap_on_positive, non_negative, False),
+        ("4. stage_a did not move", stage_a_flips, None, False),
+        ("5. expectations met", wrong, None, False),
+        ("6. determination stable across runs", det_unstable, None, False),
     )
     failed = False
-    for label, items, exercised in criteria:
+    for label, items, exercised, blocking in criteria:
         if items:
             verdict = "FAIL: " + str(items)
+            failed = True
+        elif exercised == 0 and blocking:
+            verdict = ("FAIL: NOT EXERCISED -- no cap in either run was decided "
+                       "by a verified text_defects entry, so this run says "
+                       "nothing about the trigger v0.0.25 introduced. Agreement "
+                       "here would be agreement over harness facts alone")
             failed = True
         elif exercised == 0:
             verdict = ("NOT EXERCISED -- no paper in this set reached a "
