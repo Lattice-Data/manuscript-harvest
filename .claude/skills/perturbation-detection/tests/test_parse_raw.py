@@ -24,8 +24,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pe.validate import parse_raw  # noqa: E402
 
 #: Verbatim from work-corpus-v0025-r1/raw/10.1038_s41586-020-2496-1.json, which
-#: decodes under a uniform -1 byte shift to "No sample size calculation was
-#: performed." -- a PDF font-encoding fault in the source, not model noise.
+#: decodes under a uniform **+31** byte shift to "No sample size calculation was
+#: performed." -- `\x01 + 31 == 0x20`, i.e. these are undecoded GLYPH INDICES
+#: from a subset font whose `/ToUnicode` CMap was not applied, not corruption.
+#: A corpus scan on 2026-09-17 found the same fault in 84 of 392 papers,
+#: 13,482 characters in total. Fixing it belongs in
+#: `manuscript_harvest/extract/pdf.py`; this file only keeps the record
+#: parseable when the model quotes such a run verbatim, as v0.0.25 asks it to.
 REAL_GARBLED = "/P\x01TBNQMF\x01TJ[F\x01DBMDVMBUJPO\x01XBT\x01QFSGPSNFE\x0f"
 
 
