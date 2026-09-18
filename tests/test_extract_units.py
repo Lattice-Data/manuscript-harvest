@@ -1491,6 +1491,101 @@ def test_the_width_test_is_what_accepts_or_refuses_an_ordering(renumber, expecte
     assert scored >= pdf._ORDER_MIN_GLYPHS
     assert (agreed / scored >= pdf._ORDER_MIN_AGREEMENT) is expected
 
+# -- fonts that draw a Greek letter and call it a Latin one ------------------
+
+def _widths_from(fontname, codes, scale=1.0):
+    """The widths a font of this design would declare for `codes`."""
+    reference = fitz.Font(fontname)
+    return {code: round(reference.glyph_advance(code) * 1000 * scale)
+            for code in codes}
+
+
+_LETTERS = [code for code in range(0x41, 0x7B) if 0x5B > code or code > 0x60]
+
+
+@pytest.mark.parametrize("fontname, scale, expected", [
+    # An ordinary Latin face, and the same design set condensed and bold. All
+    # three have to read as Latin, and the condensed one is why the fit has a
+    # free scale factor in it at all: `ArialNarrow` compared width-for-width
+    # against Helvetica looks like a font that means something else.
+    ("helv", 1.0, "latin"),
+    ("helv", 0.82, "latin"),
+    ("hebo", 1.0, "latin"),
+    ("tiro", 1.0, "latin"),
+])
+def test_a_latin_face_is_never_read_as_a_symbol_one(fontname, scale, expected):
+    assert pdf._latin_or_symbol(_widths_from(fontname, _LETTERS, scale)) == expected
+
+
+def test_a_monospaced_face_is_answered_before_either_fit_is_tried():
+    """Every glyph in one is the same width, so it fits any table once a scale is
+    free. `CourierNewPS-BoldMT` came out of this test as a symbol font on a
+    residual that meant nothing before the spread check was in front of it."""
+    assert pdf._latin_or_symbol({code: 600.0 for code in _LETTERS}) == "latin"
+
+
+#: Verbatim from `AdvPS3F4C13`'s `/Widths` in 10.1016/j.ccell.2021.09.008 --
+#: `/FirstChar 52`, with the zero-width codes dropped. That is the face that put
+#: `5 mL` into 10.1016/j.immuni.2022.09.002's Methods where the page reads 5
+#: microlitres. The numbers are here rather than read from the corpus because
+#: `corpus/` is not in the repository.
+_SYMBOL_FACE_WIDTHS = {0x34: 677.0, 0x61: 572.0, 0x62: 552.0, 0x64: 500.0,
+                       0x66: 677.0, 0x67: 583.0, 0x6B: 531.0, 0x6C: 531.0,
+                       0x6D: 562.0, 0x72: 552.0, 0x73: 635.0}
+
+
+def test_an_adobe_symbol_face_is_told_apart_from_a_latin_one():
+    """Residual 0.038 against the Symbol widths and 0.153 against the best of
+    the four Latin faces, which is the gap this rule is built on."""
+    assert pdf._latin_or_symbol(_SYMBOL_FACE_WIDTHS) == "symbol"
+
+
+def test_only_the_codes_the_widths_identify_are_corrected():
+    """The half that keeps this from replacing one wrong character with another.
+
+    A face being non-Latin does not say which non-Latin encoding it uses:
+    `AdvPS4721B4` draws a Sigma at code 0x2D where Adobe Symbol has the minus
+    sign, and `AdvP4C4E46` a bracket section at 0x58 where it has Xi. So the
+    character is identified per code, and only where the two readings are far
+    enough apart to tell them apart -- mu at 576 against `m` at 833 is
+    conclusive, beta at 549 against `b` at 556 says nothing and is left alone.
+    """
+    class _Font:
+        """Just enough of a `fitz.Document` for the two keys this reads."""
+
+        def xref_get_key(self, _xref, name):
+            return {"FirstChar": ("int", "52"),
+                    "Widths": ("array", "[677 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 "
+                                        "0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 "
+                                        "0 0 0 0 0 0 0 0 0 572 552 0 500 0 677 "
+                                        "583 0 0 0 531 531 562 0 0 0 0 552 635]")}.get(
+                        name, ("null", "null"))
+
+    identified = pdf._symbol_encoded_codes(_Font(), 1)
+    # Separable, so corrected: mu is 576 against `m` at 833, lambda 549 against
+    # `l` at 222, rho 549 against `r` at 333.
+    assert identified == {0x6C: "\u03bb", 0x6D: "\u03bc", 0x72: "\u03c1"}
+    # Not separable, so left alone even though this font does mean Greek by
+    # them: beta is 549 against `b` at 556, alpha 631 against `a` at 556.
+    assert 0x62 not in identified and 0x61 not in identified
+
+
+def test_the_symbol_correction_is_written_per_font_and_not_per_page():
+    """`m` out of the symbol face is a mu and `m` out of the body face beside it
+    is an `m`, and both are in the same paragraph. A page-wide translation of the
+    kind `_symbol_map` builds for private-use codepoints would turn every real
+    `m` on the page into a mu, which is why this one is a `/ToUnicode` CMap."""
+    data = make_pdf_pages([["the same methods paragraph mentions mice and "
+                            "materials and measures them all in millilitres, "
+                            "and none of those letters may move because some "
+                            "other font on the same page happens to mean a "
+                            "Greek letter by the code that draws an m. The "
+                            "correction belongs to the font, not to the page."]])
+    blocks, status, meta = pdf.blocks_from_pdf(data, "f.pdf", L)
+    assert status == pdf.OK
+    assert "symbol_encoding_applied" not in meta
+    assert "μ" not in " ".join(b.text for b in blocks)
+
 
 def test_a_file_whose_glyphs_cannot_be_named_is_not_ok():
     """The case where recovery would be a guess. Here the ToUnicode CMap is one

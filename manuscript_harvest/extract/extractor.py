@@ -363,6 +363,7 @@ class FileResult:
                     "glyphs_mapped", "glyphs_unmapped",
                     "glyphs_unnamed", "glyphs_drawn",
                     "glyph_encoding_repaired", "glyph_order_inferred",
+                    "symbol_encoding_applied",
                     "glyphs_undecodable", "garbled_sample",
                     "hyphens_kept", "hyphens_joined",
                     "running_lines_dropped", "running_lines",
