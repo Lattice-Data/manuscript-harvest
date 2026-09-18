@@ -1586,6 +1586,81 @@ def test_the_symbol_correction_is_written_per_font_and_not_per_page():
     assert "symbol_encoding_applied" not in meta
     assert "μ" not in " ".join(b.text for b in blocks)
 
+def test_a_block_whose_glyphs_have_no_character_says_so_on_the_block():
+    """What is left after the repairs, recorded where a reader will meet it.
+
+    A file-level count answers "how bad is this file" and not "may I quote this
+    paragraph", and the second is the question a curation pipeline asks. 209 of
+    10.1038/s41586-021-04345-x's blocks are Type3 bitmap glyphs whose file
+    carries no character for them at all, and its other 2,444 are fine.
+    """
+    # Mixed, because a file that is *entirely* unreadable is refused outright and
+    # keeps none of its blocks. Sub-threshold damage is the case with blocks in
+    # it, and the case a reader has to be warned about.
+    data = concat_pdfs(
+        make_pdf_pages([[_METHODS] * 3 for _ in range(6)]),
+        make_nameless_font_pdf([[_METHODS]], standard_order=False),
+    )
+    blocks, status, meta = pdf.blocks_from_pdf(data, "mixed.pdf", L, ocr=False)
+    assert status == pdf.OK
+    marked = [b for b in blocks if (b.locator_ref or {}).get("undecodable_glyphs")]
+    assert marked, "a block made of unreadable glyphs has to carry the count"
+    assert meta["glyphs_undecodable"] == sum(
+        b.locator_ref["undecodable_glyphs"] for b in marked)
+    # And the blocks that are fine stay unmarked rather than the whole file
+    # being tarred with one bad page.
+    assert len(marked) < len(blocks)
+
+
+def test_a_glyph_in_two_overlapping_blocks_is_counted_once():
+    """The guard on the join, stated where the overlap can actually be built.
+    `get_text("blocks")` rectangles overlap on real pages, and a glyph inside two
+    of them is inside two of them: counting per block independently made
+    10.1038/s41586-021-04345-x report 4,611 undecodable glyphs out of the 2,006
+    that had no character."""
+    shared = [[50.0, 50.0, False]]
+    first = fitz.Rect(0, 0, 100, 100)
+    second = fitz.Rect(40, 40, 140, 140)
+    assert pdf._claim_undecodable(first, shared) == 1
+    assert pdf._claim_undecodable(second, shared) == 0
+    # A glyph in neither is claimed by neither.
+    outside = [[500.0, 500.0, False]]
+    assert pdf._claim_undecodable(first, outside) == 0
+    assert outside[0][2] is False
+
+
+def test_the_undecodable_count_cannot_exceed_the_glyphs_drawn():
+    """The guard on the join. `get_text("blocks")` rectangles overlap, so a glyph
+    inside two of them was claimed by both and 10.1038/s41586-021-04345-x
+    reported 4,611 undecodable glyphs out of 2,006 that had no character -- a
+    number that cannot be true and that nothing else would have caught."""
+    data = concat_pdfs(
+        make_pdf_pages([[_METHODS] * 3 for _ in range(6)]),
+        make_nameless_font_pdf([[_METHODS]], standard_order=False),
+    )
+    _blocks, _status, meta = pdf.blocks_from_pdf(data, "mixed.pdf", L, ocr=False)
+    assert meta["glyphs_undecodable"] <= meta["glyphs_unnamed"]
+
+
+def test_a_glyph_the_files_cmap_covers_is_not_undecodable():
+    """`get_texttrace` answers a narrower question than it appears to: it reports
+    U+FFFD for a glyph the font *program* does not name and takes no account of a
+    `/ToUnicode` CMap that names it anyway.
+
+    Page 2 of 10.1038/s41588-025-02161-x is a table of contents whose 1,013 dot
+    leaders come back U+FFFD from the trace and `.` from `get_text`, because the
+    file's CMap is fine and the stripped `post` table is what the trace looked
+    at. Counting the trace alone put those 1,013 dots in the damage figure.
+    """
+    spans = [{"font": "Covered", "chars": [(pdf._NO_UNICODE, 17, (0, 0), (0, 0, 1, 1))]},
+             {"font": "Bare", "chars": [(pdf._NO_UNICODE, 17, (0, 0), (0, 0, 1, 1))]}]
+    coverage = {"Covered": [(True, {17}, True)], "Bare": [(True, set(), False)]}
+    assert len(pdf._undecodable_boxes(spans, coverage)) == 1
+    # And under an encoding where the code is not the glyph id, the question the
+    # trace can answer is only whether the font has a usable CMap at all.
+    simple = {"Covered": [(False, set(), True)], "Bare": [(False, set(), False)]}
+    assert len(pdf._undecodable_boxes(spans, simple)) == 1
+
 
 def test_a_file_whose_glyphs_cannot_be_named_is_not_ok():
     """The case where recovery would be a guess. Here the ToUnicode CMap is one

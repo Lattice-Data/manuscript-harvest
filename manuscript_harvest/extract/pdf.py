@@ -1134,6 +1134,97 @@ def _repair_glyph_encoding(document) -> Tuple[dict, dict]:
     return repaired, inferred, symbols
 
 
+def _glyph_coverage(document) -> Dict[str, List[Tuple[bool, set, bool]]]:
+    """`font name -> [(is Identity-H, codes its CMap covers, has a usable CMap)]`.
+
+    Read once per document, after the repairs, so that the count below is of what
+    is *left* rather than of what arrived. Keyed by the name `get_texttrace`
+    reports, which is the base font with the subset tag taken off, and a list
+    because two different fonts in one file can share it -- `AAAABM+Helvetica`
+    and `AAAABN+Helvetica` are both `Helvetica` there.
+
+    Needed because `get_texttrace` answers a narrower question than it appears
+    to. It reports U+FFFD for a glyph the *font program* does not name, and takes
+    no account of a `/ToUnicode` CMap that names it anyway: page 2 of
+    10.1038/s41588-025-02161-x is a table of contents whose 1,013 dot leaders
+    come back U+FFFD from the trace and `.` from `get_text`, because the file's
+    CMap is fine and the stripped `post` table is what the trace is looking at.
+    Counting the trace alone put those 1,013 dots in the damage figure.
+    """
+    coverage: Dict[str, List[Tuple[bool, set, bool]]] = {}
+    for xref in range(1, document.xref_length()):
+        try:
+            if document.xref_get_key(xref, "Type")[1] != "/Font":
+                continue
+            name = (document.xref_get_key(xref, "BaseFont")[1] or "?")
+            name = name.lstrip("/").split("+")[-1]
+            identity = document.xref_get_key(xref, "Encoding")[1] == "/Identity-H"
+            codes: set = set()
+            to_unicode = document.xref_get_key(xref, "ToUnicode")
+            if to_unicode[0] == "xref":
+                stream = document.xref_stream(int(to_unicode[1].split()[0])) or b""
+                entries = _cmap_entries(stream)
+                if entries:
+                    codes = set(entries)
+            coverage.setdefault(name, []).append((identity, codes, bool(codes)))
+        except Exception:
+            continue
+    return coverage
+
+
+def _undecodable_boxes(spans, coverage) -> List:
+    """The rectangles of this page's glyphs that still have no character.
+
+    A glyph counts when the trace could not name it *and* no font of that name
+    can answer for it: under `/Identity-H` a code is the glyph id, so the CMap
+    either has an entry for it or it does not; under any other encoding the code
+    is not the glyph id and cannot be recovered from the trace, so the test
+    falls back to whether that font has a usable CMap at all.
+
+    Where two fonts share a name either may answer, which undercounts rather than
+    over-counts. That is the right direction for a number whose purpose is to let
+    a reader distrust a passage: a block reported clean and not being clean is the
+    failure that matters, and it cannot happen this way round.
+    """
+    boxes = []
+    for span in spans:
+        answers = coverage.get(span.get("font") or "", ())
+        for char in span.get("chars") or ():
+            if char[0] != _NO_UNICODE or len(char) < 4:
+                continue
+            readable = False
+            for identity, codes, usable in answers:
+                if (char[1] in codes) if identity else usable:
+                    readable = True
+                    break
+            if not readable:
+                boxes.append(fitz.Rect(char[3]))
+    return boxes
+
+
+def _claim_undecodable(area, points: List[list]) -> int:
+    """How many of this page's unreadable glyphs fall in one block, claiming them.
+
+    Claimed, not just counted, and that is the whole of it:
+    `get_text("blocks")` rectangles overlap, so a glyph inside two of them is
+    inside two of them. Counting independently per block made
+    10.1038/s41586-021-04345-x report 4,611 undecodable glyphs out of the 2,006
+    that had no character -- a figure that cannot be true, and that nothing else
+    in the pipeline would have contradicted.
+
+    `points` is mutated. The blocks of a page are walked in the order MuPDF
+    returns them, so the first block to contain a glyph is the one that carries
+    it, and a total over blocks is then a total over glyphs.
+    """
+    claimed = 0
+    for point in points:
+        if point[2] or not area.contains(fitz.Point(point[0], point[1])):
+            continue
+        point[2] = True
+        claimed += 1
+    return claimed
+
+
 def _page_spans(page) -> List[dict]:
     """One `get_texttrace` pass, read by `_symbol_map` and `_unresolved_glyphs`.
 
@@ -1576,6 +1667,7 @@ def blocks_from_pdf(
             meta["glyph_order_inferred"] = inferred
         if symbols:
             meta["symbol_encoding_applied"] = symbols
+        coverage = _glyph_coverage(document)
         for page in document:
             texts: List[Tuple[str, bool, dict]] = []
             try:
@@ -1589,6 +1681,12 @@ def blocks_from_pdf(
                 page_glyphs, page_unnamed = _unresolved_glyphs(spans)
                 drawn_glyphs += page_glyphs
                 unnamed_glyphs += page_unnamed
+                # Centre points rather than rectangles, and consumed as they
+                # are claimed: `get_text("blocks")` rectangles overlap, so a
+                # glyph inside two of them was counted twice and the file total
+                # came out above the number of glyphs drawn.
+                undecodable = [[(box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2, False]
+                               for box in _undecodable_boxes(spans, coverage)]
                 width = max(page.rect.width, 1.0)
                 height = max(page.rect.height, 1.0)
             except Exception as e:  # a damaged page should not lose the whole file
@@ -1609,6 +1707,14 @@ def blocks_from_pdf(
                     ref = {"page": page.number + 1,
                            "bbox": [round(float(v), 1) for v in raw[0:4]],
                            "block_no": int(raw[5]) if len(raw) > 5 else None}
+                    # Joined on position rather than on string offsets. The block
+                    # text has been de-hyphenated and had its whitespace
+                    # collapsed by this point, so a character index into it no
+                    # longer addresses the glyph it came from; the rectangle
+                    # still does.
+                    claimed = _claim_undecodable(fitz.Rect(raw[0:4]), undecodable)
+                    if claimed:
+                        ref["undecodable_glyphs"] = claimed
                     texts.append((cleaned, _in_margin(raw[0:4], width, height), ref))
             per_page.append(texts)
     except Exception as e:
@@ -1636,6 +1742,14 @@ def blocks_from_pdf(
         # U+F8FF is PyMuPDF's "no unicode mapping" fallback rather than an Adobe
         # Symbol position, so guessing a character for it would be a guess.
         meta["glyphs_unmapped"] = {f"U+{cp:04X}": n for cp, n in sorted(unmapped.items())}
+    total_undecodable = sum(ref.get("undecodable_glyphs", 0)
+                            for texts in per_page for _t, _m, ref in texts)
+    if total_undecodable:
+        # What is left after every repair above, and the number a reader should
+        # weigh a passage by. Distinct from `glyphs_unnamed`, which counts what
+        # the trace could not name before the CMaps were consulted and is the
+        # measurement the `garbled_text_encoding` threshold is set against.
+        meta["glyphs_undecodable"] = total_undecodable
     if unnamed_glyphs:
         # Recorded on every file that has any, not only on the ones the status
         # rejects. Sub-threshold damage is real and is almost always a figure's
