@@ -138,6 +138,149 @@ def make_unreadable_font_pdf(paragraphs, broken_cmap: bool = False) -> bytes:
     return data
 
 
+#: A TrueType table directory entry, and the six tables MuPDF needs before it
+#: will load a font program at all. `cmap` and `post` are deliberately absent:
+#: their absence is the fault being reproduced.
+_SFNT_TABLES = (b"glyf", b"head", b"hhea", b"hmtx", b"loca", b"maxp")
+
+
+def _nameless_truetype(advances) -> bytes:
+    """A TrueType program with no `cmap` and no `post`, so it names no glyph.
+
+    The shape of `AAAABN+Helvetica` in 10.1126/science.abf3041's supplement,
+    which is 2,252 glyphs of stripped Helvetica: the outlines are there, the
+    widths are there, and there is nothing anywhere in the file that says which
+    character any glyph is.
+
+    Written out rather than produced by stripping a real font because the tables
+    that have to be missing are exactly the ones a font library would rebuild.
+    The outlines are empty -- every `loca` entry is zero -- because what is under
+    test is the text a reader extracts and not what a viewer draws. `advances` is
+    the one part that carries information: those are the widths the document goes
+    on to declare in `/W`, and they are what `_order_agreement` scores.
+    """
+    count = len(advances)
+    head = struct.pack(">IIIIHHQQhhhhHHhhh",
+                       0x00010000, 0x00010000, 0, 0x5F0F3CF5, 0, 1000, 0, 0,
+                       0, -200, 1000, 800, 0, 8, 2, 0, 0)
+    hhea = struct.pack(">IhhhHhhhhhhhIIIhH",
+                       0x00010000, 800, -200, 0, 1000, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0,
+                       count)
+    maxp = struct.pack(">IH", 0x00010000, count) + b"\0" * 26
+    hmtx = b"".join(struct.pack(">Hh", int(a), 0) for a in advances)
+    loca = struct.pack(">%dH" % (count + 1), *([0] * (count + 1)))
+    tables = dict(zip(_SFNT_TABLES,
+                      (b"\0\0\0\0", head, hhea, hmtx, loca, maxp)))
+    total = len(_SFNT_TABLES)
+    power = 2 ** (total.bit_length() - 1)
+    header = struct.pack(">IHHHH", 0x00010000, total, power * 16,
+                         total.bit_length() - 1, total * 16 - power * 16)
+    offset = 12 + 16 * total
+    directory, body = [], []
+    for tag in _SFNT_TABLES:
+        data = tables[tag]
+        directory.append(struct.pack(">4sIII", tag, 0, offset, len(data)))
+        padded = data + b"\0" * (-len(data) % 4)
+        body.append(padded)
+        offset += len(padded)
+    return b"".join([header] + directory + body)
+
+
+def make_nameless_font_pdf(paragraphs, standard_order: bool = True) -> bytes:
+    """A PDF whose glyphs have no character behind them anywhere in the file.
+
+    `/Type0` with `/Encoding /Identity-H` over `_nameless_truetype`, so a code in
+    the content stream is a glyph id, there is no `/ToUnicode`, and the embedded
+    program carries no character map to fill one in from. MuPDF's fallback is to
+    print the glyph id, which is what the corpus files do.
+
+    `standard_order=True` numbers the glyphs as the standard Macintosh ordering
+    does and declares each one's real width, which is the recoverable case: the
+    ordering is a published table and the widths are the document agreeing with
+    it.
+
+    `standard_order=False` numbers them from 1 in order of first use and declares
+    the same widths against those new numbers -- the shape of the three `Calibri`
+    subsets in 10.1126/science.aat1699's supplement. Nothing in the file says what
+    the new numbers mean, so the repair has to refuse rather than read the text
+    against a table that does not apply to it.
+    """
+    reference = fitz.Font("helv")
+    text = "\n".join("\n".join(page) for page in paragraphs)
+    if standard_order:
+        glyph_of = {char: index for index, char in enumerate(pdf_mod._MAC_GLYPH_ORDER)
+                    if char != "�"}
+    else:
+        glyph_of = {}
+        for char in text:
+            if char not in glyph_of and not char.isspace():
+                glyph_of[char] = len(glyph_of) + 1
+        glyph_of[" "] = len(glyph_of) + 1
+    highest = max(glyph_of.values())
+    advances = [500] * (highest + 1)
+    for char, glyph in glyph_of.items():
+        try:
+            advances[glyph] = round(reference.glyph_advance(ord(char)) * 1000) or 500
+        except Exception:
+            pass
+
+    document = fitz.open()
+    program = None
+    font = None
+    for page_texts in paragraphs:
+        page = document.new_page()
+        if font is None:
+            program = document.get_new_xref()
+            document.update_object(program, "<<>>")
+            document.update_stream(program, _nameless_truetype(advances), new=True)
+            descriptor = document.get_new_xref()
+            document.update_object(descriptor, (
+                "<< /Type /FontDescriptor /FontName /AAAAAA+Nameless /Flags 4 "
+                "/FontBBox [0 -200 1000 800] /ItalicAngle 0 /Ascent 800 "
+                "/Descent -200 /CapHeight 700 /StemV 80 /FontFile2 %d 0 R >>"
+                % program))
+            widths = " ".join("%d [%d]" % (glyph, advances[glyph])
+                              for glyph in sorted(set(glyph_of.values())))
+            descendant = document.get_new_xref()
+            document.update_object(descendant, (
+                "<< /Type /Font /Subtype /CIDFontType2 /BaseFont /AAAAAA+Nameless "
+                "/CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) "
+                "/Supplement 0 >> /FontDescriptor %d 0 R /DW 500 /W [ %s ] "
+                "/CIDToGIDMap /Identity >>" % (descriptor, widths)))
+            font = document.get_new_xref()
+            document.update_object(font, (
+                "<< /Type /Font /Subtype /Type0 /BaseFont /AAAAAA+Nameless "
+                "/Encoding /Identity-H /DescendantFonts [ %d 0 R ] >>" % descendant))
+        lines = []
+        top = 740.0
+        for index, paragraph in enumerate(page_texts):
+            # Wrapped rather than drawn as one long `Tj`: MuPDF reports only what
+            # falls inside the page, so an unwrapped line loses its tail and the
+            # fixture silently stops clearing `min_pdf_text_chars`.
+            words, row, rows = paragraph.split(" "), "", []
+            for word in words:
+                if len(row) + len(word) + 1 > 80:
+                    rows.append(row)
+                    row = word
+                else:
+                    row = f"{row} {word}" if row else word
+            rows.append(row)
+            for offset, text_row in enumerate(rows):
+                codes = "".join("%04X" % glyph_of[char]
+                                for char in text_row if char in glyph_of)
+                lines.append("BT /F0 9 Tf 40 %.1f Td <%s> Tj ET"
+                             % (top - index * 120.0 - offset * 11.0, codes))
+        stream = document.get_new_xref()
+        document.update_object(stream, "<<>>")
+        document.update_stream(stream, "\n".join(lines).encode("latin-1"), new=True)
+        document.xref_set_key(page.xref, "Contents", "%d 0 R" % stream)
+        document.xref_set_key(page.xref, "Resources",
+                              "<< /Font << /F0 %d 0 R >> >>" % font)
+    data = document.tobytes()
+    document.close()
+    return data
+
+
 def concat_pdfs(*documents: bytes) -> bytes:
     """One PDF holding every page of each input, in order.
 

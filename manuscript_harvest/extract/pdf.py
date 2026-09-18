@@ -327,6 +327,288 @@ def _embedded_glyph_unicodes(document, xref: int) -> Dict[int, int]:
     return glyphs
 
 
+# -- fonts whose glyphs are in a standard order but carry no names -----------
+#
+# The repair above reads the font and stops where the font says nothing. Two
+# classes of file say nothing at all, and between them they are most of the
+# damage in this corpus:
+#
+# * a `/CIDFontType2` whose embedded TrueType was subsetted with its `cmap` and
+#   `post` tables stripped. `AAAABN+Helvetica` in 10.1126/science.abf3041's
+#   supplement is 2,252 glyphs with neither table and a `/ToUnicode` holding a
+#   codespace range and nothing else, so 5,790 glyphs on one page have no
+#   character behind them and `get_text` prints the glyph id: the page draws
+#   `rs133379_G` where `UV\x14\x16\x16\x16\x1a\x1cB*` is extracted.
+# * a `/CIDFontType0` whose CFF is CID-keyed, where the charset names every
+#   glyph `cid00042`. `BSHNBY+MinionPro-Regular` in 10.1038/s41586-020-2496-1 is
+#   3,176 such glyphs, and it is the one whose extracted form reads as a uniform
+#   +31 shift -- `/P\x01TBNQMF\x01TJ[F` for `No sample size`. That shift is this
+#   font's charset happening to be in order and not a fact about the fault; the
+#   other 83 affected files in the corpus decode under no single offset.
+#
+# What both retain is their *order*. Stripping `cmap` does not renumber the
+# glyphs, so a font that was never reordered still has its glyph ids where the
+# original put them, and for these two font formats "where the original put
+# them" is a published table: the standard Macintosh ordering that TrueType
+# `post` format 1 refers to, and the predefined charset a CFF means by a
+# standard-strings index. Neither is a guess about this corpus; both are in the
+# specifications, which is why they are written out below rather than inferred.
+#
+# The order is a property of the *original* font, so a subset that renumbered its
+# glyphs is not covered and must be refused rather than decoded wrongly:
+# `Calibri` in 10.1126/science.aat1699's supplement is 29 glyphs numbered from 1
+# in order of first use, and reading it against either table yields
+# `(*2-,5$!'!:` for what the page draws. `_order_agreement` is the refusal.
+
+#: The standard Macintosh glyph ordering, as characters. Index is the glyph id.
+#: U+FFFD marks the positions with no character of their own -- `.notdef`,
+#: `.null` and `nonmarkingreturn` at 0-2, and the few later names the Adobe
+#: Glyph List does not resolve to a single codepoint.
+_MAC_GLYPH_ORDER = (
+    '\ufffd\ufffd\ufffd !"#$%&\'()*+,'
+    '-./0123456789:;<'
+    '=>?@ABCDEFGHIJKL'
+    'MNOPQRSTUVWXYZ[\\'
+    ']^_`abcdefghijkl'
+    'mnopqrstuvwxyz{|'
+    '}~\xc4\xc5\xc7\xc9\xd1\xd6\xdc\xe1\xe0\xe2\xe4\xe3\xe5\xe7'
+    '\xe9\xe8\xea\xeb\xed\xec\xee\xef\xf1\xf3\xf2\xf4\xf6\xf5\xfa\xf9'
+    '\xfb\xfc\u2020\xb0\xa2\xa3\xa7\u2022\xb6\xdf\xae\xa9\u2122\xb4\xa8\u2260'
+    '\xc6\xd8\u221e\xb1\u2264\u2265\xa5\xb5\u2202\u2211\u220f\u03c0\u222b\xaa\xba\u2126'
+    '\xe6\xf8\xbf\xa1\xac\u221a\u0192\u2248\u2206\xab\xbb\u2026\xa0\xc0\xc3\xd5'
+    '\u0152\u0153\u2013\u2014\u201c\u201d\u2018\u2019\xf7\u25ca\xff\u0178\u2044\xa4\u2039\u203a'
+    '\ufb01\ufb02\u2021\xb7\u201a\u201e\u2030\xc2\xca\xc1\xcb\xc8\xcd\xce\xcf\xcc'
+    '\xd3\xd4\uf8ff\xd2\xda\xdb\xd9\u0131\u02c6\u02dc\xaf\u02d8\u02d9\u02da\xb8\u02dd'
+    '\u02db\u02c7\u0141\u0142\u0160\u0161\u017d\u017e\xa6\xd0\xf0\xdd\xfd\xde\xfe\u2212'
+    '\xd7\xb9\xb2\xb3\xbd\xbc\xbe\u20a3\u011e\u011f\u0130\u015e\u015f\u0106\u0107\u010c'
+    '\u010d\u0111'
+)
+
+#: The CFF standard strings, as characters, indexed by standard-strings number.
+#: A CID-keyed CFF subset of a font that was never reordered numbers its CIDs
+#: into this table.
+_CFF_STANDARD_ORDER = (
+    '\ufffd !"#$%&\u2019()*+,-.'
+    '/0123456789:;<=>'
+    '?@ABCDEFGHIJKLMN'
+    'OPQRSTUVWXYZ[\\]^'
+    '_\u2018abcdefghijklmn'
+    'opqrstuvwxyz{|}~'
+    "\xa1\xa2\xa3\u2044\xa5\u0192\xa7\xa4'\u201c\xab\u2039\u203a\ufb01\ufb02\u2013"
+    '\u2020\u2021\xb7\xb6\u2022\u201a\u201e\u201d\xbb\u2026\u2030\xbf`\xb4\u02c6\u02dc'
+    '\xaf\u02d8\u02d9\xa8\u02da\xb8\u02dd\u02db\u02c7\u2014\xc6\xaa\u0141\xd8\u0152\xba'
+    '\xe6\u0131\u0142\xf8\u0153\xdf\xb9\xac\xb5\u2122\xd0\xbd\xb1\xde\xbc\xf7'
+    '\xa6\xb0\xfe\xbe\xb2\xae\u2212\xf0\xd7\xb3\xa9\xc1\xc2\xc4\xc0\xc5'
+    '\xc3\xc7\xc9\xca\xcb\xc8\xcd\xce\xcf\xcc\xd1\xd3\xd4\xd6\xd2\xd5'
+    '\u0160\xda\xdb\xdc\xd9\xdd\u0178\u017d\xe1\xe2\xe4\xe0\xe5\xe3\xe7\xe9'
+    '\xea\xeb\xe8\xed\xee\xef\xec\xf1\xf3\xf4\xf6\xf2\xf5\u0161\xfa\xfb'
+    '\xfc\xf9\xfd\xff\u017e\uf721\uf6f8\uf724\uf6e4\uf726\uf7b4\u207d\u207e\u2025\u2024\uf730'
+    '\uf731\uf732\uf733\uf734\uf735\uf736\uf737\uf738\uf739\uf6e2\uf6de\uf6e8\uf73f\uf6e9\uf6ea\uf6e0'
+    '\uf6eb\uf6ec\uf6ed\uf6ee\uf6ef\u207f\uf6f0\uf6f1\uf6f2\uf6f3\ufb00\ufb03\ufb04\u208d\u208e\uf6f6'
+    '\uf6e6\uf760\uf761\uf762\uf763\uf764\uf765\uf766\uf767\uf768\uf769\uf76a\uf76b\uf76c\uf76d\uf76e'
+    '\uf76f\uf770\uf771\uf772\uf773\uf774\uf775\uf776\uf777\uf778\uf779\uf77a\u20a1\uf6dc\uf6dd\uf6fe'
+    '\uf7a1\uf7a2\uf6f9\uf6fd\uf6ff\uf7a8\uf6f4\uf6f5\uf6f7\uf7af\u2012\uf6e5\uf6fb\uf6fc\uf7b8\uf7bf'
+    '\u215b\u215c\u215d\u215e\u2153\u2154\u2070\u2074\u2075\u2076\u2077\u2078\u2079\u2080\u2081\u2082'
+    '\u2083\u2084\u2085\u2086\u2087\u2088\u2089\uf6df\uf6e3\uf6e7\uf6e1\uf7e0\uf7e1\uf7e2\uf7e3\uf7e4'
+    '\uf7e5\uf7e6\uf7e7\uf7e8\uf7e9\uf7ea\uf7eb\uf7ec\uf7ed\uf7ee\uf7ef\uf7f0\uf7f1\uf7f2\uf7f3\uf7f4'
+    '\uf7f5\uf7f6\uf6fa\uf7f8\uf7f9\uf7fa\uf7fb\uf7fc\uf7fd\uf7fe\uf7ff\ufffd\ufffd\ufffd\ufffd\ufffd'
+    '\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd'
+)
+
+#: A font must declare this many widths the table can be scored against before
+#: an ordering is accepted for it. Below it the agreement figure is noise: three
+#: glyphs agreeing by chance is not evidence about a glyph order.
+_ORDER_MIN_GLYPHS = 15
+
+#: And this much of that overlap must agree. Measured over the fonts in this
+#: corpus that carry no names: the ones that are in standard order score 82%,
+#: 100%, 100%, 100% and 98% against the table their format defines and 19-56%
+#: against the other, and the three renumbered `Calibri` subsets score 7%, 25%
+#: and 29% against the better of the two. The bar sits in that gap.
+_ORDER_MIN_AGREEMENT = 0.8
+
+#: How far a declared width may sit from the reference width and still count as
+#: agreement, as a fraction and as an absolute floor in glyph-space units. The
+#: floor is what keeps a comma or a full stop -- 250 units against 278 -- from
+#: failing a test that a 1000-unit `W` passes comfortably.
+_WIDTH_TOLERANCE, _WIDTH_FLOOR = 0.18, 12.0
+
+#: `/W` in a `CIDFont` is `[ cid [w w w] cidfirst cidlast w ... ]`, which needs
+#: the brackets kept rather than a flat number scan.
+_W_TOKEN = re.compile(rb"\[|\]|-?\d+\.?\d*")
+
+#: A `cidfirst cidlast w` run this wide is a default for the whole codespace
+#: rather than a measurement, and scoring against it would pass any ordering.
+_MAX_WIDTH_RUN = 0x1000
+
+
+def _cid_widths(document, xref: int) -> Dict[int, float]:
+    """`CID -> declared advance width` out of a Type0 font's `/W` array.
+
+    The document's own statement of how wide each glyph is, which is what the
+    ordering test below is scored against. `/W` is read rather than the font
+    program's `hmtx` on purpose: `hmtx` and the glyph outlines come out of the
+    same stripped subset, so scoring one against the other would only confirm
+    that the subset is self-consistent. `/W` was written by the tool that chose
+    the glyph ids, and the reference widths come from a font this process did not
+    touch, so agreement between the two is evidence about the *ordering*.
+    """
+    descendant = _descendant_font(document, xref)
+    found = re.search(r"/W\b", descendant)
+    if not found:
+        return {}
+    rest = descendant[found.end():].lstrip()
+    if rest.startswith("["):
+        depth, text = 0, ""
+        for index, char in enumerate(rest):
+            if char == "[":
+                depth += 1
+            elif char == "]":
+                depth -= 1
+                if not depth:
+                    text = rest[:index + 1]
+                    break
+        if not text:
+            return {}
+    else:
+        indirect = _INDIRECT.match(rest)
+        if not indirect:
+            return {}
+        text = document.xref_object(int(indirect.group(1))) or ""
+    # Every token `_W_TOKEN` yields is a bracket or a well-formed number, so
+    # nothing below has to defend against a number that will not parse. It did,
+    # and those branches were unreachable.
+    tokens = _W_TOKEN.findall(text.encode("latin-1", "replace"))
+    widths: Dict[int, float] = {}
+    index = 1 if tokens and tokens[0] == b"[" else 0
+    while index < len(tokens):
+        if tokens[index] in (b"[", b"]"):
+            index += 1
+            continue
+        first = int(float(tokens[index]))
+        if index + 1 < len(tokens) and tokens[index + 1] == b"[":
+            cursor, cid = index + 2, first
+            while cursor < len(tokens) and tokens[cursor] != b"]":
+                widths[cid] = float(tokens[cursor])
+                cid += 1
+                cursor += 1
+            index = cursor + 1
+            continue
+        if index + 2 < len(tokens) and tokens[index + 1] not in (b"[", b"]"):
+            last, width = int(float(tokens[index + 1])), float(tokens[index + 2])
+            if 0 <= first <= last and last - first < _MAX_WIDTH_RUN:
+                for cid in range(first, last + 1):
+                    widths[cid] = width
+            index += 3
+            continue
+        # A `cid` with nothing after it: the array was truncated.
+        index += 1
+    return widths
+
+
+@lru_cache(maxsize=4)
+def _reference_widths(fontname: str) -> Dict[int, float]:
+    """`codepoint -> advance` for one base-14 face, in glyph-space units."""
+    try:
+        font = fitz.Font(fontname)
+    except Exception:
+        return {}
+    widths: Dict[int, float] = {}
+    for codepoint in range(0x20, 0x250):
+        try:
+            advance = font.glyph_advance(codepoint) * 1000.0
+        except Exception:
+            continue
+        if advance > 0:
+            widths[codepoint] = advance
+    return widths
+
+
+@lru_cache(maxsize=1)
+def _symbol_reference_widths() -> Dict[int, float]:
+    """`code -> advance` for the Adobe Symbol face, keyed by Symbol code."""
+    try:
+        font = fitz.Font("symb")
+    except Exception:
+        return {}
+    widths: Dict[int, float] = {}
+    for code, char in _ADOBE_SYMBOL.items():
+        try:
+            advance = font.glyph_advance(ord(char)) * 1000.0
+        except Exception:
+            continue
+        if advance > 0:
+            widths[code] = advance
+    return widths
+
+
+def _order_agreement(widths: Dict[int, float], order: str) -> Tuple[int, int]:
+    """`(agreed, scored)` between a font's declared widths and one ordering.
+
+    Scored against both a serif and a sans reference and the better taken,
+    because the question is whether the *ordering* is right and not which
+    typeface the publisher used: Times and Helvetica disagree about `r` by more
+    than the tolerance, which is enough to fail a correct ordering that happens
+    to be scored against the wrong one of the two.
+    """
+    best = (0, 0)
+    for fontname in ("helv", "tiro"):
+        reference = _reference_widths(fontname)
+        if not reference:
+            continue
+        agreed = scored = 0
+        for cid, declared in widths.items():
+            if not 0 <= cid < len(order):
+                continue
+            char = order[cid]
+            if char == "�" or char.isspace():
+                continue
+            expected = reference.get(ord(char))
+            if not expected:
+                continue
+            scored += 1
+            if abs(declared - expected) <= max(_WIDTH_TOLERANCE * expected, _WIDTH_FLOOR):
+                agreed += 1
+        if scored and agreed * max(best[1], 1) > best[0] * scored:
+            best = (agreed, scored)
+    return best
+
+
+def _inferred_glyph_unicodes(document, xref: int, ext: str) -> Tuple[Dict[int, int], str]:
+    """`(glyph id -> codepoint, which ordering)` for a font that names nothing.
+
+    `({}, "")` unless the ordering the font's format defines both applies and
+    survives `_order_agreement`. The other table is scored as well, and the one
+    the format defines has to win outright: a font in Macintosh order scores
+    19-56% against the CFF table and a CID-keyed CFF 47% against the Macintosh
+    one, so the comparison costs nothing on a font that is in standard order and
+    refuses one that sits near the bar on both for no reason the widths explain.
+    """
+    widths = _cid_widths(document, xref)
+    if len(widths) < _ORDER_MIN_GLYPHS:
+        return {}, ""
+    if ext == "cid":
+        native = ("cff_standard", _CFF_STANDARD_ORDER)
+    elif ext == "ttf":
+        native = ("macintosh", _MAC_GLYPH_ORDER)
+    else:
+        return {}, ""
+    others = [(name, order) for name, order in
+              (("cff_standard", _CFF_STANDARD_ORDER), ("macintosh", _MAC_GLYPH_ORDER))
+              if name != native[0]]
+    agreed, scored = _order_agreement(widths, native[1])
+    if not scored or agreed / scored < _ORDER_MIN_AGREEMENT:
+        return {}, ""
+    for _name, order in others:
+        rival_agreed, rival_scored = _order_agreement(widths, order)
+        if rival_scored and rival_agreed / rival_scored >= agreed / scored:
+            return {}, ""
+    order = native[1]
+    glyphs = {cid: ord(order[cid]) for cid in widths
+              if 0 <= cid < len(order) and order[cid] != "�"}
+    return glyphs, native[0]
+
+
 _CMAP_HEAD = """/CIDInit /ProcSet findresource begin
 12 dict begin
 begincmap
@@ -339,16 +621,25 @@ endcodespacerange
 """
 _CMAP_TAIL = "endcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n"
 
+#: The same header with a single-byte codespace, for a simple font. A code in a
+#: simple font is one byte, and a CMap that declares `<0000><FFFF>` over one is
+#: read by MuPDF as covering two-byte codes that never occur -- so the entries
+#: are there and none of them ever match.
+_CMAP_HEAD_BYTE = _CMAP_HEAD.replace("<0000><FFFF>", "<00><FF>")
+
 #: `bfchar` sections are capped at 100 entries by the PDF specification.
 _BFCHAR_PER_SECTION = 100
 
 
-def _bfchar_sections(glyphs: Dict[int, int]) -> str:
+def _bfchar_sections(glyphs: Dict[int, int], digits: int = 4) -> str:
     """`glyph id -> codepoint` as ToUnicode `bfchar` sections.
 
     Destinations are UTF-16BE, which is what a CMap of `/Ordering (UCS)` means by
     a hex string, so an astral codepoint is written as its surrogate pair rather
     than truncated.
+
+    `digits` is the width of the *source*, and it has to match the codespace the
+    CMap declares: four for a two-byte CID and two for a simple font's code.
     """
     out = []
     entries = sorted(glyphs.items())
@@ -356,7 +647,8 @@ def _bfchar_sections(glyphs: Dict[int, int]) -> str:
         section = entries[start:start + _BFCHAR_PER_SECTION]
         out.append("%d beginbfchar\n" % len(section))
         for glyph, codepoint in section:
-            out.append("<%04X><%s>\n" % (glyph, chr(codepoint).encode("utf-16-be").hex().upper()))
+            out.append("<%0*X><%s>\n" % (digits, glyph,
+                                          chr(codepoint).encode("utf-16-be").hex().upper()))
         out.append("endbfchar\n")
     return "".join(out)
 
@@ -393,7 +685,276 @@ def _descendant_font(document, xref: int) -> str:
     return document.xref_object(int(found.group(1))) or "" if found else ""
 
 
-def _repair_font_encoding(document, xref: int, rewritten=None):
+# -- fonts that draw a Greek letter and call it a Latin one ------------------
+#
+# A second fault, found while measuring the first and worse than it, because
+# nothing anywhere counts it. Page 17 of 10.1016/j.immuni.2022.09.002 reads
+# `5 microlitres` and `1x Q5 Ultra II PCR Master Mix`; the extractor wrote
+# `5 mL` and `13 Q5`. Not a control character, not a replacement character --
+# valid, plausible, wrong text in a Methods section, where `mL` for the
+# microlitre is a thousandfold error in a protocol.
+#
+# The font is `IFHOAH+AdvPS3F4C13`, one of Elsevier's `Adv` faces. It is a
+# `/Type1` with `/Encoding /WinAnsiEncoding` and no `/ToUnicode`, and its four
+# glyphs are named `S`, `a`, `b` and `m`. Those are Adobe Symbol positions --
+# Sigma, alpha, beta, mu -- so the names are right about the *code* and say
+# nothing about the character. MuPDF resolves the name through the glyph list to
+# the Latin letter, which is the only thing it can do with what the file says.
+# Rendering the glyphs settles what they are: the ones named `g` come out as
+# gamma and the one named `m` as mu.
+#
+# `_SYMBOL_PUA` above already holds this encoding, and `_symbol_map` already
+# applies it -- but only to private-use codepoints, which is the form MuPDF uses
+# when it cannot resolve the name at all. When it *can* resolve the name the
+# character arrives as ordinary basic Latin, and a page-wide translation of the
+# kind `_symbol_map` builds would then turn every real `m` on the page into a mu.
+# So the correction has to be per font, and it has to be made where MuPDF will
+# see it: a `/ToUnicode` CMap of the font's own.
+#
+# Nothing in the file distinguishes such a font from a Latin one -- both Elsevier
+# faces on that page carry `/Flags 32`, and the encoding both declare is
+# `/WinAnsiEncoding` -- so the evidence has to be the widths again, and the
+# asymmetry in them is what makes this safe. A Symbol face's glyph may happen to
+# be as wide as the Latin letter it is named after: this corpus's gamma is 583
+# where Adobe's is 411 and Helvetica's `g` is 556. But a *Latin* face essentially
+# never has a glyph that matches a Symbol width and no Latin width, because its
+# widths come from a Latin design. Measured over the three real Latin faces on
+# that page: 24 codes where the two readings are far enough apart to tell them
+# apart, and 0 of the 24 match the Symbol reading. So one code matching Symbol
+# and not Latin is strong evidence, a code matching Latin is weak evidence
+# against, and the rule below is written around that.
+
+#: The Adobe Symbol encoding as `code -> character`, which is `_SYMBOL_PUA` with
+#: the private-use offset taken back off. One table, read two ways: at U+F06D
+#: when MuPDF could not name the glyph, and at 0x6D when it named it `m`.
+_ADOBE_SYMBOL: Dict[int, str] = {cp - 0xF000: ch for cp, ch in _SYMBOL_PUA.items()
+                                 if 0x20 < cp - 0xF000 < 0x7F}
+
+#: The Latin readings a code is scored against. Four faces rather than one
+#: because a bold subset's widths are a bold face's widths, and `Helvetica-Bold`
+#: scored against regular Helvetica alone reads as a Symbol font. Courier is
+#: deliberately absent: every glyph in it is 600 units wide, so it sits within
+#: tolerance of almost anything and swallowed the mu this rule exists to find.
+_LATIN_REFERENCE = ("helv", "tiro", "hebo", "tibo")
+
+#: How far apart the two readings of a code must be before it is allowed to vote.
+_SYMBOL_MIN_SEPARATION = 0.15
+#: And how close a declared width must sit to a reading to count as matching it.
+_SYMBOL_WIDTH_TOLERANCE = 0.10
+#: Fonts declaring fewer codes than this are left alone: a scale fit over three
+#: widths has one degree of freedom left and fits anything.
+_SYMBOL_MIN_CODES = 4
+#: Relative spread below which a font is monospaced, and so fits every table.
+_MONOSPACE_SPREAD = 0.02
+#: The Symbol fit has to be this good absolutely, and this much better than the
+#: best Latin one, before a font is called non-Latin. The real symbol faces score
+#: 0.038-0.063 against 0.127-0.155 for Latin, and the Latin faces 0.000-0.101
+#: against 0.092-0.221, so both tests clear their bars by a wide margin.
+_SYMBOL_MAX_RESIDUAL, _SYMBOL_MARGIN = 0.10, 2.0
+
+#: A `/Widths` array, which is `/FirstChar`-relative and holds one number per code.
+_WIDTH_NUMBER = re.compile(r"-?\d+\.?\d*")
+
+
+def _simple_widths(document, xref: int) -> Dict[int, float]:
+    """`code -> declared advance width` for a simple font.
+
+    `/Widths` is indexed from `/FirstChar`, so the code a number belongs to is
+    positional. Zeroes are kept: a zero width is a real declaration in a subset
+    for codes it does not draw, and dropping them would shift every later code.
+    """
+    kind, first_value = document.xref_get_key(xref, "FirstChar")
+    if kind == "null":
+        return {}
+    try:
+        first = int(first_value)
+    except (TypeError, ValueError):
+        return {}
+    kind, value = document.xref_get_key(xref, "Widths")
+    if kind == "null":
+        return {}
+    if kind == "xref":
+        found = _INDIRECT.match((value or "").strip())
+        value = document.xref_object(int(found.group(1))) if found else ""
+    widths: Dict[int, float] = {}
+    for offset, number in enumerate(_WIDTH_NUMBER.findall(value or "")):
+        widths[first + offset] = float(number)
+    return widths
+
+
+def _latin_or_symbol(widths: Dict[int, float]) -> Optional[str]:
+    """Which reading of a font's codes its declared widths fit better.
+
+    `"symbol"`, `"latin"`, or `None` when neither fits or there is too little to
+    go on. A *scaled* fit rather than a direct comparison, which is the whole
+    point: a condensed or bold face's widths are a Latin design's widths times a
+    constant, so `ArialNarrow` at k=0.82 fits Latin perfectly and comparing its
+    widths to Helvetica's one code at a time reads it as a symbol font. Measured
+    over the simple fonts in the first 60 papers of this corpus, the residual
+    after fitting one scale factor:
+
+        ArialNarrow            latin 0.000   symbol 0.119
+        Helvetica-Bold         latin 0.000   symbol 0.092
+        Verdana-Bold           latin 0.020   symbol 0.100
+        AdvPSA183              latin 0.026   symbol 0.130
+        AdvOT503af387.I        latin 0.101   symbol 0.221
+        AdvPS3F4C13            latin 0.153   symbol 0.038
+        AdvPS4721B4            latin 0.155   symbol 0.056
+        AdvP4C4E46             latin 0.127   symbol 0.063
+
+    A monospaced font is answered before either fit is attempted. Every glyph in
+    one is the same width, so it fits *any* table once a scale is free, and
+    `CourierNewPS-BoldMT` came out as a symbol font on a residual of 0.187 that
+    meant nothing. Keeping Courier among the Latin faces instead would fix that
+    one file and halve the margin on every real symbol font, which is the worse
+    trade.
+    """
+    usable = {code: width for code, width in widths.items()
+              if 0x20 < code < 0x7F and width > 0}
+    if len(usable) < _SYMBOL_MIN_CODES:
+        return None
+    values = list(usable.values())
+    average = sum(values) / len(values)
+    spread = (sum((v - average) ** 2 for v in values) / len(values)) ** 0.5
+    if average and spread / average < _MONOSPACE_SPREAD:
+        return "latin"
+
+    def residual(table: Dict[int, float]) -> Optional[float]:
+        ratios = sorted(usable[code] / table[code] for code in usable
+                        if table.get(code))
+        if len(ratios) < _SYMBOL_MIN_CODES:
+            return None
+        scale = ratios[len(ratios) // 2]
+        if scale <= 0:
+            return None
+        errors = sorted(abs(ratio / scale - 1) for ratio in ratios)
+        return errors[len(errors) // 2]
+
+    latin = [value for value in
+             (residual(_reference_widths(name)) for name in _LATIN_REFERENCE)
+             if value is not None]
+    symbol = residual(_symbol_reference_widths())
+    if not latin or symbol is None:
+        return None
+    best = min(latin)
+    if symbol <= _SYMBOL_MAX_RESIDUAL and best >= symbol * _SYMBOL_MARGIN:
+        return "symbol"
+    return "latin"
+
+
+def _symbol_encoded_codes(document, xref: int) -> Dict[int, str]:
+    """`code -> character` for the codes of this font that are Symbol positions.
+
+    Two independent conditions, and both are needed because they answer
+    different questions. `_latin_or_symbol` says whether the font is a Latin text
+    face at all, which it answers well. It does *not* say which non-Latin
+    encoding a non-Latin face uses, and assuming Adobe Symbol there replaces one
+    wrong character with another: `AdvPS4721B4` draws a Sigma at code 0x2D, where
+    Adobe Symbol has the minus sign, and `AdvP4C4E46` draws a bracket section at
+    code 0x58, where Adobe Symbol has Xi. Both fit the Symbol widths better than
+    any Latin face and neither is Adobe Symbol encoded.
+
+    So the character has to be identified per code, by the same width evidence
+    read one code at a time: the declared width must sit near the Symbol reading,
+    away from every Latin reading, and the two readings must be far enough apart
+    for that to mean anything. `AdvPS3F4C13`'s mu is 562 against Adobe's 576 and
+    Helvetica's `m` at 833, which is conclusive; its beta is 552 against Adobe's
+    549 and Helvetica's `b` at 556, which says nothing at all and is left alone.
+
+    The cost is coverage: the codes where the two readings are within 15% of each
+    other -- `a`, `b`, `d`, `o`, `p`, and most capitals -- cannot be recovered
+    this way, and are counted in `glyphs_undecodable` instead of being guessed.
+    """
+    if _latin_or_symbol(_simple_widths(document, xref)) != "symbol":
+        return {}
+    widths = _simple_widths(document, xref)
+    symbol_widths = _symbol_reference_widths()
+    identified: Dict[int, str] = {}
+    for code, declared in widths.items():
+        char = _ADOBE_SYMBOL.get(code)
+        expected = symbol_widths.get(code)
+        if not char or not expected or declared <= 0:
+            continue
+        latin = [width for width in
+                 (_reference_widths(name).get(code) for name in _LATIN_REFERENCE)
+                 if width]
+        if not latin:
+            continue
+        if min(abs(expected - width) / max(expected, width)
+               for width in latin) <= _SYMBOL_MIN_SEPARATION:
+            continue
+        if abs(declared - expected) > _SYMBOL_WIDTH_TOLERANCE * expected:
+            continue
+        if any(abs(declared - width) <= _SYMBOL_WIDTH_TOLERANCE * width
+               for width in latin):
+            continue
+        identified[code] = char
+    return identified
+
+
+def _repair_symbol_encoding(document, xref: int, rewritten=None) -> Optional[int]:
+    """Give a Symbol-encoded simple font a `/ToUnicode` saying so.
+
+    Returns the number of codes mapped, or `None` when this is not such a font.
+    Written as a CMap rather than applied to the extracted string because the
+    correction is per font and the string is per page: `m` out of this font is a
+    mu and `m` out of the body face beside it is an `m`, and by the time the two
+    are in one block nothing tells them apart.
+
+    Codes the file already resolves are left alone, exactly as
+    `_repair_font_encoding` leaves them: a font that says what it means is not
+    something this rule has any business overruling.
+    """
+    def key(name):
+        kind, value = document.xref_get_key(xref, name)
+        return value if kind != "null" else None
+
+    subtype = key("Subtype")
+    if subtype not in ("/Type1", "/TrueType", "/MMType1"):
+        return None
+    codes = _symbol_encoded_codes(document, xref)
+    if not codes:
+        return None
+
+    stream_xref = None
+    to_unicode = document.xref_get_key(xref, "ToUnicode")
+    existing = b""
+    if to_unicode[0] == "xref":
+        stream_xref = int(to_unicode[1].split()[0])
+        if rewritten is not None and stream_xref in rewritten:
+            return None
+        try:
+            existing = document.xref_stream(stream_xref) or b""
+        except Exception:
+            return None
+        entries = _cmap_entries(existing)
+        if entries is None:
+            return None
+        codes = {code: char for code, char in codes.items() if code not in entries}
+    if not codes:
+        return 0
+
+    sections = _bfchar_sections({code: ord(char) for code, char in codes.items()},
+                                digits=2)
+    if existing and b"endcmap" in existing:
+        head, _, tail = existing.rpartition(b"endcmap")
+        data = head + sections.encode("latin-1") + b"endcmap" + tail
+    else:
+        data = (_CMAP_HEAD_BYTE + sections + _CMAP_TAIL).encode("latin-1")
+
+    if stream_xref is None:
+        stream_xref = document.get_new_xref()
+        document.update_object(stream_xref, "<<>>")
+        document.update_stream(stream_xref, data, new=True)
+        document.xref_set_key(xref, "ToUnicode", "%d 0 R" % stream_xref)
+    else:
+        document.update_stream(stream_xref, data, new=True)
+    if rewritten is not None:
+        rewritten.add(stream_xref)
+    return len(codes)
+
+
+def _repair_font_encoding(document, xref: int, rewritten=None, orderings=None):
     """Fill the gaps in one font's ToUnicode CMap from the font's own `cmap`.
 
     Returns the number of glyphs given a character, `0` when the font needed
@@ -445,8 +1006,18 @@ def _repair_font_encoding(document, xref: int, rewritten=None):
         return None
 
     glyphs = _embedded_glyph_unicodes(document, xref)
+    ordering = ""
     if not glyphs:
-        return None
+        # The font names nothing. Before giving up, ask whether its glyphs are
+        # where the standard ordering for its format puts them -- and refuse
+        # unless the widths the document itself declares say they are.
+        try:
+            _name, ext, _subtype, _buffer = document.extract_font(xref)
+        except Exception:
+            return None
+        glyphs, ordering = _inferred_glyph_unicodes(document, xref, ext or "")
+        if not glyphs:
+            return None
 
     stream_xref = None
     to_unicode = document.xref_get_key(xref, "ToUnicode")
@@ -491,11 +1062,25 @@ def _repair_font_encoding(document, xref: int, rewritten=None):
         document.update_stream(stream_xref, data, new=True)
     if rewritten is not None:
         rewritten.add(stream_xref)
+    if ordering and orderings is not None:
+        # Kept apart from `glyph_encoding_repaired`: one of those numbers is the
+        # font's own answer and the other is an ordering this module asserted,
+        # and a reader deciding how much to trust a passage needs to know which.
+        orderings[xref] = ordering
     return len(glyphs)
 
 
-def _repair_glyph_encoding(document) -> dict:
+def _repair_glyph_encoding(document) -> Tuple[dict, dict]:
     """Give every embedded font a ToUnicode CMap covering the glyphs it draws.
+
+    Returns `(repaired, inferred, symbols)`, each `font name -> codes mapped`.
+    They are separate because they are different claims: `repaired` is the font's
+    own character map, read out of the program the document embeds, and `inferred`
+    is one of the two standard glyph orderings asserted over a font that carries
+    no character map at all and accepted only because the widths the document
+    declares agree with it. Both end up in `extraction.json` under names of their
+    own, so a passage that reads as English because of an assertion can be told
+    apart from one that reads as English because the file said so.
 
     Walked over the xref table rather than page by page: the 60-page supplement
     of 10.1126/science.adf5357 reports 108 page-font pairs for 6 distinct fonts,
@@ -508,18 +1093,125 @@ def _repair_glyph_encoding(document) -> dict:
     been touched at this point.
     """
     repaired: Dict[str, int] = {}
+    inferred: Dict[str, int] = {}
+    symbols: Dict[str, int] = {}
     rewritten: set = set()
+    orderings: Dict[int, str] = {}
+    symbol: Dict[int, bool] = {}
     for xref in range(1, document.xref_length()):
         try:
             if document.xref_get_key(xref, "Type")[1] != "/Font":
                 continue
-            added = _repair_font_encoding(document, xref, rewritten)
+            added = _repair_font_encoding(document, xref, rewritten, orderings)
+            if added is None:
+                # Not a Type0 font, so the CMap repair has nothing to say about
+                # it. A simple font has its own way of being wrong.
+                added = _repair_symbol_encoding(document, xref, rewritten)
+                if added:
+                    symbol[xref] = True
         except Exception:
             continue
         if added:
             name = (document.xref_get_key(xref, "BaseFont")[1] or "?").lstrip("/")
-            repaired[name] = repaired.get(name, 0) + added
-    return repaired
+            ordering = orderings.get(xref)
+            if xref in symbol:
+                symbols[name] = symbols.get(name, 0) + added
+                continue
+            target = inferred if ordering else repaired
+            key = f"{name} ({ordering})" if ordering else name
+            target[key] = target.get(key, 0) + added
+    return repaired, inferred, symbols
+
+
+def _glyph_coverage(document) -> Dict[str, List[Tuple[bool, set, bool]]]:
+    """`font name -> [(is Identity-H, codes its CMap covers, has a usable CMap)]`.
+
+    Read once per document, after the repairs, so that the count below is of what
+    is *left* rather than of what arrived. Keyed by the name `get_texttrace`
+    reports, which is the base font with the subset tag taken off, and a list
+    because two different fonts in one file can share it -- `AAAABM+Helvetica`
+    and `AAAABN+Helvetica` are both `Helvetica` there.
+
+    Needed because `get_texttrace` answers a narrower question than it appears
+    to. It reports U+FFFD for a glyph the *font program* does not name, and takes
+    no account of a `/ToUnicode` CMap that names it anyway: page 2 of
+    10.1038/s41588-025-02161-x is a table of contents whose 1,013 dot leaders
+    come back U+FFFD from the trace and `.` from `get_text`, because the file's
+    CMap is fine and the stripped `post` table is what the trace is looking at.
+    Counting the trace alone put those 1,013 dots in the damage figure.
+    """
+    coverage: Dict[str, List[Tuple[bool, set, bool]]] = {}
+    for xref in range(1, document.xref_length()):
+        try:
+            if document.xref_get_key(xref, "Type")[1] != "/Font":
+                continue
+            name = (document.xref_get_key(xref, "BaseFont")[1] or "?")
+            name = name.lstrip("/").split("+")[-1]
+            identity = document.xref_get_key(xref, "Encoding")[1] == "/Identity-H"
+            codes: set = set()
+            to_unicode = document.xref_get_key(xref, "ToUnicode")
+            if to_unicode[0] == "xref":
+                stream = document.xref_stream(int(to_unicode[1].split()[0])) or b""
+                entries = _cmap_entries(stream)
+                if entries:
+                    codes = set(entries)
+            coverage.setdefault(name, []).append((identity, codes, bool(codes)))
+        except Exception:
+            continue
+    return coverage
+
+
+def _undecodable_boxes(spans, coverage) -> List:
+    """The rectangles of this page's glyphs that still have no character.
+
+    A glyph counts when the trace could not name it *and* no font of that name
+    can answer for it: under `/Identity-H` a code is the glyph id, so the CMap
+    either has an entry for it or it does not; under any other encoding the code
+    is not the glyph id and cannot be recovered from the trace, so the test
+    falls back to whether that font has a usable CMap at all.
+
+    Where two fonts share a name either may answer, which undercounts rather than
+    over-counts. That is the right direction for a number whose purpose is to let
+    a reader distrust a passage: a block reported clean and not being clean is the
+    failure that matters, and it cannot happen this way round.
+    """
+    boxes = []
+    for span in spans:
+        answers = coverage.get(span.get("font") or "", ())
+        for char in span.get("chars") or ():
+            if char[0] != _NO_UNICODE or len(char) < 4:
+                continue
+            readable = False
+            for identity, codes, usable in answers:
+                if (char[1] in codes) if identity else usable:
+                    readable = True
+                    break
+            if not readable:
+                boxes.append(fitz.Rect(char[3]))
+    return boxes
+
+
+def _claim_undecodable(area, points: List[list]) -> int:
+    """How many of this page's unreadable glyphs fall in one block, claiming them.
+
+    Claimed, not just counted, and that is the whole of it:
+    `get_text("blocks")` rectangles overlap, so a glyph inside two of them is
+    inside two of them. Counting independently per block made
+    10.1038/s41586-021-04345-x report 4,611 undecodable glyphs out of the 2,006
+    that had no character -- a figure that cannot be true, and that nothing else
+    in the pipeline would have contradicted.
+
+    `points` is mutated. The blocks of a page are walked in the order MuPDF
+    returns them, so the first block to contain a glyph is the one that carries
+    it, and a total over blocks is then a total over glyphs.
+    """
+    claimed = 0
+    for point in points:
+        if point[2] or not area.contains(fitz.Point(point[0], point[1])):
+            continue
+        point[2] = True
+        claimed += 1
+    return claimed
 
 
 def _page_spans(page) -> List[dict]:
@@ -957,9 +1649,14 @@ def blocks_from_pdf(
         meta["pages"] = document.page_count
         # Before any page is laid out, or MuPDF has already read the CMap this
         # replaces.
-        repaired = _repair_glyph_encoding(document)
+        repaired, inferred, symbols = _repair_glyph_encoding(document)
         if repaired:
             meta["glyph_encoding_repaired"] = repaired
+        if inferred:
+            meta["glyph_order_inferred"] = inferred
+        if symbols:
+            meta["symbol_encoding_applied"] = symbols
+        coverage = _glyph_coverage(document)
         for page in document:
             texts: List[Tuple[str, bool, dict]] = []
             try:
@@ -973,6 +1670,12 @@ def blocks_from_pdf(
                 page_glyphs, page_unnamed = _unresolved_glyphs(spans)
                 drawn_glyphs += page_glyphs
                 unnamed_glyphs += page_unnamed
+                # Centre points rather than rectangles, and consumed as they
+                # are claimed: `get_text("blocks")` rectangles overlap, so a
+                # glyph inside two of them was counted twice and the file total
+                # came out above the number of glyphs drawn.
+                undecodable = [[(box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2, False]
+                               for box in _undecodable_boxes(spans, coverage)]
                 width = max(page.rect.width, 1.0)
                 height = max(page.rect.height, 1.0)
             except Exception as e:  # a damaged page should not lose the whole file
@@ -993,6 +1696,14 @@ def blocks_from_pdf(
                     ref = {"page": page.number + 1,
                            "bbox": [round(float(v), 1) for v in raw[0:4]],
                            "block_no": int(raw[5]) if len(raw) > 5 else None}
+                    # Joined on position rather than on string offsets. The block
+                    # text has been de-hyphenated and had its whitespace
+                    # collapsed by this point, so a character index into it no
+                    # longer addresses the glyph it came from; the rectangle
+                    # still does.
+                    claimed = _claim_undecodable(fitz.Rect(raw[0:4]), undecodable)
+                    if claimed:
+                        ref["undecodable_glyphs"] = claimed
                     texts.append((cleaned, _in_margin(raw[0:4], width, height), ref))
             per_page.append(texts)
     except Exception as e:
@@ -1020,6 +1731,14 @@ def blocks_from_pdf(
         # U+F8FF is PyMuPDF's "no unicode mapping" fallback rather than an Adobe
         # Symbol position, so guessing a character for it would be a guess.
         meta["glyphs_unmapped"] = {f"U+{cp:04X}": n for cp, n in sorted(unmapped.items())}
+    total_undecodable = sum(ref.get("undecodable_glyphs", 0)
+                            for texts in per_page for _t, _m, ref in texts)
+    if total_undecodable:
+        # What is left after every repair above, and the number a reader should
+        # weigh a passage by. Distinct from `glyphs_unnamed`, which counts what
+        # the trace could not name before the CMaps were consulted and is the
+        # measurement the `garbled_text_encoding` threshold is set against.
+        meta["glyphs_undecodable"] = total_undecodable
     if unnamed_glyphs:
         # Recorded on every file that has any, not only on the ones the status
         # rejects. Sub-threshold damage is real and is almost always a figure's
