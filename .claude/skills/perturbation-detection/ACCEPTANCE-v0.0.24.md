@@ -38,7 +38,7 @@ cap never reaches a non-negative, and that is a **code invariant rather than a
 model behaviour** — `task.rules.stage_b` rewrites a `"no"` and nothing else, and
 `tests/test_harness_guards.py` asserts it over every Stage A value and every
 legal `text_completeness`. Paying the model to re-confirm a parametrized test was
-the weakest $22 in the set.
+the weakest six papers in the set.
 
 **What the cut costs, stated rather than glossed:** criterion 3 is now exercised
 by exactly one paper, `s41586-021-03852-1` — `unclear` through A5, with a
@@ -110,17 +110,19 @@ rung-3 papers and `science.aat1699`. That would mean the block reads as
 permission to report `"full"` rather than as a definition of it, which is the
 v0.0.10 attractor in the opposite direction. Criterion 2 catches exactly that.
 
-## Cost
+## Size
 
-24 papers x 2 runs at the $1.84/paper measured in the v0.0.23 acceptance ≈
-**$88**. A v0.0.23 baseline over the same set, if wanted for criterion 6, is one
-more run: **+$44**.
+24 papers x 2 runs at the ~13 requests and ~11.6k output tokens per paper
+measured in the v0.0.23 acceptance ≈ **48 spawns, ~620 requests, ~36M tokens**.
+A v0.0.23 baseline over the same set, if wanted for criterion 6, is one more
+run: **+24 spawns**.
 
-For comparison: the full 392-paper corpus is **~$721** at the same rate, and it
-has not been run since v0.0.22. So this pass is **12%** of the corpus run — and
-the argument for spending it first is not caution but arithmetic: **a single
-corpus run cannot measure run-to-run agreement**, so $721 would buy an updated
-corpus while leaving this version's own question unanswered. If the flip rate has
+For comparison: the full 392-paper corpus is **~5,100 requests and ~430M tokens**
+for a single pass, and it has not been run since v0.0.22. So this pass is **12%**
+of the corpus run — and the argument for running it first is not caution but
+arithmetic: **a single corpus run cannot measure run-to-run agreement**, so a
+full pass would buy an updated corpus while leaving this version's own question
+unanswered. If the flip rate has
 not moved, Part 2 of the design is the next version, and a version bump means
 scoring the corpus again.
 
@@ -279,22 +281,25 @@ and `aat1699`'s flip is caused by the absence of a per-source way to say it.
 Collapsing the fields would delete a distinction the model is using correctly.
 Part 3 needs rewriting: per-source text quality, and a home for `garbled_run`.
 
-## Cost
+## What the pass spent
 
-| | papers | requests | wall-clock | model time | cost |
-|---|---|---|---|---|---|
-| r1 | 24 | 262 | 47m | 45m (96%) | **$36.28** |
-| r2 | 24 | 260 | 47m | 45m (96%) | **$35.63** |
+| | papers | requests | output tokens | total tokens | wall-clock | model time |
+|---|---|---|---|---|---|---|
+| r1 | 24 | 262 | 208,948 | 18,862,331 | 47m | 45m (96%) |
+| r2 | 24 | 260 | 211,506 | 18,605,742 | 47m | 45m (96%) |
 
-**$71.91 for the pass, $1.50/paper** — under the $88 predicted from v0.0.23's
-$1.84. Run in parallel, so ~50 minutes of wall clock for both. No price-drift
-warning in either run.
+**Per paper: median 8,690 output tokens over 10 requests in r1 (p10 4,388, p90
+13,206); 8,838 over 10 in r2.** Below the v0.0.23 set's 11,610 because this set
+is shorter papers, not because less was done per paper. Floor in both runs is
+`10.1096_fj.202300601rrr` — 2,676 and 3,067 output tokens over 6 requests — so
+every paper here was reasoned about rather than assigned. Run in parallel, so
+~50 minutes of wall clock for both. No price-drift warning in either run.
 
 ## What this means for the corpus run
 
 **It does not start.** The order agreed on 2026-09-16 was this pass and then the
 corpus, conditional on the gate; the gate failed on its blocking criterion. A
-$721 corpus run under v0.0.24 would score 15-odd degraded papers whose cap is
+full corpus run under v0.0.24 would score 15-odd degraded papers whose cap is
 still a coin flip, and Part 2 is a prompt change, which means a version bump and
-a second $721 pass. The pass cost $72 and it has already paid for itself twice
-over: it found the spec defect in criterion 2 and it refuted Part 3's premise.
+a second full pass. This pass was 12% of one corpus run and it has already paid
+for itself twice over: it found the spec defect in criterion 2 and it refuted Part 3's premise.

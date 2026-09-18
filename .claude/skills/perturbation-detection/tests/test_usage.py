@@ -485,3 +485,60 @@ def test_a_run_where_every_attempt_errored_reports_rather_than_crashes(tmp_path)
                 "total_cost_usd": 0, "usage": {}, "modelUsage": {}}
     report = render(from_envelopes(_run(tmp_path, envelopes=[envelope])), "work-x")
     assert "no billable usage" in report
+
+
+# ------------------------------------------- tokens as evidence of work
+
+def _two_papers(tmp_path, worked_output, thin_output):
+    """One paper the model worked and one it barely touched, same work dir."""
+    work = tmp_path / "work-evidence"
+    (work / "meta").mkdir(parents=True)
+    for doi, output, turns in (("10.1000_worked", worked_output, 14),
+                               ("10.1000_thin", thin_output, 1)):
+        envelope = json.loads(json.dumps(REAL_ENVELOPE))
+        envelope["num_turns"] = turns
+        envelope["usage"]["output_tokens"] = output
+        envelope["modelUsage"]["claude-opus-5"]["outputTokens"] = output
+        (work / "meta" / f"{doi}.usage.jsonl").write_text(
+            json.dumps(envelope) + "\n", encoding="utf-8")
+    return work
+
+
+def test_the_per_paper_summary_is_stated_in_output_tokens(tmp_path):
+    """Output is the per-paper evidence of reasoning; dollars are not."""
+    report = render(from_envelopes(_two_papers(tmp_path, 13100, 200)), "work-evidence")
+    assert "Per paper: median" in report
+    assert "output tokens" in report
+    # The old summary led with a median dollar figure. It must not come back:
+    # the whole point of the line is to be comparable across papers as work.
+    assert "Per paper: median $" not in report
+
+
+def test_the_least_worked_paper_is_named(tmp_path):
+    """A paper labelled without being analysed is invisible in a run total and
+    in a median. Naming the floor is the only place it surfaces."""
+    report = render(from_envelopes(_two_papers(tmp_path, 13100, 200)), "work-evidence")
+    assert "Least-worked paper: 200 output tokens over 1 request — 10.1000_thin" in report
+
+
+def test_the_per_paper_listing_is_ordered_by_output_not_by_price(tmp_path):
+    """Cache-read dominates price and says nothing about engagement, so a
+    price ordering can rank a barely-read paper above a heavily-worked one."""
+    work = _two_papers(tmp_path, 13100, 200)
+    report = render(from_envelopes(work), "work-evidence", per_paper=True)
+    # Sliced to the listing: the floor line above it also names the thin paper.
+    listing = report.split("Per paper, most output first:", 1)[1]
+    assert listing.index("10.1000_worked") < listing.index("10.1000_thin")
+
+
+def test_the_price_line_comes_last_and_is_not_called_a_bill(tmp_path):
+    """A subscription run is not billed per token. The figure stays for the
+    drift check against the CLI, but it is a footer, not the headline."""
+    report = render(from_envelopes(_two_papers(tmp_path, 13100, 200)), "work-evidence")
+    lines = [line for line in report.splitlines() if line.strip()]
+    price = [i for i, line in enumerate(lines) if line.startswith("List-price equivalent")]
+    assert price, "the list-price line should still be printed"
+    assert "not a bill" in lines[price[0]]
+    # Everything above it is tokens, requests and time; nothing below but the
+    # price split and the drift warning.
+    assert all("output tokens" not in line for line in lines[price[0]:])
