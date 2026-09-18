@@ -23,14 +23,25 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from pe.validate import parse_raw  # noqa: E402
 
-#: Verbatim from work-corpus-v0025-r1/raw/10.1038_s41586-020-2496-1.json, which
-#: decodes under a uniform **+31** byte shift to "No sample size calculation was
-#: performed." -- `\x01 + 31 == 0x20`, i.e. these are undecoded GLYPH INDICES
-#: from a subset font whose `/ToUnicode` CMap was not applied, not corruption.
-#: A corpus scan on 2026-09-17 found the same fault in 84 of 392 papers,
-#: 13,482 characters in total. Fixing it belongs in
-#: `manuscript_harvest/extract/pdf.py`; this file only keeps the record
-#: parseable when the model quotes such a run verbatim, as v0.0.25 asks it to.
+#: Verbatim from work-corpus-v0025-r1/raw/10.1038_s41586-020-2496-1.json. These
+#: are undecoded GLYPH IDS rather than corruption, and they decode to "No sample
+#: size calculation was performed."
+#:
+#: The +31 that reads them is one font's coincidence and not a property of the
+#: fault, which is worth saying because it was recorded here as though it were
+#: general. That paper's font is `BSHNBY+MinionPro-Regular`, a CID-keyed CFF
+#: whose charset happens to be in the Adobe standard order, so a CID sits 31
+#: above its codepoint throughout. The other 83 files scanned on 2026-09-17
+#: decode under no single offset: most are cmap-stripped TrueType read through
+#: the standard Macintosh glyph order, and some cannot be decoded at all. Nor
+#: was the cause a CMap "not applied" -- these fonts carry no character map of
+#: any kind, which is why the machinery already in `extract/pdf.py` declined
+#: them rather than missing them.
+#:
+#: Fixed in `extract/pdf.py`: `_inferred_glyph_unicodes` reads the two standard
+#: orderings and `_order_agreement` refuses a subset that renumbered its glyphs.
+#: What this file does is unchanged and narrower: keep the record parseable when
+#: the model quotes such a run verbatim, as v0.0.25 asks it to.
 REAL_GARBLED = "/P\x01TBNQMF\x01TJ[F\x01DBMDVMBUJPO\x01XBT\x01QFSGPSNFE\x0f"
 
 
