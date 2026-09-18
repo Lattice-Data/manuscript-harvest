@@ -1661,6 +1661,306 @@ def test_a_glyph_the_files_cmap_covers_is_not_undecodable():
     simple = {"Covered": [(False, set(), True)], "Bare": [(False, set(), False)]}
     assert len(pdf._undecodable_boxes(spans, simple)) == 1
 
+# -- what the glyph repairs refuse, and what a refusal costs ----------------
+#
+# Every branch below is a way for one font to be unreadable, and the module's
+# standing rule is that such a font costs itself and not the file. They are
+# tested against a stand-in for `fitz.Document` rather than through a PDF
+# because what is under test is the arithmetic of the refusal: building a
+# document for each malformed `/W` array would test PyMuPDF's tolerance for
+# malformed PDFs, which is not this package's claim to make.
+
+class _Dict:
+    """The handful of `fitz.Document` accessors the repairs use.
+
+    `keys` is `name -> (kind, value)` exactly as `xref_get_key` returns it, and
+    `objects` stands in for the indirect objects `xref_object` resolves.
+    """
+
+    def __init__(self, keys=None, objects=None, raises=False):
+        self.keys = keys or {}
+        self.objects = objects or {}
+        self.raises = raises
+
+    def xref_length(self):
+        return 2
+
+    def xref_get_key(self, _xref, name):
+        if self.raises:
+            raise RuntimeError("a damaged font dictionary")
+        return self.keys.get(name, ("null", "null"))
+
+    def xref_object(self, number):
+        return self.objects.get(number, "")
+
+    def xref_stream(self, number):
+        return self.objects.get(number, b"")
+
+
+@pytest.mark.parametrize("descendant, expected", [
+    # No `/W` at all, which is legal -- `/DW` then applies to every glyph, and a
+    # single default width is not evidence about an ordering.
+    ("<< /Subtype /CIDFontType2 /DW 1000 >>", {}),
+    # `/W` whose array never closes.
+    ("<< /Subtype /CIDFontType2 /W [ 1 [ 500 600 >>", {}),
+    # The two forms that do parse, together, as they appear in real files.
+    ("<< /W [ 3 [ 250 333 ] 10 12 500 ] >>",
+     {3: 250.0, 4: 333.0, 10: 500.0, 11: 500.0, 12: 500.0}),
+    # A trailing CID with no width after it: the array was truncated.
+    ("<< /W [ 3 [ 250 ] 99 ] >>", {3: 250.0}),
+    # A run wide enough to be a default for the whole codespace is a default and
+    # not a measurement, and scoring against it would pass any ordering.
+    ("<< /W [ 0 65535 500 ] >>", {}),
+])
+def test_a_width_array_is_read_or_refused_but_never_half_read(descendant, expected):
+    document = _Dict({"DescendantFonts": ("array", descendant)})
+    assert pdf._cid_widths(document, 1) == expected
+
+
+@pytest.mark.parametrize("keys, expected", [
+    ({}, {}),                                                   # no /FirstChar
+    ({"FirstChar": ("int", "65")}, {}),                         # no /Widths
+    ({"FirstChar": ("int", "not a number"),
+      "Widths": ("array", "[500]")}, {}),                       # unusable /FirstChar
+    ({"FirstChar": ("int", "65"),
+      "Widths": ("array", "[500 0 600]")},
+     {65: 500.0, 66: 0.0, 67: 600.0}),                          # zeroes kept
+])
+def test_a_simple_fonts_widths_are_indexed_from_firstchar(keys, expected):
+    """Zeroes are kept because a zero width is a real declaration for a code the
+    subset does not draw, and dropping one would shift every later code."""
+    assert pdf._simple_widths(_Dict(keys), 1) == expected
+
+
+def test_an_indirect_width_array_is_followed():
+    """`/W` is as often an indirect reference as an inline array."""
+    document = _Dict({"DescendantFonts": ("array", "<< /W 42 0 R >>")},
+                     {42: "[ 5 [ 400 ] ]"})
+    assert pdf._cid_widths(document, 1) == {5: 400.0}
+
+
+@pytest.mark.parametrize("ext", ["cid", "ttf"])
+def test_an_ordering_is_refused_when_there_is_too_little_to_score(ext):
+    """Below `_ORDER_MIN_GLYPHS` the agreement figure is noise rather than
+    evidence, whichever table the font's format would have entitled it to."""
+    document = _Dict({"DescendantFonts": ("array", "<< /W [ 3 [ 250 333 ] ] >>")})
+    assert pdf._inferred_glyph_unicodes(document, 1, ext) == ({}, "")
+
+
+def test_an_ordering_is_refused_for_a_font_format_with_no_table_of_its_own():
+    """The two tables belong to two formats. A Type1 or a bitmap font is entitled
+    to neither, and offering it one anyway is how a plausible ordering gets
+    asserted over a font that was never in it."""
+    widths = " ".join(str(cid) for cid in range(3, 40))
+    document = _Dict({"DescendantFonts":
+                      ("array", "<< /W [ 3 [ %s ] ] >>" % widths)})
+    assert pdf._inferred_glyph_unicodes(document, 1, "cff") == ({}, "")
+    assert pdf._inferred_glyph_unicodes(document, 1, "") == ({}, "")
+
+
+def test_a_glyph_the_ordering_does_not_reach_is_skipped_not_guessed():
+    """The Macintosh table is 258 entries. A font drawing glyph 4,000 says
+    nothing about it either way, and it must not be scored as a disagreement --
+    that would fail a font that is in standard order for having more glyphs
+    than the table describes."""
+    inside = {glyph: round(fitz.Font("helv").glyph_advance(
+                  ord(pdf._MAC_GLYPH_ORDER[glyph])) * 1000)
+              for glyph in range(19, 62)}
+    beyond = {**inside, 4000: 500.0}
+    assert pdf._order_agreement(beyond, pdf._MAC_GLYPH_ORDER) == \
+        pdf._order_agreement(inside, pdf._MAC_GLYPH_ORDER)
+
+
+def test_an_unknown_reference_face_costs_its_own_reading_and_nothing_else():
+    """The reference widths come from base-14 faces, and a build without one of
+    them has to score against the others rather than take the file down."""
+    assert pdf._reference_widths("no-such-face") == {}
+
+
+def test_too_few_codes_is_not_an_answer_about_a_fonts_encoding():
+    assert pdf._latin_or_symbol({}) is None
+    assert pdf._latin_or_symbol({0x61: 500.0, 0x62: 500.0}) is None
+
+
+@pytest.mark.parametrize("subtype", ["/Type0", "/Type3", None])
+def test_the_symbol_correction_only_speaks_for_a_simple_font(subtype):
+    """A Type0 font is `_repair_font_encoding`'s business and a Type3 has no
+    width array to read. Returning `None` rather than `0` is what tells the
+    caller this rule had nothing to say, as against having found nothing to do.
+    """
+    keys = {"Subtype": ("name", subtype)} if subtype else {}
+    assert pdf._repair_symbol_encoding(_Dict(keys), 1) is None
+
+
+def test_a_simple_font_that_reads_as_latin_is_left_alone():
+    document = _Dict({"Subtype": ("name", "/Type1"),
+                      "FirstChar": ("int", "65"),
+                      "Widths": ("array", "[%s]" % " ".join(
+                          str(round(fitz.Font("helv").glyph_advance(code) * 1000))
+                          for code in range(0x41, 0x60)))})
+    assert pdf._repair_symbol_encoding(document, 1) is None
+
+
+def test_a_font_dictionary_that_raises_costs_that_font_and_not_the_document():
+    """`_glyph_coverage` walks every object in the file, so one object it cannot
+    read must not end the walk -- the count it feeds is per block, and losing it
+    would silently mark a whole file clean."""
+    assert pdf._glyph_coverage(_Dict(raises=True)) == {}
+
+class _Writable(_Dict):
+    """`_Dict` plus the four calls a CMap rewrite makes, recording what was written."""
+
+    def __init__(self, keys=None, objects=None):
+        super().__init__(keys, objects)
+        self.written = {}
+        self.set_keys = {}
+        self.next_xref = 90
+
+    def get_new_xref(self):
+        self.next_xref += 1
+        return self.next_xref
+
+    def update_object(self, number, text):
+        self.objects[number] = text
+
+    def update_stream(self, number, data, new=False):
+        self.written[number] = data
+
+    def xref_set_key(self, _xref, name, value):
+        self.set_keys[name] = value
+
+
+#: The `/Widths` of a face `_latin_or_symbol` reads as Adobe Symbol encoded, with
+#: `/FirstChar 52`. Shortened from `_SYMBOL_FACE_WIDTHS`' source array.
+_SYMBOL_WIDTHS_ARRAY = ("[677 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 "
+                        "0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 572 552 0 500 0 "
+                        "677 583 0 0 0 531 531 562 0 0 0 0 552 635]")
+
+
+def _symbol_font(to_unicode=None, stream=b""):
+    keys = {"Subtype": ("name", "/Type1"),
+            "FirstChar": ("int", "52"),
+            "Widths": ("array", _SYMBOL_WIDTHS_ARRAY)}
+    if to_unicode:
+        keys["ToUnicode"] = ("xref", to_unicode)
+    return _Writable(keys, {int(to_unicode.split()[0]): stream} if to_unicode else None)
+
+
+def test_the_symbol_cmap_is_written_with_a_single_byte_codespace():
+    """The one thing about this CMap that would fail silently. A simple font's
+    code is one byte, and a CMap declaring `<0000><FFFF>` over one is read as
+    covering two-byte codes that never occur -- so every entry is present, every
+    entry is correct, and none of them ever matches. The source hex has to be two
+    digits wide for the same reason."""
+    document = _symbol_font()
+    assert pdf._repair_symbol_encoding(document, 1) == 3
+    written = document.written[91].decode("latin-1")
+    assert "<00><FF>" in written and "<0000><FFFF>" not in written
+    # mu, lambda and rho, keyed by the one-byte code that draws them.
+    assert "<6D><03BC>" in written
+    assert "<6C><03BB>" in written and "<72><03C1>" in written
+    # And the font is pointed at it.
+    assert document.set_keys["ToUnicode"] == "91 0 R"
+
+
+def test_a_code_the_file_already_resolves_is_not_overruled():
+    """A font that says what it means is not this rule's business. The CMap here
+    already maps the mu's code, so only the other two are added -- and they are
+    added to the publisher's own stream rather than replacing it, so anything
+    this reader did not model survives."""
+    existing = (b"/CIDInit /ProcSet findresource begin\nbegincmap\n"
+                b"1 begincodespacerange\n<00><FF>\nendcodespacerange\n"
+                b"1 beginbfchar\n<6D><00E9>\nendbfchar\n"
+                b"endcmap\nCMapName currentdict /CMap defineresource pop\nend\n")
+    document = _symbol_font("77 0 R", existing)
+    assert pdf._repair_symbol_encoding(document, 1) == 2
+    written = document.written[77].decode("latin-1")
+    assert "<6D><00E9>" in written, "the publisher's own entry has to survive"
+    assert "<6C><03BB>" in written and "<72><03C1>" in written
+    assert "<6D><03BC>" not in written
+    assert written.count("endcmap") == 1
+
+
+def test_a_cmap_shared_by_two_fonts_is_written_once():
+    """Two fonts may point at one CMap object. Adding the second font's codes to
+    it would put entries for one font's glyphs under another's codes, so the
+    first font wins and the second is left as it was -- the same rule
+    `_repair_font_encoding` follows, for the same reason."""
+    document = _symbol_font("77 0 R", b"")
+    seen = set()
+    assert pdf._repair_symbol_encoding(document, 1, seen) == 3
+    assert 77 in seen
+    assert pdf._repair_symbol_encoding(document, 1, seen) is None
+
+
+def test_a_cmap_this_reader_cannot_parse_is_not_added_to():
+    """Half-read is worse than not read: adding entries to a CMap whose existing
+    ones were not understood could overrule a character the document already
+    resolved, whichever way an implementation breaks a tie."""
+    document = _symbol_font("77 0 R", b"beginbfchar <0008> endbfchar")
+    assert pdf._repair_symbol_encoding(document, 1) is None
+    assert document.written == {}
+
+def _width_array(order, first, last):
+    """A `/W` array declaring the real widths of `order[first:last]`."""
+    reference = fitz.Font("helv")
+    entries = []
+    for cid in range(first, last):
+        char = order[cid]
+        if char == "�" or char.isspace():
+            continue
+        entries.append("%d [%d]" % (cid, round(reference.glyph_advance(ord(char)) * 1000)))
+    return "<< /W [ %s ] >>" % " ".join(entries)
+
+
+def test_a_cid_keyed_cff_is_read_against_the_cff_table_and_not_the_other():
+    """The two orderings belong to two formats, and a font gets only the one its
+    own format defines. This font's widths are the CFF table's characters, and it
+    has to come back `cff_standard` -- which is also the case the corpus meets in
+    10.1038/s41586-020-2496-1's reporting summary."""
+    document = _Dict({"DescendantFonts":
+                      ("array", _width_array(pdf._CFF_STANDARD_ORDER, 1, 90))})
+    glyphs, ordering = pdf._inferred_glyph_unicodes(document, 1, "cid")
+    assert ordering == "cff_standard"
+    # CID 47 is the `N` and CID 80 the `o`, which is what makes that paper's
+    # extracted text look like a uniform +31 shift -- `/P` for `No`.
+    assert glyphs[47] == ord("N") and glyphs[80] == ord("o")
+    assert pdf._inferred_glyph_unicodes(document, 1, "ttf") == ({}, ""), \
+        "the Macintosh table must not be offered to a CFF"
+
+
+def test_an_ordering_the_other_table_reads_just_as_well_is_refused():
+    """Both tables are scored and the font's own format has to win outright. A
+    font whose widths the wrong table explains at least as well is not evidence
+    about the right one, whatever its format says, so it is left unread rather
+    than decoded on a tie."""
+    # Digits and capitals sit at the same places in both tables, so neither can
+    # be told from the other here.
+    shared = {cid: 500.0 for cid in range(19, 40)}
+    for cid in shared:
+        char = pdf._MAC_GLYPH_ORDER[cid]
+        if char != "�" and not char.isspace():
+            shared[cid] = round(fitz.Font("helv").glyph_advance(ord(char)) * 1000)
+    document = _Dict({"DescendantFonts": ("array", "<< /W [ %s ] >>" % " ".join(
+        "%d [%d]" % (cid, width) for cid, width in sorted(shared.items())))})
+    assert pdf._inferred_glyph_unicodes(document, 1, "ttf")[1] in ("", "macintosh")
+
+
+def test_a_width_key_that_is_neither_an_array_nor_a_reference_is_refused():
+    document = _Dict({"DescendantFonts": ("array", "<< /W /Identity >>")})
+    assert pdf._cid_widths(document, 1) == {}
+
+
+def test_a_font_whose_codes_are_all_already_mapped_needs_no_new_cmap():
+    """`0` rather than `None`: this rule did speak for the font and found nothing
+    left to do, which is a different answer from having had nothing to say."""
+    existing = (b"begincmap\n1 begincodespacerange\n<00><FF>\nendcodespacerange\n"
+                b"3 beginbfchar\n<6C><03BB>\n<6D><03BC>\n<72><03C1>\nendbfchar\n"
+                b"endcmap\n")
+    document = _symbol_font("77 0 R", existing)
+    assert pdf._repair_symbol_encoding(document, 1) == 0
+    assert document.written == {}
+
 
 def test_a_file_whose_glyphs_cannot_be_named_is_not_ok():
     """The case where recovery would be a guess. Here the ToUnicode CMap is one

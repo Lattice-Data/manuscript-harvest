@@ -475,6 +475,9 @@ def _cid_widths(document, xref: int) -> Dict[int, float]:
         if not indirect:
             return {}
         text = document.xref_object(int(indirect.group(1))) or ""
+    # Every token `_W_TOKEN` yields is a bracket or a well-formed number, so
+    # nothing below has to defend against a number that will not parse. It did,
+    # and those branches were unreachable.
     tokens = _W_TOKEN.findall(text.encode("latin-1", "replace"))
     widths: Dict[int, float] = {}
     index = 1 if tokens and tokens[0] == b"[" else 0
@@ -482,34 +485,23 @@ def _cid_widths(document, xref: int) -> Dict[int, float]:
         if tokens[index] in (b"[", b"]"):
             index += 1
             continue
-        try:
-            first = int(float(tokens[index]))
-        except ValueError:
-            index += 1
-            continue
+        first = int(float(tokens[index]))
         if index + 1 < len(tokens) and tokens[index + 1] == b"[":
             cursor, cid = index + 2, first
             while cursor < len(tokens) and tokens[cursor] != b"]":
-                try:
-                    widths[cid] = float(tokens[cursor])
-                except ValueError:
-                    pass
+                widths[cid] = float(tokens[cursor])
                 cid += 1
                 cursor += 1
             index = cursor + 1
             continue
         if index + 2 < len(tokens) and tokens[index + 1] not in (b"[", b"]"):
-            try:
-                last = int(float(tokens[index + 1]))
-                width = float(tokens[index + 2])
-            except ValueError:
-                index += 3
-                continue
+            last, width = int(float(tokens[index + 1])), float(tokens[index + 2])
             if 0 <= first <= last and last - first < _MAX_WIDTH_RUN:
                 for cid in range(first, last + 1):
                     widths[cid] = width
             index += 3
             continue
+        # A `cid` with nothing after it: the array was truncated.
         index += 1
     return widths
 
@@ -786,10 +778,7 @@ def _simple_widths(document, xref: int) -> Dict[int, float]:
         value = document.xref_object(int(found.group(1))) if found else ""
     widths: Dict[int, float] = {}
     for offset, number in enumerate(_WIDTH_NUMBER.findall(value or "")):
-        try:
-            widths[first + offset] = float(number)
-        except ValueError:
-            continue
+        widths[first + offset] = float(number)
     return widths
 
 
