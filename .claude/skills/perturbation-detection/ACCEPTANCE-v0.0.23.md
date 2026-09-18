@@ -108,12 +108,13 @@ Nothing in this set exercises a Stage B change, and the set must not be read as
 if it could — see the acceptance-set blind spot that `papers-50b` had for exactly
 this reason.
 
-## Cost
+## Size
 
-Acceptance, 30 papers x 2 runs: ~$75 at the $1.30/paper the v0.0.23 envelope
-reporting measures. Full corpus, 392 papers x 1 run: ~$500-600. The acceptance
-pass is ~12% of a full run, and it is what stops the full one being paid for
-twice.
+Acceptance, 30 papers x 2 runs: 60 spawns, ~13 requests and ~11k output tokens
+per paper at the rate the v0.0.23 envelope reporting measures, so roughly 45M
+tokens and ~2.5h of wall-clock if the two runs go in series. Full corpus, 392
+papers x 1 run: ~5,100 requests, ~430M tokens, ~15h. The acceptance pass is
+~12% of a full run, and it is what stops the full one being run twice.
 
 
 ---
@@ -197,18 +198,25 @@ Both runs agreeing, 9 papers moved on the criteria:
 | C3 | `unclear` → `not_applicable` | 1 (the review) |
 | C4 | `unclear` → `no` | 1 (`immuni.2020.03.019`) |
 
-## Cost, and what it means for the corpus
+## What the pass spent, and what it means for the corpus
 
-| | papers | requests | wall-clock | model time | cost |
-|---|---|---|---|---|---|
-| r1 | 30 | 406 | 81m | 79m (97%) | **$54.72** |
-| r2 | 30 | 405 | 82m | 80m (97%) | **$55.52** |
+| | papers | requests | output tokens | total tokens | wall-clock | model time |
+|---|---|---|---|---|---|---|
+| r1 | 30 | 406 | 376,723 | 32,706,668 | 81m | 79m (97%) |
+| r2 | 30 | 405 | 392,960 | 33,462,766 | 82m | 80m (97%) |
 
-**$110.24 for the acceptance pass, $1.84/paper.** No price-drift warning in
-either run, so `pe/pricing.py` still agrees with the CLI's own figure.
+**Per paper: median 11,610 output tokens over 13 requests in r1 (p10 6,208, p90
+19,719); 11,995 over 14 in r2.** The floor is the number that matters, and it is
+the same paper in both runs: `10.1016_j.coi.2022.102188` at 3,219 and 3,035
+output tokens over 6 requests. It is the review — the shortest determination in
+the set is still six turns and three thousand tokens of reasoning, so no paper
+in this pass was labelled without being read.
 
-**The 392-paper corpus is therefore ~$720, not the $500-600 estimated above.**
-That estimate came from a one-paper smoke run at $1.30 and was 40% low.
+**The 392-paper corpus is therefore ~66M tokens per run larger than this pass
+suggested by paper count alone**, because the acceptance set is skewed toward
+long papers. Reconstruct any run's real numbers with `python -m pe.usage --work
+<dir> --per-paper`; the list-price equivalent is still printed as a footer if a
+size in dollars is wanted.
 
 ## Two things the full run should expect
 

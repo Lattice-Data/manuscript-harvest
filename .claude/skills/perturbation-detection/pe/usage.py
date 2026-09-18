@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""What a run cost, reconstructed from the transcripts it already left behind.
+"""What a run spent, per model and per paper, reconstructed from its transcripts.
+
+Reports tokens. Output tokens and request count are the per-paper evidence that
+a determination was reasoned rather than assigned: both collapse for a paper
+that was not actually read, while cache-read does not. A list-price dollar
+equivalent is printed last, because a subscription run is not billed per token
+and that figure is a size, not an invoice.
 
     python -m pe.usage --list
     python -m pe.usage --work work-corpus-v0021-r1
@@ -524,7 +530,12 @@ def _priced(by_model: dict[str, Tokens]) -> tuple[float, list[str]]:
 
 
 def _split(by_model: dict[str, Tokens]) -> str:
-    """Where the money went, which is the finding this report exists to show."""
+    """Which token class dominates, weighted by price rather than by count.
+
+    Cost-weighted on purpose: by raw count cache-read swamps everything, which
+    says only that the prompt is long. Weighting by rate says where the work
+    actually is -- on these runs, cache-write.
+    """
     buckets = {"cache-write": 0.0, "cache-read": 0.0, "output": 0.0, "input": 0.0}
     for name, tokens in by_model.items():
         if canonical(name) not in RATES:
@@ -572,23 +583,6 @@ def render(sessions: list[Session], work: str, per_paper: bool = False) -> str:
     out = [f"Run usage — {work}", ""]
     out += _table(by_model)
     out.append("")
-    out.append(f"List-price estimate for this run: ${total:,.2f}")
-    split = _split(by_model)
-    if split:
-        out.append(split)
-    if unknown:
-        out.append(f"  price unknown for: {', '.join(sorted(unknown))} — excluded from the total")
-    # Only envelopes carry the CLI's own figure. A gap means the price table
-    # here and Anthropic's published rates have parted company; the table is
-    # what to fix, and until then the CLI's number is the right one to believe.
-    # Skipped when a model could not be priced: `total` excludes it while the
-    # CLI's figure includes it, so the gap is guaranteed and says nothing about
-    # the table. The missing price is already reported on its own line above.
-    if reported and total > 0 and not unknown:
-        drift = abs(sum(reported) - total) / total
-        if drift > 0.01:
-            out.append(f"  ! the CLI reported ${sum(reported):,.2f} for the same work, "
-                       f"a {drift:.0%} gap — pe/pricing.py:RATES is probably stale")
     api_seconds = sum(s.api_ms for s in sessions) / 1000.0
     out.append(
         f"{_thousands(requests)} API requests across {_thousands(len(sessions))} sessions, "
@@ -612,44 +606,77 @@ def render(sessions: list[Session], work: str, per_paper: bool = False) -> str:
             f"(not counted as requests)."
         )
 
-    costs = []
+    # Output tokens and request count are the two numbers that evidence
+    # per-paper work: output is reasoning the model generated about THIS paper,
+    # and requests are the turns it took to get there. Neither can be high for a
+    # paper that was labelled without being read. Cache-read cannot carry that
+    # weight -- it is dominated by the shared prompt, so it stays large whether
+    # or not the paper was engaged with. So the per-paper view sorts and
+    # summarises on output, and prices come last or not at all.
+    per = []
     for doi, group in papers.items():
         merged: dict[str, Tokens] = defaultdict(Tokens)
         for session in group:
             for name, tokens in session.by_model.items():
                 merged[name].add(tokens)
-        amount, _ = _priced(merged)
+        grand = Tokens()
+        for tokens in merged.values():
+            grand.add(tokens)
         turns = sum(t.requests for t in merged.values())
-        costs.append((amount, turns, doi, merged))
+        per.append((grand.output, turns, doi, grand))
 
-    if costs:
-        ordered = sorted(c[0] for c in costs)
+    if per:
+        ordered = sorted(c[0] for c in per)
         mid = ordered[len(ordered) // 2]
         p10 = ordered[max(0, int(0.10 * (len(ordered) - 1)))]
         p90 = ordered[min(len(ordered) - 1, int(0.90 * (len(ordered) - 1)))]
-        turns = sorted(c[1] for c in costs)
+        turns = sorted(c[1] for c in per)
         out.append(
-            f"Per paper: median ${mid:,.2f} (p10 ${p10:,.2f}, p90 ${p90:,.2f}), "
+            f"Per paper: median {_thousands(mid)} output tokens "
+            f"(p10 {_thousands(p10)}, p90 {_thousands(p90)}), "
             f"median {turns[len(turns) // 2]} requests."
+        )
+        # The floor is the number worth reading. A paper that was assigned a
+        # determination without being analysed shows up here and nowhere else
+        # in this report: the run total and the median both absorb it.
+        low_out, low_turns, low_doi, _ = min(per, key=lambda c: (c[0], c[1]))
+        out.append(
+            f"Least-worked paper: {_thousands(low_out)} output tokens over "
+            f"{low_turns} request{'s' if low_turns != 1 else ''} — {low_doi}"
         )
 
     if per_paper:
         out.append("")
-        out.append("Per paper, most expensive first:")
-        for amount, turns, doi, merged in sorted(costs, key=lambda c: -c[0]):
-            grand = Tokens()
-            for tokens in merged.values():
-                grand.add(tokens)
+        out.append("Per paper, most output first:")
+        for output, turns, doi, grand in sorted(per, key=lambda c: (-c[0], -c[1])):
             attempts = len(papers[doi])
             suffix = f", {attempts} attempts" if attempts > 1 else ""
             out.append(
-                f"  ${amount:>7,.2f}  {turns:>3} req{suffix:<14}  {doi}"
+                f"  {_thousands(output):>9} out  {turns:>3} req{suffix:<14}  {doi}"
             )
             out.append(
-                f"           in {_thousands(grand.input)} / out {_thousands(grand.output)}"
+                f"           in {_thousands(grand.input)}"
                 f" / cache-read {_thousands(grand.cache_read)}"
                 f" / cache-write {_thousands(grand.cache_write_1h + grand.cache_write_5m)}"
             )
+
+    # Last, and deliberately: a run on a subscription is not billed per token,
+    # so this is what the same work would have cost at list price through the
+    # API. It is a size, not an invoice, and it is not what this report is for.
+    # The drift check stays with it -- a gap against the CLI's own figure is
+    # still the only cross-check that the token accounting above is right.
+    out.append("")
+    out.append(f"List-price equivalent (not a bill): ${total:,.2f}")
+    split = _split(by_model)
+    if split:
+        out.append(split)
+    if unknown:
+        out.append(f"  price unknown for: {', '.join(sorted(unknown))} — excluded from the total")
+    if reported and total > 0 and not unknown:
+        drift = abs(sum(reported) - total) / total
+        if drift > 0.01:
+            out.append(f"  ! the CLI reported ${sum(reported):,.2f} for the same work, "
+                       f"a {drift:.0%} gap — pe/pricing.py:RATES is probably stale")
 
     return "\n".join(out)
 

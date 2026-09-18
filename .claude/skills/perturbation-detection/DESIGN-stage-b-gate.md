@@ -64,19 +64,19 @@ Every number below is measured from files on disk; nothing here cost a model cal
 - **Build Part 1 first, then re-measure.** One prompt edit plus a `pe.prepare`
   splice, no schema change and no new required field — so no attractor surface. If
   the two-run self-report flip rate goes to 0 of 24, Parts 2 and 3 may be
-  unnecessary, and that is measurable for $88 before committing to them. Shipped
+  unnecessary, and that is measurable in 48 spawns before committing to them. Shipped
   as task version **0.0.24**; protocol and predictions in `ACCEPTANCE-v0.0.24.md`;
   set `papers-accept-stageb.txt`, scorer `score-acceptance-stageb.py`.
-- **Acceptance: 24 papers, two runs, ~$88**, with the gate's blocking criterion
+- **Acceptance: 24 papers, two runs, ~620 requests and ~36M tokens**, with the gate's blocking criterion
   being agreement of the self-report between runs rather than any determination.
   Trimmed from the 30 of §5: the four degraded-text positives, the review and
   `j.ccell.2023.08.015` came out because the property they test — the cap never
   reaching a non-negative — is a code invariant `task.rules.stage_b` and
-  `tests/test_harness_guards.py` already hold over every Stage A value. The cost
-  is that criterion 3 is exercised by one paper, and the scorer prints NOT
+  `tests/test_harness_guards.py` already hold over every Stage A value. What the
+  trim costs is that criterion 3 is exercised by one paper, and the scorer prints NOT
   EXERCISED rather than PASS if that one does not reach a non-negative Stage A.
 - **Order: this pass, then the full corpus run.** Not caution — a single corpus
-  run cannot measure run-to-run agreement, so $721 would buy an updated corpus
+  run cannot measure run-to-run agreement, so a ~430M-token pass would buy an updated corpus
   and leave this version's own question unanswered; and if the flip rate has not
   moved, Part 2 is the next version and the corpus would need scoring twice.
 - **The v0.0.23 blocker below is resolved:** it merged as #66 and this work is
@@ -84,7 +84,7 @@ Every number below is measured from files on disk; nothing here cost a model cal
   *corpus* run, so §5's movement comparison against the v0.0.22 baseline cannot
   attribute a `no` → `yes` to this version rather than to v0.0.23's infection rule.
   The scorer states that rather than absorbing it, and takes `--baseline` for a
-  v0.0.23 run over the same 24 papers (one more run, +$44) if that attribution is
+  v0.0.23 run over the same 24 papers (one more run, +24 spawns) if that attribution is
   wanted.
 
 ## 0. First, a correction and a blocker
@@ -301,7 +301,8 @@ that over-fires:
 30 papers. Baseline is 3 of 30 flipping. v0.0.23's criteria 1–4 apply unchanged
 alongside it.
 
-**Cost:** 30 × 2 at the measured $1.84/paper ≈ **$110**.
+**Size:** 30 × 2 at the measured ~13 requests and ~11.6k output tokens per paper
+≈ **60 spawns, ~810 requests, ~66M tokens**.
 
 ## 6. Measured and rejected
 
