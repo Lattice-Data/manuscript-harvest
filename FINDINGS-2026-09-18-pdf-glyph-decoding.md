@@ -137,14 +137,62 @@ contain: `science.aat1699` (3,577 glyphs, 34 marked blocks) and
   double-decoded UTF-8 are valid Unicode, a different fault with a different
   fix, and folding them in would have mixed two measurements.
 
-## Still open
+## The re-score, 2026-09-18
 
-Perturbation detection has **not** been re-run. The 51 papers in
-`changed-by-glyph-fix.txt` have a `perturbations.json` that no longer
-corresponds to the text the model saw, so `corpus/` is internally inconsistent
-until that run happens. Budget ~$1.84/paper, so ~$94.
+Only **17** of the 51 papers needed one, and that is the part worth carrying
+forward. `blocks.jsonl` changing is not the same as the text the model reads
+changing: the other 34 changed only by gaining `locator_ref.undecodable_glyphs`,
+a field the assembled prompt text does not include, so their
+`assembled_text_sha256` is byte-identical and their stored record already
+corresponded exactly to what the model saw.
 
-Pre-fix state is backed up at
+Re-scoring those 34 would have cost about $63 and made the corpus **worse**. The
+prompt returns different determinations on roughly 3 papers in 50 across runs of
+byte-identical input, so it would have injected churn into records that were
+already right. **Filter on `assembled_text_sha256` from the run manifest, never
+on the blocks.jsonl hash.**
+
+The 17 ran at `task_version 0.0.25` into `work-glyphfix-17`:
+
+* 17/17 parsed, 0 pending, 0 unparseable, **111/111 quotes verified**, 0
+  misattributed, and `model != final` after pruning was 0/17 — no fabricated
+  evidence.
+* No consistency codes and no evidence flags on any of the 17.
+* **16 of 17 determinations unchanged.** `pe.compare` accounted for the one that
+  moved by a known mechanism and reported nothing unexplained.
+* The mover is `10.1038/s41586-020-2496-1`, `unclear` -> `no`, class
+  **STAGE-B-RELEASED**. Its two `garbled_run` defect claims no longer verify now
+  that the text decodes to English, so the degraded-text cap released. That is
+  the cap flagged as probably spurious when this work was scoped, and it
+  resolved on its own rather than being argued away.
+* Triage P4 (`unclear` + `degraded_text`) is empty across the 17, where the
+  baseline had that paper sitting in it.
+
+## Corpus state
+
+Verified by re-deriving the assembled text for all 392 papers and comparing each
+against the manifest of whichever run produced its record:
+
+    papers in corpus                392
+    record matches current text     392
+    record stale                      0
+    no record at all                  0
+    task_version across the corpus  {'0.0.25': 392}
+
+So `corpus/` is internally consistent again: one task version, and every record
+matches the text it was produced from.
+
+Two records carry a null `validation.model_id`
+(`10.1038/s41467-017-02001-5`, `10.1182/bloodadvances.2023011445`). Both predate
+this work — neither is among the 17 — and both are otherwise complete at 0.0.25.
+
+Pre-fix state remains backed up at
 `~/.manuscript-harvest/extraction-backup-pre-glyph-fix/extracted-2026-09-17.tar`
 (423 MB: all 392 `blocks.jsonl` and all 392 `perturbations.json`). `corpus/` is
 gitignored, so that copy is the only route back.
+
+## Still open
+
+Nothing in this thread. The two limitations above -- the 1,911 unmarked control
+characters in 50 Elsevier papers, and `5 mL` in
+`10.1016/j.immuni.2022.09.002` -- are unfixed and documented, not forgotten.
