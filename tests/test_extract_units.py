@@ -42,6 +42,7 @@ from tests.fakes import (
     make_dimensionless_xlsx,
     make_docx,
     make_embedded_font_pdf,
+    make_nameless_font_pdf,
     fake_tesseract as tesseract,
     make_pdf,
     no_tesseract,
@@ -1396,6 +1397,99 @@ def test_the_repair_leaves_a_healthy_pdf_alone():
     assert "glyph_encoding_repaired" not in meta
     assert "glyphs_unnamed" not in meta
     assert " ".join(b.text for b in blocks).startswith("These studies were intended")
+
+def test_a_font_that_names_nothing_at_all_is_read_from_its_glyph_order():
+    """The class the font's own character map cannot answer, because there is no
+    character map: a `/CIDFontType2` subsetted with its `cmap` and `post` tables
+    stripped. 5,790 glyphs on one page of 10.1126/science.abf3041's supplement
+    are this, and the page draws `rs133379_G-SMDT1` where the extractor wrote
+    `UV\\x14\\x16\\x16\\x16\\x1a\\x1cB*`.
+
+    What is left to read is the *order*. Stripping `cmap` does not renumber
+    glyphs, so a font that was never reordered still has its glyph ids where the
+    standard Macintosh ordering put them -- a published table, not a shift fitted
+    to this corpus.
+    """
+    data = make_nameless_font_pdf([[_METHODS]])
+    blocks, status, meta = pdf.blocks_from_pdf(data, "sm.pdf", L, ocr=False)
+    assert status == pdf.OK
+    assert " ".join(b.text for b in blocks).startswith(
+        "These studies were intended to be the first explorations")
+    assert "glyphs_unnamed" not in meta
+
+
+def test_an_asserted_ordering_is_recorded_apart_from_the_font_s_own_answer():
+    """Two different claims, so two different keys. `glyph_encoding_repaired` is
+    the font's own character map, read out of the program the document embeds;
+    `glyph_order_inferred` is an ordering this module asserted over a font that
+    carries no character map at all. A reader deciding how much to trust a
+    passage needs to be able to tell which one produced it, and the distinction
+    is invisible if both land in the same field."""
+    data = make_nameless_font_pdf([[_METHODS]])
+    _, _, meta = pdf.blocks_from_pdf(data, "sm.pdf", L, ocr=False)
+    assert "glyph_encoding_repaired" not in meta
+    assert sum(meta["glyph_order_inferred"].values()) > 0
+    assert list(meta["glyph_order_inferred"]) == ["AAAAAA+Nameless (macintosh)"]
+
+
+def test_a_renumbered_subset_is_refused_rather_than_read_against_the_wrong_table():
+    """The other half, and the one that decides whether the ordering may be used
+    at all. A subset that renumbered its glyphs from 1 in order of first use is
+    not in any standard order, and reading it against one yields
+    `(*2-,5$!'!:` for what the page draws -- three `Calibri` subsets in
+    10.1126/science.aat1699's supplement are exactly this.
+
+    Nothing in such a file says what its glyph ids mean, so the file has to stay
+    refused. The test that separates the two is the widths the document itself
+    declares: they agree with the standard ordering on a font that is in it and
+    do not on a font that is not.
+    """
+    data = make_nameless_font_pdf([[_METHODS]], standard_order=False)
+    blocks, status, meta = pdf.blocks_from_pdf(data, "sm.pdf", L, ocr=False)
+    assert status == pdf.GARBLED
+    assert blocks == []
+    assert "glyph_order_inferred" not in meta
+    assert meta["glyphs_unnamed"] == meta["glyphs_drawn"]
+
+
+def test_the_ordering_is_never_asserted_over_a_font_that_names_its_glyphs():
+    """The inference is a last resort and must stay behind the font's own answer.
+    A font that carries a character map is read from that map, whatever an
+    ordering would have said about it -- and this fixture's font is one whose
+    glyph order is *not* the standard one, so an inference reaching it would be
+    visible immediately as different text."""
+    data = make_unreadable_font_pdf([[_METHODS]])
+    blocks, status, meta = pdf.blocks_from_pdf(data, "sm.pdf", L)
+    assert status == pdf.OK
+    assert " ".join(b.text for b in blocks).startswith("These studies were intended")
+    assert sum(meta["glyph_encoding_repaired"].values()) > 0
+    assert "glyph_order_inferred" not in meta
+
+
+@pytest.mark.parametrize("renumber, expected", [
+    # The widths the document declares, against the glyph ids the standard
+    # ordering puts those characters at.
+    (0, True),
+    # The same widths against glyph ids renumbered from 1, which is what a
+    # subsetting tool that reordered its output produces. 16 of 40 agree by
+    # coincidence, because a proportional face reuses a handful of widths.
+    (18, False),
+])
+def test_the_width_test_is_what_accepts_or_refuses_an_ordering(renumber, expected):
+    """Stated on its own because it is the whole guard, and with the coincidence
+    rate in it: a wrong ordering does not score zero, it scores 40%, because
+    `n`, `o` and `p` are the same width as each other in most faces. The bar is
+    where it is to sit above that and below the 82% the worst correct case in
+    this corpus scores."""
+    reference = fitz.Font("helv")
+    declared = {glyph: round(reference.glyph_advance(
+                    ord(pdf._MAC_GLYPH_ORDER[glyph])) * 1000)
+                for glyph in range(19, 62)
+                if pdf._MAC_GLYPH_ORDER[glyph] != "\ufffd"}
+    widths = {glyph - renumber: width for glyph, width in declared.items()}
+    agreed, scored = pdf._order_agreement(widths, pdf._MAC_GLYPH_ORDER)
+    assert scored >= pdf._ORDER_MIN_GLYPHS
+    assert (agreed / scored >= pdf._ORDER_MIN_AGREEMENT) is expected
 
 
 def test_a_file_whose_glyphs_cannot_be_named_is_not_ok():
