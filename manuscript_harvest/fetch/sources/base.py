@@ -75,6 +75,14 @@ class FetchedFile:
     content_type: str = ""
     label: Optional[str] = None     # publisher's description, when one exists
     tier: Optional[str] = None      # set by the fetcher, for manifest provenance
+    #: Set instead of `content` when the body was streamed to disk rather than
+    #: returned as bytes, and `content` is then `b""`. Playwright's Node driver
+    #: marshals a body as a base64 string, so it cannot return anything past
+    #: ~384 MB of file however high `max_file_mb` is set -- two live supplements
+    #: (423 MB and 488 MB) have no in-memory form at all. `_write_group` files
+    #: this through `store.save_staged_file`; everything else about the entry is
+    #: identical, which is the point.
+    staged_path: Optional[str] = None
 
 
 @dataclass

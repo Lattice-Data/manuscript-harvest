@@ -25,6 +25,7 @@ and a fake UA on a real browser reads as more suspicious than the real one.
 import json
 import os
 import re
+import tempfile
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -51,6 +52,23 @@ _IMPORT_HINT = (
 )
 
 PMC_ARTICLE_URL = "https://pmc.ncbi.nlm.nih.gov/articles/{pmcid}/"
+
+# Where `context.request` stops being able to return a body at all, with room to
+# spare. Playwright's Node driver marshals a response body as a **base64 string**,
+# so the binding fails at V8's `0x1fffffe8` string cap -- which is 536,870,888
+# base64 characters and therefore only about 384 MB of actual file. The old comment
+# on `_transport_failure` read this as a ~512 MB file limit, which is why a 423 MB
+# supplement failed a cap it was nowhere near. 300 MB leaves headroom for a
+# Content-Length that understates the body (any transfer encoding applied above it)
+# and costs nothing: below this the in-memory path is strictly cheaper, above it
+# streaming is the only path that works.
+_TRANSPORT_SAFE_BYTES = 300 * 1024 * 1024
+
+# The exact message V8 raises through the Playwright binding when a body will not
+# fit in a string. Named because it is a *size signal*, not just an error: two call
+# sites branch on it, and a server that sends no Content-Length makes it the only
+# size information that ever arrives.
+_TRANSPORT_WALL = "longer than 0x1fffffe8"
 
 # Where a Cell Press paper actually lives. The DOI does not resolve here: EZproxy
 # sends `linkinghub.elsevier.com/retrieve/pii/<PII>` to ScienceDirect, which serves
@@ -1173,7 +1191,7 @@ class ProxyBrowserSource(Source):
         fetched = 0
         for link in attempted:
             url = link["url"]
-            content, filename, content_type, why = self._download_one(
+            content, filename, content_type, why, staged = self._download_one(
                 context, url, referer, result, via,
                 allow_page_fallback=challenge_failures < max_challenge_failures,
             )
@@ -1189,7 +1207,8 @@ class ProxyBrowserSource(Source):
                 continue
             result.files.append(
                 FetchedFile(role=ROLE_SUPPLEMENT, name=filename, content=content, url=url,
-                            content_type=content_type, label=link.get("label"))
+                            content_type=content_type, label=link.get("label"),
+                            staged_path=staged)
             )
             fetched += 1
 
@@ -1223,6 +1242,83 @@ class ProxyBrowserSource(Source):
             return round(length / 1024 / 1024, 1)
         return None
 
+    def _content_length(self, context, url: str, referer: str) -> Optional[int]:
+        """What the server says the body weighs, or None if it will not say.
+
+        Split out of `_oversize_mb` because there are now two ceilings to compare
+        against and only one of them is a refusal. `max_file_mb` is policy -- a
+        number a user chose. `_TRANSPORT_SAFE_BYTES` is physics, and the file is
+        fetched anyway by a different route.
+        """
+        try:
+            head = context.request.head(url, headers={"Referer": referer})
+            return int(head.headers.get("content-length") or 0) or None
+        except Exception:
+            return None
+
+    def _download_streamed(self, context, url: str, referer: str,
+                           result: SourceResult, via: str):
+        """Fetch a body too big to be a `bytes`, straight to disk.
+
+        Returns `_download_one`'s 5-tuple with `content=b""` and the staged path
+        set; `fetcher._write_group` files it with `store.save_staged_file`.
+
+        **Why not Playwright's download API, which is the obvious answer.**
+        `_download_via_page` already records why a `download` event cannot be
+        relied on here: many PMC author-manuscript supplements are media Chrome
+        renders inline instead of downloading, so no event fires and the wait hangs
+        to its timeout. That reasoning was measured on this exact host and it does
+        not stop applying just because the file is large. Streaming over
+        `self.http` avoids the question entirely -- no event, no inline-render
+        branch, and `requests` writes chunks as they arrive.
+
+        **The cookies are the whole trick.** NCBI's proof-of-work state lives in
+        the browser context that cleared it, so the same request without them draws
+        the 1.8 KB challenge page rather than the file. `context.cookies(url)`
+        exports exactly the ones scoped to this URL; nothing else is shared, and
+        the client keeps its own polite User-Agent and per-host interval.
+
+        The temp file is a sibling in the corpus, not in the system temp dir, so
+        `save_staged_file`'s move stays on one filesystem and stays atomic -- 423 MB
+        copied across devices at the end of a download is exactly the cost this
+        route exists to avoid.
+        """
+        try:
+            jar = {c["name"]: c["value"] for c in context.cookies(url)}
+        except Exception:
+            jar = {}
+
+        staged = Path(tempfile.mkdtemp(prefix="mh-stream-")) / _filename_for(url, {})
+        try:
+            written = self.http.download_to(
+                url, staged, headers={"Referer": referer}, cookies=jar,
+                max_bytes=self.max_file_bytes,
+            )
+        except Exception as e:
+            result.note("supplement_file", url=url, via=via, status="stream_failed",
+                        error=f"{type(e).__name__}: {e}")
+            return None, None, None, "stream_failed", None
+
+        # The challenge page is small, HTML and a 200, so nothing above rejects it --
+        # only its content does. Checking after the stream rather than before is the
+        # cheap order: the guard costs a read of what is already on disk, while
+        # pre-flighting every large file would cost a second request each time.
+        # 64 KB rather than a token few: NCBI's challenge is 1.8 KB but Cloudflare's
+        # is 27 KB, and a marker past the window reads as a valid supplement.
+        with open(written["path"], "rb") as handle:
+            head = handle.read(65536)
+        if classify_denial(url, head) == "javascript_challenge":
+            Path(written["path"]).unlink(missing_ok=True)
+            result.note("supplement_file", url=url, via=via,
+                        status="javascript_challenge", detail="streamed body was the challenge")
+            return None, None, None, "javascript_challenge", None
+
+        filename = _filename_for(url, {})
+        result.note("supplement_file", url=url, via=via, status="ok_streamed",
+                    bytes=written["bytes"], filename=filename,
+                    megabytes=round(written["bytes"] / 1024 / 1024, 1))
+        return b"", filename, written.get("content_type") or "", None, written["path"]
+
     def _refuse_oversize(self, url: str, oversize, result: SourceResult, via: str) -> None:
         """Record a file the cap refused. Shared by both download paths.
 
@@ -1238,21 +1334,32 @@ class ProxyBrowserSource(Source):
 
     def _transport_failure(self, url: str, error: Exception, result: SourceResult,
                            via: str) -> str:
-        """Name a failed body fetch, and say so out loud when it is the ~512 MB wall.
+        """Name a failed body fetch, and say so out loud when it is the base64 wall.
 
-        Playwright's Node driver marshals bodies as strings, so anything near V8's
-        limit fails here whatever `fetch.max_file_mb` says -- raising the cap cannot
-        help and the only route left is fetching the file by hand. That instruction
-        was in `_download_one` and missing from `_download_via_page`, which is the
-        drift this helper removes: the aggregate "N of M could not be fetched" line
-        still appeared, so the loss was the advice, not the fact.
+        Playwright's Node driver marshals bodies as **base64 strings**, so the
+        effective ceiling is `0x1fffffe8 / (4/3)` -- about 384 MB of file, not the
+        ~512 MB this comment used to claim. That arithmetic is why a 423 MB
+        supplement failed a `max_file_mb: 500` cap it was nowhere near, and raising
+        the cap still cannot help.
+
+        **It no longer means the file must be fetched by hand.** `_download_streamed`
+        writes bodies past `_TRANSPORT_SAFE_BYTES` straight to disk, and
+        `_download_one` routes there on the Content-Length pre-flight rather than
+        arriving here at all. What reaches this branch now is the case the
+        pre-flight could not see coming: a server that sends no Content-Length, so
+        the size was unknown until the binding died. The remedy is a retry, which
+        the HEAD-less path cannot decide on its own -- hence the advice below names
+        the route rather than resignation.
         """
-        transport_limit = "longer than 0x1fffffe8" in str(error)
+        transport_limit = _TRANSPORT_WALL in str(error)
         status = "too_large_for_transport" if transport_limit else "request_failed"
         if transport_limit:
             result.problems.append(
                 f"{url.rsplit('/', 1)[-1]} exceeds what the browser transport can "
-                "return (~512 MB); fetch it manually if it is needed"
+                "return (~384 MB of file, since bodies cross as base64). The "
+                "post-challenge path has no streaming fallback, so this file needs "
+                "a re-fetch once the challenge is already cleared, or a hand "
+                "download and `manuscript-fetch adopt`"
             )
         result.note("supplement_file", url=url, via=via, status=status,
                     error=f"{type(error).__name__}: {error}")
@@ -1267,16 +1374,31 @@ class ProxyBrowserSource(Source):
         comes back, the URL is opened in a real page and the resulting download is
         captured instead.
         """
-        oversize = self._oversize_mb(context, url, referer)
-        if oversize is not None:
-            self._refuse_oversize(url, oversize, result, via)
-            return None, None, None, "too_large"
+        length = self._content_length(context, url, referer)
+        if length and length > self.max_file_bytes:
+            self._refuse_oversize(url, round(length / 1024 / 1024, 1), result, via)
+            return None, None, None, "too_large", None
+
+        # Past the base64 wall there is no in-memory path at all, so this is not a
+        # fallback after failure -- asking `context.request` first would only spend
+        # the download to arrive at the same exception. See `_TRANSPORT_SAFE_BYTES`.
+        if length and length > _TRANSPORT_SAFE_BYTES:
+            return self._download_streamed(context, url, referer, result, via)
 
         try:
             response = context.request.get(url, headers={"Referer": referer})
             content, status_code, headers = response.body(), response.status, response.headers
         except Exception as e:
-            return None, None, None, self._transport_failure(url, e, result, via)
+            if _TRANSPORT_WALL in str(e):
+                # The pre-flight could not see this one coming -- this server sent no
+                # Content-Length, so the size was unknowable until the binding died.
+                # The exception is itself the signal, and a plain retry would fail
+                # identically, so take the streaming route now rather than reporting
+                # a file that is in fact fetchable.
+                result.note("supplement_file", url=url, via=via,
+                            status="too_large_for_transport", detail="retrying as a stream")
+                return self._download_streamed(context, url, referer, result, via)
+            return None, None, None, self._transport_failure(url, e, result, via), None
 
         # A 401/403 can also be the bot gate rather than a real refusal: for
         # 10.1084/jem.20232192, PMC answered 403 for four supplementary tables
@@ -1290,15 +1412,15 @@ class ProxyBrowserSource(Source):
             # 403. Dropping the host's cookies makes NCBI issue a new challenge.
             content, filename, why = self._download_via_page(context, url, result, via)
             if content is not None:
-                return content, filename, "", None
+                return content, filename, "", None, None
             result.note("supplement_file", url=url, via=via, status="http_error",
                         http_status=status_code, detail="still refused after clearing")
-            return None, None, None, why or "http_error"
+            return None, None, None, why or "http_error", None
 
         if status_code >= 400 or not content:
             result.note("supplement_file", url=url, via=via, status="http_error",
                         http_status=status_code)
-            return None, None, None, "http_error"
+            return None, None, None, "http_error", None
 
         content_type = (headers.get("content-type") or "").split(";")[0].strip().lower()
         denial = classify_denial(url, content)
@@ -1307,32 +1429,32 @@ class ProxyBrowserSource(Source):
             if not allow_page_fallback:
                 result.note("supplement_file", url=url, via=via,
                             status="javascript_challenge", detail="page fallback disabled")
-                return None, None, None, "javascript_challenge"
+                return None, None, None, "javascript_challenge", None
             content, filename, why = self._download_via_page(context, url, result, via)
             if content is None:
-                return None, None, None, why
-            return content, filename, "", None
+                return None, None, None, why, None
+            return content, filename, "", None, None
 
         if denial:
             result.note("supplement_file", url=url, via=via, status=denial, bytes=len(content))
-            return None, None, None, denial
+            return None, None, None, denial, None
 
         if content_type.startswith("text/html"):
             # A supplement that arrives as HTML is a page, not a file. This is how
             # 26 copies of one article page previously ended up in a corpus.
             result.note("supplement_file", url=url, via=via, status="html_not_a_file",
                         bytes=len(content))
-            return None, None, None, "html_not_a_file"
+            return None, None, None, "html_not_a_file", None
 
         if len(content) > self.max_file_bytes:
             result.note("supplement_file", url=url, via=via, status="too_large",
                         bytes=len(content))
-            return None, None, None, "too_large"
+            return None, None, None, "too_large", None
 
         filename = _filename_for(url, headers)
         result.note("supplement_file", url=url, via=via, status="ok",
                     bytes=len(content), filename=filename, content_type=content_type)
-        return content, filename, content_type, None
+        return content, filename, content_type, None, None
 
     def _download_via_page(self, context, url: str, result: SourceResult, via: str):
         """Clear the proof-of-work challenge, then re-request the file.

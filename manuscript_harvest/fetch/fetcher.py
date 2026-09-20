@@ -872,7 +872,14 @@ def _write_group(directory, subdir: str, files: List) -> List[dict]:
     entries = []
     for index, item in enumerate(files, start=1):
         relative = f"{subdir}/{store.supplement_filename(index, item.name)}"
-        entry = store.save_file(directory, relative, item.content)
+        # A streamed file is already on disk under a temp name and has no `content`
+        # to write -- see `FetchedFile.staged_path`. Both calls return the same
+        # three keys, so the entry built below is identical either way.
+        staged = getattr(item, "staged_path", None)
+        if staged:
+            entry = store.save_staged_file(directory, relative, staged)
+        else:
+            entry = store.save_file(directory, relative, item.content)
         entry.update({
             "index": index,
             "url": item.url,

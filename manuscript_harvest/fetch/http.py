@@ -14,9 +14,11 @@ Two behaviours the sources rely on:
   do this -- see `sources/proxy_browser.py`.)
 """
 
+import hashlib
 import json
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, Optional
 from urllib.parse import urlparse
 
@@ -200,3 +202,81 @@ class Http:
                 content_type=(resp.headers.get("Content-Type") or "").split(";")[0].strip().lower(),
                 headers=dict(resp.headers),
             )
+
+    def download_to(
+        self,
+        url: str,
+        target,
+        headers: Optional[Dict[str, str]] = None,
+        cookies: Optional[Dict[str, str]] = None,
+        max_bytes: Optional[int] = None,
+        chunk: int = 1 << 20,
+    ) -> dict:
+        """Stream a response body to `target`, hashing as it goes.
+
+        `get` exists for bodies a caller wants in memory and is the right shape for
+        almost everything here -- the median supplement is under a megabyte. This is
+        for the tail that cannot be a `bytes` at all: `proxy_browser` reaches
+        Playwright's wall at ~384 MB of file, because its Node driver marshals a
+        body as a **base64 string** and `0x1fffffe8 / (4/3)` is where that lands.
+        Two live supplements sit past it -- a 423 MB `.xlsx` and a 488 MB `.gz` --
+        and neither can be returned by any in-memory path, whatever the cap says.
+
+        Returns what `store.save_file` returns (`path`, `bytes`, `sha256`) so the
+        two are interchangeable to `_write_group`, plus `content_type`. The digest
+        is computed from the same chunks that are written rather than by re-reading
+        the file, so it describes the bytes that actually landed.
+
+        `cookies` is how the proof-of-work state gets here. The challenge NCBI sets
+        is per-session and lives in the browser context that cleared it, so a
+        request from this client without them draws the 1.8 KB challenge page
+        instead of the file -- `proxy_browser` passes `context.cookies(url)`.
+
+        **Partial files are removed.** A stream that dies halfway leaves a
+        plausible-looking file of the right name and the wrong length, and
+        `manifest_is_complete` asks only whether a named file is present -- so the
+        article would read as settled around a truncated supplement. On any failure
+        the target is unlinked and the exception propagates.
+        """
+        target = Path(target)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        cap = self.max_bytes if max_bytes is None else max_bytes
+        digest = hashlib.sha256()
+        written = 0
+
+        self._wait_for_host(url)
+        try:
+            with self._session.get(
+                url,
+                headers=dict(headers or {}),
+                cookies=cookies or None,
+                timeout=self.timeout,
+                stream=True,
+            ) as resp:
+                if resp.status_code >= 400:
+                    raise HttpError(f"GET {url} returned HTTP {resp.status_code}")
+                content_type = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+                with open(target, "wb") as handle:
+                    for block in resp.iter_content(chunk_size=chunk):
+                        if not block:
+                            continue
+                        written += len(block)
+                        if cap is not None and written > cap:
+                            raise HttpError(
+                                f"GET {url} exceeded the {cap}-byte cap while streaming")
+                        digest.update(block)
+                        handle.write(block)
+        except Exception:
+            target.unlink(missing_ok=True)
+            raise
+
+        if not written:
+            target.unlink(missing_ok=True)
+            raise HttpError(f"GET {url} returned an empty body")
+
+        return {
+            "path": str(target),
+            "bytes": written,
+            "sha256": digest.hexdigest(),
+            "content_type": content_type,
+        }

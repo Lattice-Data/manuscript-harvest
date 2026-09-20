@@ -9,6 +9,7 @@ half-empty corpus directory weeks later.
 
 import json
 import time
+from pathlib import Path
 
 import pytest
 
@@ -289,7 +290,7 @@ def test_html_is_never_stored_as_a_supplement():
         "file.pdf": FakeResponse(200, b"<html>a page</html>",
                                  {"content-type": "text/html; charset=utf-8"}),
     }))
-    content, _name, _ctype, why = source._download_one(
+    content, _name, _ctype, why, _staged = source._download_one(
         context, "https://x/file.pdf", "https://x", result, "test"
     )
     assert content is None and why == "html_not_a_file"
@@ -303,7 +304,7 @@ def test_oversized_file_is_refused_before_transfer():
     context = FakeContext(request=FakeRequest({
         "big.gz": FakeResponse(200, b"x" * 10, {"content-length": str(500 * 1024 ** 2)}),
     }))
-    content, _n, _c, why = source._download_one(
+    content, _n, _c, why, _staged = source._download_one(
         context, "https://x/big.gz", "https://x", result, "test"
     )
     assert content is None and why == "too_large"
@@ -312,18 +313,26 @@ def test_oversized_file_is_refused_before_transfer():
     assert any("exceeds the 1 MB cap" in p for p in result.problems)
 
 
-def test_transport_limit_is_named_not_swallowed():
-    """Playwright's Node driver marshals bodies as strings and dies near V8's
-    ~512 MB limit regardless of the configured cap."""
-    source = _source()
+def test_the_base64_wall_falls_back_to_streaming_when_it_was_unforeseeable():
+    """No Content-Length means the size pre-flight sees nothing, so the binding
+    error is the only size signal that ever arrives. A plain retry would fail
+    identically, so it is taken as the signal and the file is streamed."""
+    http = _RecordingHttp()
+    source = _streaming_source(http, max_file_mb=500)
     result = SourceResult(tier="proxy_browser")
     boom = Exception("Cannot create a string longer than 0x1fffffe8 characters")
     context = FakeContext(request=FakeRequest({"huge": FakeResponse(200, boom)}))
-    content, _n, _c, why = source._download_one(
+
+    content, _n, _c, why, staged = source._download_one(
         context, "https://x/huge", "https://x", result, "test"
     )
-    assert content is None and why == "too_large_for_transport"
-    assert any("fetch it manually" in p for p in result.problems)
+
+    assert why is None and content == b""
+    assert staged and Path(staged).read_bytes() == b"real bytes"
+    assert any(a.get("detail") == "retrying as a stream" for a in result.attempts), \
+        "the wall is still recorded; it is the resignation that is gone"
+    assert not result.problems, \
+        "nothing to advise a user about -- the file was fetched"
 
 
 def test_the_page_route_names_the_transport_limit_too():
@@ -340,7 +349,8 @@ def test_the_page_route_names_the_transport_limit_too():
         context, "https://x/huge", result, "test"
     )
     assert content is None and why == "too_large_for_transport"
-    assert any("fetch it manually" in p for p in result.problems)
+    assert any("adopt" in p for p in result.problems), \
+        "the post-challenge path has no streaming fallback, so it must still advise"
 
 
 def test_the_page_route_refuses_an_oversize_file_with_the_cap_named():
@@ -372,7 +382,7 @@ def test_challenge_is_cleared_once_then_reused():
     source = _source()
     result = SourceResult(tier="proxy_browser")
     context = FakeContext(request=FakeRequest({"f1": flaky}))
-    content, name, _c, why = source._download_one(
+    content, name, _c, why, _staged = source._download_one(
         context, "https://pmc.ncbi.nlm.nih.gov/f1.xlsx", "https://pmc", result, "pmc"
     )
     assert content == b"real bytes" and why is None
@@ -381,7 +391,7 @@ def test_challenge_is_cleared_once_then_reused():
     # A second file must not pay for the challenge again.
     context2 = FakeContext(request=FakeRequest({
         "f2": FakeResponse(200, b"more", {"content-type": "application/octet-stream"})}))
-    content2, _n, _c, _w = source._download_one(
+    content2, _n, _c, _w, _s2 = source._download_one(
         context2, "https://pmc.ncbi.nlm.nih.gov/f2.xlsx", "https://pmc", result, "pmc"
     )
     assert content2 == b"more"
@@ -1448,3 +1458,130 @@ def test_a_complete_supplement_set_reports_no_problem():
     fetched, attempted = _source()._download_all(context, links, "https://x", result, "elsevier")
     assert (fetched, attempted) == (1, 1)
     assert result.problems == []
+
+
+# -- streaming past the base64 wall -----------------------------------------
+# `context.request` marshals a body to the Node driver as a base64 string, so it
+# cannot return anything past ~384 MB of file however high `max_file_mb` is. Two
+# live supplements sit there: a 423 MB `.xlsx` and a 488 MB `.gz`.
+
+
+class _RecordingHttp:
+    """The slice of `Http` that `_download_streamed` uses."""
+
+    def __init__(self, body=b"real bytes", fail=None):
+        self.body = body
+        self.fail = fail
+        self.calls = []
+
+    def download_to(self, url, target, headers=None, cookies=None, max_bytes=None):
+        self.calls.append({"url": url, "cookies": cookies, "max_bytes": max_bytes})
+        if self.fail:
+            raise self.fail
+        from pathlib import Path as _P
+        _P(target).parent.mkdir(parents=True, exist_ok=True)
+        _P(target).write_bytes(self.body)
+        return {"path": str(target), "bytes": len(self.body),
+                "sha256": "deadbeef", "content_type": "application/octet-stream"}
+
+
+def _streaming_source(http, **config):
+    source = _source(**config)
+    source.http = http
+    return source
+
+
+def _big_context(mb=423):
+    return FakeContext(request=FakeRequest({
+        "big.xlsx": FakeResponse(200, b"", {"content-length": str(mb * 1024 ** 2)}),
+    }))
+
+
+def test_a_file_past_the_transport_wall_is_streamed_not_refused():
+    """423 MB is under `max_file_mb: 500` and over what a `bytes` can carry, and
+    before this it failed the cap it was nowhere near."""
+    http = _RecordingHttp()
+    source = _streaming_source(http, max_file_mb=500)
+    result = SourceResult(tier="proxy_browser")
+    context = _big_context(423)
+
+    content, name, _ctype, why, staged = source._download_one(
+        context, "https://pmc.ncbi.nlm.nih.gov/big.xlsx", "https://pmc", result, "test")
+
+    assert why is None and content == b""
+    assert staged and Path(staged).read_bytes() == b"real bytes"
+    assert name == "big.xlsx"
+    assert not context.request.gets, "the in-memory path must not also be spent"
+    assert any(a.get("status") == "ok_streamed" for a in result.attempts)
+
+
+def test_the_stream_carries_the_browsers_proof_of_work_cookies():
+    """Without them NCBI answers with the challenge page, not the file."""
+    http = _RecordingHttp()
+    source = _streaming_source(http, max_file_mb=500)
+    context = _big_context()
+
+    source._download_one(context, "https://pmc.ncbi.nlm.nih.gov/big.xlsx",
+                         "https://pmc", SourceResult(tier="proxy_browser"), "test")
+
+    assert http.calls[0]["cookies"] == {"pow": "cleared"}
+
+
+def test_a_small_file_still_takes_the_in_memory_path():
+    """The wall is the only reason to stream; below it the `bytes` path is cheaper
+    and stays the default."""
+    http = _RecordingHttp()
+    source = _streaming_source(http, max_file_mb=500)
+    context = FakeContext(request=FakeRequest({
+        "small.xlsx": FakeResponse(200, b"PK\x03\x04tiny",
+                                   {"content-length": "2048",
+                                    "content-type": "application/octet-stream"}),
+    }))
+
+    content, _n, _c, why, staged = source._download_one(
+        context, "https://x/small.xlsx", "https://x", SourceResult(tier="proxy_browser"), "test")
+
+    assert why is None and content == b"PK\x03\x04tiny" and staged is None
+    assert not http.calls, "nothing was streamed"
+
+
+def test_the_policy_cap_still_refuses_before_any_transfer():
+    """`max_file_mb` is a number a user chose and outranks the transport question:
+    a file over it is refused on the HEAD, not streamed."""
+    http = _RecordingHttp()
+    source = _streaming_source(http, max_file_mb=1)
+    context = _big_context(423)
+
+    content, _n, _c, why, staged = source._download_one(
+        context, "https://x/big.xlsx", "https://x", SourceResult(tier="proxy_browser"), "test")
+
+    assert content is None and why == "too_large" and staged is None
+    assert not http.calls and not context.request.gets
+
+
+def test_a_streamed_challenge_page_is_not_stored_as_a_supplement():
+    """A 200 of the right size can still be the proof-of-work page, and it would
+    otherwise land on disk as the supplement."""
+    http = _RecordingHttp(body=b"<html><body>Preparing to download"
+                               b"<script src=/pow-o.js></script></body></html>")
+    source = _streaming_source(http, max_file_mb=500)
+    result = SourceResult(tier="proxy_browser")
+
+    content, _n, _c, why, staged = source._download_one(
+        _big_context(), "https://pmc.ncbi.nlm.nih.gov/big.xlsx",
+        "https://pmc", result, "test")
+
+    assert content is None and staged is None
+    assert why == "javascript_challenge"
+
+
+def test_a_stream_that_dies_is_named_and_stores_nothing():
+    http = _RecordingHttp(fail=OSError("connection reset"))
+    source = _streaming_source(http, max_file_mb=500)
+    result = SourceResult(tier="proxy_browser")
+
+    content, _n, _c, why, staged = source._download_one(
+        _big_context(), "https://x/big.xlsx", "https://x", result, "test")
+
+    assert content is None and staged is None and why == "stream_failed"
+    assert any(a.get("status") == "stream_failed" for a in result.attempts)
