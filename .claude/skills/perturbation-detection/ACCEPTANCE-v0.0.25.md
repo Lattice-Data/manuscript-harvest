@@ -108,10 +108,11 @@ should release `aat1699` as well; the two rung-3 papers cannot be released.
 - **A `no_methods_content` claim on a paper with a real methods section.** The
   falsification check should catch it; if one survives, the threshold is wrong.
 
-## Cost
+## Size
 
-24 papers x 2 runs at the $1.50/paper measured in the v0.0.24 pass ≈ **$72**.
-The corpus run stays behind this gate, at ~$721.
+24 papers x 2 runs at the ~10 requests and ~8.8k output tokens per paper
+measured in the v0.0.24 pass ≈ **48 spawns, ~520 requests, ~37M tokens**. The
+corpus run stays behind this gate, at ~5,100 requests and ~430M tokens.
 
 ## How to run it
 

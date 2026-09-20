@@ -12,7 +12,7 @@ multiples of a model's base input rate: a cache read is 0.1x, a 5-minute cache
 write 1.25x, a 1-hour cache write 2.0x. Storing four numbers per model invites
 three of them to drift; storing two and deriving the rest cannot. The ratios
 were confirmed against the CLI's own `total_cost_usd` on this machine -- see
-`tests/test_pricing.py`, which reproduces two real envelopes to the cent.
+`tests/test_usage.py`, which reproduces two real envelopes to the cent.
 
 **Cache writes are priced by TTL, and the difference is not small.** The
 perturbation runs use 1-hour caching exclusively (`ephemeral_1h_input_tokens`
