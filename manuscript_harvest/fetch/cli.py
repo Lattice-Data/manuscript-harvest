@@ -579,6 +579,63 @@ def cmd_drop_orphans(args) -> int:
     return 0
 
 
+def cmd_adopt(args) -> int:
+    """Give named unreferenced supplements the manifest entries they never got.
+
+    `drop-orphans`'s other half. That command's whole safety property is that it
+    keeps bytes stored nowhere else and reports them, and the only thing a human
+    could then do with the report was delete it -- so 0.584 GB across 12 articles
+    sat in a state no command could resolve in the direction of keeping it.
+
+    **Paths are named, never swept.** `--adopt-landing` can be a flag over the
+    whole corpus because `landing.html` is one known filename with one known
+    meaning. A supplement is not: `10.1038/s41588-025-02454-1` holds three
+    unreferenced Nature PDFs of which one is a byte-for-byte re-issue of the PMC
+    file already referenced and two are documents the PMC set never had, and no
+    rule over filenames tells those apart. Adopting the wrong one puts a duplicate
+    into `totals` and a second copy of the same text in front of extraction. So
+    the caller names the files and owns the judgement.
+
+    Report-only by default, like every other write in this CLI.
+    """
+    from .orphans import AdoptRefused, adopt_supplement
+
+    config = _apply_cli_overrides(load_config(args.config), args)
+    corpus_dir = config["fetch"]["corpus_dir"]
+    directory = Path(corpus_dir) / args.slug
+    record = store.read_manifest(directory)
+    if record is None:
+        print(f"{directory}: no manifest.json", file=sys.stderr)
+        return 1
+
+    adopted, refused = [], []
+    for relative_path in args.path:
+        try:
+            adopted.append(adopt_supplement(directory, record, relative_path))
+        except AdoptRefused as exc:
+            refused.append(str(exc))
+            print(f"  refused {relative_path}: {exc}", file=sys.stderr)
+
+    verb = "adopted" if args.apply else "would adopt"
+    for entry in adopted:
+        print(f"  {verb} {entry['path']}: {store.human_bytes(entry['bytes'])}, "
+              f"index={entry['index']}, label={entry['label']}")
+
+    if adopted and args.apply:
+        # `finalize_status` re-derives `status` from the supplement *set*'s verdict,
+        # which this does not touch -- see `adopt_supplement`. Called anyway so the
+        # record is never left inconsistent with its own fields.
+        store.write_manifest(directory, store.finalize_status(record))
+        print(f"{len(adopted)} file(s) now have a manifest entry. "
+              f"supplementary_status is unchanged at "
+              f"{record.get('supplementary_status')!r}: that is the verdict about "
+              f"the set, and a recovered file does not settle a set still missing "
+              f"another. Re-extract to pick the text up", file=sys.stderr)
+    elif adopted:
+        print("re-run with --apply to write the entries", file=sys.stderr)
+    return 1 if refused else 0
+
+
 def cmd_login(args) -> int:
     from .sources.proxy_browser import interactive_login
 
@@ -700,6 +757,20 @@ def build_parser() -> argparse.ArgumentParser:
              "(needs --apply; 26 articles here)",
     )
     drop_orphans_parser.set_defaults(func=cmd_drop_orphans)
+
+    adopt_parser = subparsers.add_parser(
+        "adopt",
+        help="give named unreferenced supplementary files the manifest entries they "
+             "never got (drop-orphans in the keeping direction)",
+    )
+    adopt_parser.add_argument("slug", help="one corpus directory name")
+    adopt_parser.add_argument("path", nargs="+",
+                              help="paths relative to the article directory, e.g. "
+                                   "supplementary/07_NIHMS1595611-supplement-TableS8.txt")
+    adopt_parser.add_argument("--corpus-dir", default=None)
+    adopt_parser.add_argument("--apply", action="store_true",
+                              help="write the entries (default: report only)")
+    adopt_parser.set_defaults(func=cmd_adopt)
 
     login_parser = subparsers.add_parser(
         "login", help="open a headed browser to complete Stanford SSO once"

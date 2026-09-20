@@ -337,14 +337,21 @@ def test_the_corpus_totals_hold():
     Recomputed from the corpus, so a re-fetch legitimately moves them -- but
     silently moving is the thing to avoid, since the actionable list is small
     enough that doubling it would go unnoticed.
+
+    **Moved once by `fetch adopt`, 2026-09-20, and the pair is the check.**
+    `10.1126/science.aax6234`'s `07_..-TableS8.txt` was 22.4 MB on disk that no
+    manifest entry named, so it counted as evidence lost; adopting it made it a
+    fetched file. `FETCHED` 2015 -> 2016 and `evidence_lost` 22 -> 21 are the same
+    file counted on the other side, which is why they move together and by one. A
+    drift in only one of them would not be this.
     """
     ledgers = [led for led in supplements.survey(CORPUS)
                if led.measurable]
     assert len(ledgers) == 259
     assert sum(led.declared for led in ledgers) == 2303
-    assert sum(led.count(FETCHED) for led in ledgers) == 2015
+    assert sum(led.count(FETCHED) for led in ledgers) == 2016
     assert sum(led.count(NOT_RECONCILED) for led in ledgers) == 176
-    assert sum(led.evidence_lost for led in ledgers) == 22
+    assert sum(led.evidence_lost for led in ledgers) == 21
     assert len([led for led in ledgers if led.evidence_lost]) == 12
 
 
