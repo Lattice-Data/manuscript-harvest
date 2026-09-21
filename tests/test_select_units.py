@@ -136,9 +136,9 @@ def test_a_passed_in_extraction_is_used_rather_than_re_read(tmp_path):
 def test_lost_supplement_text_is_a_gap_not_a_disqualification(tmp_path):
     """An unparseable supplement bounds an answer without invalidating it: the body
     was read, and the gap says which file was not. Blocking on it would refuse to
-    answer anything about the many corpus articles carrying one `.rtf`."""
+    answer anything about the many corpus articles carrying one `.odt`."""
     directory, _ = _extracted(tmp_path, xml=jats_article(DEPOSIT_BODY),
-                              supplements=[("notes.rtf", b"{\\rtf1 donor ages}")])
+                              supplements=[("notes.odt", b"opendocument bytes")])
     verdict = readiness.assess(directory)
     assert verdict["state"] == readiness.READY_WITH_CAVEATS
     assert "supplement_text_unread" in verdict["gaps"]

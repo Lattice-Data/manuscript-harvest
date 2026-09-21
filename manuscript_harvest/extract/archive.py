@@ -63,6 +63,43 @@ def safe_member_name(name: str) -> str:
     return "/".join(parts)
 
 
+#: How much of an oversize member to read when a prefix is worth having. A table
+#: card is built from at most `max_scan_rows` rows (5000), so the whole member was
+#: never needed -- 32 MB is 6.5 KB per row at that cap, which no real table row
+#: approaches, and it bounds what an archive can cost even when every member is
+#: huge. Deliberately far below `max_member_mb`: this budget exists to make a
+#: *sample* possible, not to raise the cap by the back door.
+_PREFIX_READ_BYTES = 32 * 1024 * 1024
+
+#: How far a tar walk may *travel* before giving up, as distinct from how much it
+#: may read. The two are different costs and conflating them was a bug. Reaching a
+#: tar's Nth header means decompressing everything before it, so traversal has to
+#: be bounded or a 1 KB `.tar.gz` claiming 10 GB of members is decompressed in full
+#: before any per-member cap applies. But traversal is not *reading*: a member
+#: skipped for its extension or its size costs only the bytes passed over.
+#:
+#: Bounding traversal by `max_file_mb` made one huge member abort the whole
+#: archive. `10.1126/science.aat1699` leads with a 1.5 GB `tableOfCounts.mtx` --
+#: an extension this stage does not want at all -- and the 9.3 MB and 1.9 MB label
+#: TSVs behind it were never reached, so the article reported as holding nothing
+#: text-bearing. Generous on purpose and for the same reason
+#: `fetch/orphans.py::_MAX_ARCHIVE_READ` is: a containment walk is worth a few
+#: seconds of I/O and is not worth a zip bomb.
+_MAX_TRAVERSE_BYTES = 2 * 1024 ** 3
+
+
+def _line_bounded(chunk: bytes) -> bytes:
+    """Trim a byte prefix back to its last complete line.
+
+    A prefix cut mid-row hands the csv reader a truncated final field, which it
+    reports as a malformed row rather than as the artefact of sampling -- the
+    header-detection pass then sees a row that does not match its neighbours. One
+    dropped partial row out of 5000 costs nothing and keeps the sample honest.
+    """
+    cut = chunk.rfind(b"\n")
+    return chunk[:cut + 1] if cut != -1 else chunk
+
+
 def _is_junk(name: str) -> bool:
     """A member the container's own tooling added, not content.
 
@@ -75,7 +112,8 @@ def _is_junk(name: str) -> bool:
 
 
 def read_members(
-    data: bytes, limits: Limits, wanted_extensions: Sequence[str]
+    data: bytes, limits: Limits, wanted_extensions: Sequence[str],
+    prefix_readable: Sequence[str] = (),
 ) -> Tuple[List[Tuple[str, bytes]], dict]:
     """Return `[(member_name, member_bytes), ...]` for readable, wanted members."""
     meta: dict = {"members_total": 0, "members_read": 0, "skipped": []}
@@ -86,6 +124,7 @@ def read_members(
         return [], meta
 
     wanted = {e.lower() for e in wanted_extensions}
+    prefixable = {e.lower() for e in prefix_readable}
     max_member_bytes = limits.max_member_mb * 1024 * 1024
     out: List[Tuple[str, bytes]] = []
     try:
@@ -102,6 +141,19 @@ def read_members(
                 meta["skipped"].append({"name": name, "reason": f"extension {extension or 'none'}"})
                 continue
             if info.file_size > max_member_bytes:
+                if extension in prefixable:
+                    try:
+                        with archive.open(info) as handle:
+                            chunk = _line_bounded(handle.read(_PREFIX_READ_BYTES))
+                    except (zipfile.BadZipFile, OSError, RuntimeError) as e:
+                        meta["skipped"].append({"name": name,
+                                                "reason": f"{type(e).__name__}: {e}"})
+                        continue
+                    out.append((name, chunk))
+                    meta.setdefault("truncated", []).append({
+                        "name": name, "bytes_read": len(chunk),
+                        "member_bytes": info.file_size})
+                    continue
                 meta["skipped"].append({
                     "name": name,
                     "reason": f"{info.file_size} bytes is over the "
@@ -146,7 +198,8 @@ def looks_like_tar(data: bytes) -> bool:
 
 
 def read_tar_members(
-    data: bytes, limits: Limits, wanted_extensions: Sequence[str]
+    data: bytes, limits: Limits, wanted_extensions: Sequence[str],
+    prefix_readable: Sequence[str] = (),
 ) -> Tuple[List[Tuple[str, bytes]], dict]:
     """`read_members` for a tarball. Same contract, same caps, no directory.
 
@@ -172,20 +225,25 @@ def read_tar_members(
         return [], meta
 
     wanted = {e.lower() for e in wanted_extensions}
+    prefixable = {e.lower() for e in prefix_readable}
     max_member_bytes = limits.max_member_mb * 1024 * 1024
     walk_budget = limits.max_file_mb * 1024 * 1024
     out: List[Tuple[str, bytes]] = []
     census = Counter()
-    declared = 0
+    committed = 0
+    traversed = 0
     try:
         for info in archive:
             if not info.isfile():
                 continue
-            declared += info.size
-            if declared > walk_budget:
+            # Charged for every member passed over, wanted or not: this is the
+            # decompression the walk itself costs. See `_MAX_TRAVERSE_BYTES`.
+            traversed += info.size
+            if traversed > _MAX_TRAVERSE_BYTES:
                 meta["walk_stopped"] = (
                     f"members up to {safe_member_name(info.name) or '?'} declare "
-                    f"{declared} bytes, over the {limits.max_file_mb} MB cap; the "
+                    f"{traversed} bytes, over the "
+                    f"{_MAX_TRAVERSE_BYTES // 1024 ** 3} GB traversal bound; the "
                     f"rest of the archive was not walked")
                 break
             meta["members_total"] += 1
@@ -199,6 +257,15 @@ def read_tar_members(
                                         "reason": f"extension {extension or 'none'}"})
                 continue
             if info.size > max_member_bytes:
+                handle = archive.extractfile(info) if extension in prefixable else None
+                if handle is not None:
+                    chunk = _line_bounded(handle.read(_PREFIX_READ_BYTES))
+                    out.append((name, chunk))
+                    meta.setdefault("truncated", []).append({
+                        "name": name, "bytes_read": len(chunk),
+                        "member_bytes": info.size})
+                    committed += len(chunk)
+                    continue
                 meta["skipped"].append({
                     "name": name,
                     "reason": f"{info.size} bytes is over the "
@@ -207,6 +274,22 @@ def read_tar_members(
             if len(out) >= limits.max_archive_members:
                 meta["skipped"].append({"name": name, "reason": "member cap reached"})
                 continue
+            # The budget counts what is actually read, and is checked here rather
+            # than at the top of the loop, because a member this walk has just
+            # decided to skip costs nothing to skip. Counting declared sizes
+            # instead made one oversize member abort the whole archive:
+            # `10.1126/science.aat1699`'s tar leads with a 1.5 GB
+            # `tableOfCounts.mtx`, which blew a 500 MB budget on the first
+            # iteration -- so the 9.3 MB and 1.9 MB label TSVs behind it were never
+            # reached, and the article reported as holding nothing text-bearing.
+            # The zip reader never had this bug; it skips per member and walks on.
+            if committed + info.size > walk_budget:
+                meta["walk_stopped"] = (
+                    f"reading {safe_member_name(info.name) or '?'} would take the "
+                    f"walk past the {limits.max_file_mb} MB cap; the rest of the "
+                    f"archive was not walked")
+                break
+            committed += info.size
             try:
                 handle = archive.extractfile(info)
                 if handle is None:

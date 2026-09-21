@@ -18,7 +18,7 @@ import openpyxl.worksheet._read_only
 import pytest
 
 from manuscript_harvest.extract import archive, docxfile, extractor, htmlfile, jats, ooxml, pdf
-from manuscript_harvest.extract import sections
+from manuscript_harvest.extract import rtf, sections
 from manuscript_harvest.extract import spreadsheet, tables
 from manuscript_harvest.extract.blocks import (
     CAPTION,
@@ -2444,15 +2444,68 @@ def test_tar_members_obey_the_same_caps_as_a_zip():
     assert members == [] and meta["member_extensions"] == {".csv": 2}
 
 
-def test_the_tar_walk_stops_before_a_bomb_is_decompressed():
-    """A tar has no central directory, so reading the Nth header means decompressing
-    everything before it. Without this bound a 1 KB tar.gz claiming 10 GB of members
-    would be walked to the end before any per-member cap could apply."""
+def test_the_tar_walk_reads_nothing_once_the_budget_is_gone():
+    """The read budget stops the walk before anything is decompressed into memory.
+
+    `members_total` is 1 rather than 0 because the header of the member that broke
+    the budget was necessarily read to learn its size -- a tar has no central
+    directory to ask instead. Nothing was *extracted*, which is the property that
+    matters and the one asserted.
+    """
     data = make_tar([(f"f{n}.csv", b"a,b\n1,2\n") for n in range(5)], compression="gz")
     members, meta = archive.read_tar_members(data, Limits(max_file_mb=0), {".csv"})
     assert members == []
-    assert "over the 0 MB cap" in meta["walk_stopped"]
-    assert meta["members_total"] == 0, "nothing was walked past the bound"
+    assert "past the 0 MB cap" in meta["walk_stopped"]
+    assert meta["members_total"] == 1
+
+
+def test_a_bomb_is_stopped_by_the_traversal_bound_even_when_nothing_is_wanted():
+    """The hole the read budget alone leaves. A member skipped for its extension
+    costs no *read*, but reaching the header after it still decompresses it -- so a
+    tar of unwanted members has to be bounded by how far the walk travels, not by
+    how much it decides to keep."""
+    huge = 3 * 1024 ** 3
+    data = make_tar([("payload.bin", b"x" * 16)], compression=None)
+
+    class _Info:
+        def __init__(self, name, size):
+            self.name, self.size = name, size
+
+        def isfile(self):
+            return True
+
+    real_open = archive.tarfile.open
+
+    class _FakeTar:
+        def __iter__(self):
+            return iter([_Info(f"junk{n}.bin", huge) for n in range(10)])
+
+        def close(self):
+            pass
+
+    archive.tarfile.open = lambda *a, **k: _FakeTar()
+    try:
+        members, meta = archive.read_tar_members(data, L, {".csv"})
+    finally:
+        archive.tarfile.open = real_open
+
+    assert members == []
+    assert "traversal bound" in meta["walk_stopped"]
+    assert meta["members_total"] < 10, "the walk gave up rather than reading on"
+
+
+def test_an_unwanted_giant_member_no_longer_hides_the_small_ones_behind_it():
+    """`10.1126/science.aat1699` in miniature: a 1.5 GB `.mtx` this stage does not
+    want, followed by the two small TSVs that carry the labels. Charging the read
+    budget for a member that is skipped made the first one abort the archive."""
+    data = make_tar([("counts.mtx", b"%%MatrixMarket\n" + b"9 9 9\n" * 4000),
+                     ("colLabels.tsv", b"id\tcell\n1\tbeta\n"),
+                     ("rowLabels.tsv", b"id\tgene\n1\tINS\n")])
+
+    members, meta = archive.read_tar_members(data, L, {".tsv"})
+
+    assert [name for name, _ in members] == ["colLabels.tsv", "rowLabels.tsv"]
+    assert "walk_stopped" not in meta
 
 
 def test_tar_member_names_cannot_escape_and_junk_is_ignored():
@@ -2968,3 +3021,166 @@ def test_a_real_empty_workbook_comes_back_explained_end_to_end():
     assert result.status == extractor.NO_TEXT
     assert result.note, "an empty workbook came back with no reason"
     assert "sheet" in result.note
+
+
+# -- a member too big to read whole is sampled, and says so -----------------
+
+
+def test_an_oversize_text_member_is_read_as_a_prefix():
+    """`10.1038/s41586-021-03604-1`'s MOESM11 is a zip holding a 408 MB `.txt`
+    table. A card is built from at most `max_scan_rows` rows, so the whole member
+    was never needed -- and reporting the archive as holding no text said the
+    opposite of the truth about a file that is nothing but text."""
+    rows = b"gene\tscore\n" + b"".join(b"G%d\t%d\n" % (n, n) for n in range(4000))
+    data = make_zip([("big_table.txt", rows)])
+
+    members, meta = archive.read_members(
+        data, Limits(max_member_mb=0), {".txt"}, prefix_readable={".txt"})
+
+    assert [name for name, _ in members] == ["big_table.txt"]
+    assert meta["truncated"][0]["name"] == "big_table.txt"
+    assert meta["truncated"][0]["member_bytes"] == len(rows)
+    assert not meta["skipped"]
+
+
+def test_a_prefix_stops_on_a_line_boundary():
+    """A row cut in half reaches the csv reader as a malformed record, and the
+    header-detection pass then sees a row unlike its neighbours."""
+    rows = b"a,b\n" + b"1111,2222\n" * 500
+    data = make_zip([("t.csv", rows)])
+
+    members, _ = archive.read_members(
+        data, Limits(max_member_mb=0), {".csv"}, prefix_readable={".csv"})
+
+    body = members[0][1]
+    assert body.endswith(b"\n")
+    assert all(line.count(b",") == 1 for line in body.splitlines())
+
+
+def test_only_row_oriented_text_is_sampled():
+    """A prefix of a zip or a PDF is not a smaller document but a broken one --
+    both keep their directory at the end -- so neither is offered a prefix read."""
+    data = make_zip([("book.xlsx", b"PK\x03\x04" + b"x" * 400)])
+
+    members, meta = archive.read_members(
+        data, Limits(max_member_mb=0), {".xlsx"}, prefix_readable={".csv", ".txt"})
+
+    assert members == []
+    assert "member cap" in meta["skipped"][0]["reason"]
+
+
+def test_an_archive_whose_text_is_all_oversize_says_too_large_not_no_text():
+    """Two words for one cause is what made this invisible.
+
+    Row-oriented text is sampled rather than refused now, so what reaches this
+    branch is an archive whose oversize members cannot honestly be sampled -- a
+    workbook keeps its directory at the end, so half of one is not a smaller
+    workbook. `no_text` would still be the wrong word for it: the member is a
+    table, and the reason it was not read is its size.
+    """
+    data = make_zip([("book.xlsx", make_xlsx({"S1": [["gene", "n"], ["TP53", 1]]})),
+                     ("logo.png", b"\x89PNG\r\n\x1a\n")])
+
+    result = extractor.extract_bytes(
+        data, "supplementary/01_x.zip", Limits(max_member_mb=0))
+
+    assert result.status == "too_large"
+    assert "member cap" in result.note
+
+
+def test_an_oversize_text_member_beats_too_large_by_being_sampled():
+    """The same archive with a CSV instead: sampling is strictly better than an
+    honest refusal, so the prefix path wins and the file reports `ok`."""
+    rows = b"gene,n\n" + b"".join(b"G%d,%d\n" % (n, n) for n in range(300))
+    data = make_zip([("huge.csv", rows)])
+
+    result = extractor.extract_bytes(
+        data, "supplementary/01_x.zip", Limits(max_member_mb=0))
+
+    assert result.status == "ok"
+    assert "read as a prefix" in result.note
+    assert result.meta["truncated"][0]["member_bytes"] == len(rows)
+
+
+# -- RTF ---------------------------------------------------------------------
+# Split out of `LEGACY_DOC_EXTENSIONS`, whose argument -- reading these needs a
+# system converter -- is true of `.doc` and was never true of RTF.
+
+
+def _rtf(body: bytes) -> bytes:
+    return b"{\\rtf1\\ansi\\ansicpg1252\\deff0" + body + b"}"
+
+
+def test_rtf_yields_its_document_text():
+    data = _rtf(b"{\\fonttbl{\\f0 Times New Roman;}}"
+                b"\\f0\\fs24 Supporting Table S12: SoupX genes\\par "
+                b"Cells were treated with 10 uM dexamethasone.\\par")
+
+    text, status, _ = rtf.text_from_rtf(data)
+
+    assert status == "ok"
+    assert "Supporting Table S12: SoupX genes" in text
+    assert "10 uM dexamethasone" in text
+    assert "Times New Roman" not in text, "the font table is not document text"
+
+
+def test_a_starred_destination_is_dropped_with_its_contents():
+    """The bug that let every one of them through: `\\*` is a separate token, and
+    clearing the freshness flag on it meant the destination name that followed was
+    read as an ordinary formatting word. Measured on the corpus's three files,
+    which leaked an XML namespace URL, a font census and a hex-encoded ZIP."""
+    data = _rtf(b"{\\*\\xmlnstbl {\\xmlns1 http://schemas.microsoft.com/wordml}}"
+                b"Real sentence here.\\par")
+
+    text, status, _ = rtf.text_from_rtf(data)
+
+    assert status == "ok"
+    assert text.strip() == "Real sentence here."
+    assert "schemas.microsoft.com" not in text
+
+
+def test_an_rtf_that_only_wraps_an_embedded_object_says_so():
+    """`17_HEP4-6-821-s003.rtf` is 1.48 MB of which 99% is one `objdata` group --
+    an embedded spreadsheet with not one sentence around it. `no_text` is the true
+    answer and on its own it reads like a parser failure on a 1.5 MB file."""
+    data = _rtf(b"{\\object\\objemb{\\*\\objclass Excel.Sheet.12}"
+                b"{\\*\\objdata 504b03041400060008000000210}}")
+
+    text, status, meta = rtf.text_from_rtf(data)
+
+    assert status == "no_text" and text == ""
+    assert "embedded object" in meta["reason"]
+    assert "504b0304" not in text
+
+
+def test_rtf_escapes_and_unicode_survive():
+    """`\\uN` carries the real character and is followed by an ASCII fallback for
+    readers that cannot show it; taking both would double every such character."""
+    data = _rtf(b"\\u945?-catenin at 37\\'b0C \\{braced\\} 50\\u8211?60 cells\\par")
+
+    text, _, _ = rtf.text_from_rtf(data)
+
+    assert "α-catenin" in text
+    assert "37°C" in text
+    assert "{braced}" in text
+    assert "50–60 cells" in text
+
+
+def test_a_broken_rtf_is_unreadable_not_a_crash():
+    """An article is not worth losing over one supplement; every other parser here
+    answers rather than raising."""
+    text, status, meta = rtf.text_from_rtf(b"{\\rtf1" + b"{" * 50000)
+    assert status in {"ok", "no_text", "unreadable"}
+    assert isinstance(text, str)
+
+
+def test_the_dispatcher_sends_rtf_to_the_parser_and_doc_to_the_refusal():
+    """The other seven extensions in `LEGACY_DOC_EXTENSIONS` keep the refusal --
+    only RTF's premise was wrong."""
+    ok = extractor.extract_bytes(_rtf(b"Methods. Islets were dissociated.\\par"),
+                                 "supplementary/01_s1.rtf", L)
+    refused = extractor.extract_bytes(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 64,
+                                      "supplementary/01_s1.doc", L)
+
+    assert ok.status == "ok" and "Islets were dissociated" in ok.blocks[0].text
+    assert refused.status == "unsupported_format"

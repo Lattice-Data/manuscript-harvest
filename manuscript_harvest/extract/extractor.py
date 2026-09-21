@@ -31,7 +31,7 @@ from typing import Dict, List, Optional, Tuple
 from ..fetch import store
 from ..fetch.validate import IDENTITY_FAILURES
 from ..text_bearing import AUDIO_VIDEO_EXTENSIONS, IMAGE_EXTENSIONS
-from . import __version__, archive, docxfile, htmlfile, jats, pdf, spreadsheet
+from . import __version__, archive, docxfile, htmlfile, jats, pdf, rtf, spreadsheet
 from . import review, source_fingerprint
 from .blocks import (
     MAIN_TEXT,
@@ -104,6 +104,11 @@ _BENIGN = {IMAGE_NO_TEXT, MEDIA_NO_TEXT, DATA_SKIPPED}
 SUPPLEMENTS_MISSING = "supplements_expected_but_missing"
 SUPPLEMENTS_UNVERIFIED = "supplement_set_unverified"
 MAIN_TEXT_THIN = "main_text_thin"
+#: A table card was built from the head of a member too big to read whole, so
+#: it describes a sample and not the table. Non-blocking -- the card is real
+#: and useful -- but a curator reading row counts off it would be wrong, and
+#: nothing else in the record would have said so.
+SUPPLEMENT_READ_AS_PREFIX = "supplement_read_as_prefix"
 LANDING_PAGE_ONLY = "landing_page_only"
 MANIFEST_ENTRY_WITHOUT_PATH = "manifest_entry_without_a_path"
 MAIN_TEXT_NOT_THE_ARTICLE = "main_text_is_not_the_requested_article"
@@ -173,7 +178,12 @@ STREAM_COMPRESSED_EXTENSIONS = {".gz", ".bz2", ".xz"}
 OPAQUE_ARCHIVE_EXTENSIONS = {".7z", ".rar"}
 COMPRESSED_EXTENSIONS = (TAR_EXTENSIONS | STREAM_COMPRESSED_EXTENSIONS
                          | OPAQUE_ARCHIVE_EXTENSIONS)
-LEGACY_DOC_EXTENSIONS = {".doc", ".rtf", ".odt", ".ods", ".ppt", ".pptx", ".key", ".pages"}
+LEGACY_DOC_EXTENSIONS = {".doc", ".odt", ".ods", ".ppt", ".pptx", ".key", ".pages"}
+#: `.rtf` left this set on 2026-09-20: see `rtf.py`. The measurement below
+#: still describes what was found, and the `.doc` half of its conclusion
+#: still holds -- one 23.3 MB file, and reading it means Word-97 piece tables
+#: or a system converter. What did not hold was applying that to a format
+#: that is ASCII control words.
 """Refused, and deliberately, which is the decision worth recording rather than the
 capability.
 
@@ -197,9 +207,15 @@ TEXT_BEARING_EXTENSIONS = (
 )
 
 #: Every extension the dispatcher recognises, for deciding when to sniff instead.
+#: `.rtf` is named here rather than reached through `LEGACY_DOC_EXTENSIONS`, which
+#: it left when it got a parser. Without it the dispatcher treats a correctly-named
+#: `.rtf` as a file whose name says nothing, sniffs it, arrives back at `.rtf` and
+#: stamps the record "name carries no usable extension" -- true of neither the file
+#: nor what happened to it.
 KNOWN_EXTENSIONS = (
     TEXT_BEARING_EXTENSIONS | IMAGE_EXTENSIONS | AUDIO_VIDEO_EXTENSIONS
-    | DATA_EXTENSIONS | COMPRESSED_EXTENSIONS | LEGACY_DOC_EXTENSIONS | {".zip"}
+    | DATA_EXTENSIONS | COMPRESSED_EXTENSIONS | LEGACY_DOC_EXTENSIONS
+    | {".zip", ".rtf"}
 )
 
 #: Extensions whose parsers decode the bytes as text, and so cannot survive being
@@ -220,6 +236,18 @@ KNOWN_EXTENSIONS = (
 #: "new-line character seen in unquoted field", which describes the csv reader's
 #: experience of a zip and tells a reader nothing about either file.
 SNIFF_OVERRIDES_EXTENSION = DELIMITED_EXTENSIONS | PLAIN_TEXT_EXTENSIONS
+
+#: Member extensions worth reading the head of when the whole member is over
+#: `max_member_mb`. Row-oriented text only, and that is the whole justification:
+#: the first N lines of a CSV are the first N rows of its table, so a card built
+#: from them is a true description of a real prefix. The same cannot be said of
+#: half a workbook or half a PDF -- a zip's central directory and a PDF's xref are
+#: at the *end*, so a prefix of either is not a smaller document but a broken one.
+#: Four live members sit behind this: 408 MB and 595 MB `.txt` tables in
+#: `10.1038/s41586-021-03604-1`, and 1,095 MB and 3,453 MB `.csv` in
+#: `10.1038/s41467-020-19737-2` -- reported `no_text` until now, which told a
+#: curator there was nothing in a gigabyte of table.
+PREFIX_READABLE_EXTENSIONS = DELIMITED_EXTENSIONS | PLAIN_TEXT_EXTENSIONS
 
 #: Magic numbers that mean "container", i.e. the sniff is confident enough to
 #: contradict a name. Deliberately not every answer `sniff_extension` can give: it
@@ -517,6 +545,22 @@ def extract_bytes(
         if extension in COMPRESSED_EXTENSIONS:
             return _extract_compressed(data, relative_path, limits, role, label,
                                        caption, depth, overrides)
+        if extension == ".rtf":
+            # Split out of `LEGACY_DOC_EXTENSIONS` because that set's argument --
+            # reading these means a system converter -- is true of `.doc` and was
+            # never true of RTF, which is ASCII control words and brace groups.
+            # See `rtf.py`. The other seven extensions keep the refusal.
+            text, status, meta = rtf.text_from_rtf(data)
+            if status != OK:
+                return result(status, [], "rtf", meta, note=meta.get("reason"))
+            # Handed to the plain-text path rather than blocked here, so an RTF
+            # gets the same paragraph splitting, the same `min_paragraph_chars`
+            # and the same review overrides a `.txt` does. The only difference
+            # between them is how the characters were encoded.
+            blocks, status, text_meta = _plain_text_blocks(
+                text.encode("utf-8"), relative_path, limits, role, overrides)
+            meta.update(text_meta)
+            return result(status, blocks, "rtf", meta, note=meta.get("reason"))
         if extension in LEGACY_DOC_EXTENSIONS:
             return result(UNSUPPORTED, note=f"{extension} is not parsed by this stage")
 
@@ -611,7 +655,8 @@ def _extract_archive(data: bytes, relative_path: str, limits: Limits, role: str,
     which are the part a curator reads -- are decided once for either container.
     """
     wanted = set(TEXT_BEARING_EXTENSIONS) | _nested_archive_extensions(limits, depth)
-    members, meta = _ARCHIVE_READERS[kind](data, limits, wanted)
+    members, meta = _ARCHIVE_READERS[kind](
+        data, limits, wanted, prefix_readable=PREFIX_READABLE_EXTENSIONS)
 
     blocks: List[Block] = []
     statuses: List[str] = []
@@ -636,18 +681,55 @@ def _extract_archive(data: bytes, relative_path: str, limits: Limits, role: str,
         status = NO_TEXT
         note = (f"archive holds only nested archives and the depth cap "
                 f"({limits.max_archive_depth}) stopped the descent")
+    elif _all_skipped_for_size(meta):
+        # `no_text` is a claim about the contents and it was the wrong one: every
+        # wanted member here is text, and the reason none was read is that each is
+        # bigger than `max_member_mb`. Measured, the difference matters --
+        # `10.1038/s41467-020-19737-2`'s MOESM18 is a zip holding a 3.45 GB CSV,
+        # and a curator told "no text" would not look again at a file that is
+        # nothing but text. `too_large` is the word three sibling files already
+        # use for the same cause, and using two words for one cause is what made
+        # this invisible.
+        status = TOO_LARGE
+        note = (f"every text-bearing member is over the {limits.max_member_mb} MB "
+                f"member cap; first: {meta['skipped'][0]['reason']}")
     else:
         status = NO_TEXT
         if meta.get("skipped") and not note:
             note = (f"nothing text-bearing was read from {meta.get('members_total', 0)} "
                     f"member(s); first reason: {meta['skipped'][0]['reason']}")
 
+    if meta.get("truncated") and not note:
+        # Said here as well as in `meta` and the article's caveat, because this is
+        # the line `extract status` prints per file -- and a table card that is
+        # really the first 5000 rows of forty million looks exactly like a card
+        # built from a complete table. Row counts read off it would be wrong.
+        first = meta["truncated"][0]
+        note = (f"read as a prefix: {len(meta['truncated'])} member(s) are over the "
+                f"{limits.max_member_mb} MB cap, so their cards describe the head of "
+                f"the file, not all of it ({first['name']}: "
+                f"{first['bytes_read']} of {first['member_bytes']} bytes)")
     if meta.get("skipped"):
         meta["errors"] = [f"{s['name']}: {s['reason']}" for s in meta["skipped"][:10]]
         meta.pop("skipped")
     if meta.get("walk_stopped") and not note:
         note = meta["walk_stopped"]
     return FileResult(relative_path, role, status, blocks, kind, meta, label, caption, note)
+
+
+def _all_skipped_for_size(meta: dict) -> bool:
+    """Was every member this walk declined to read declined for being too big?
+
+    Asked only once nothing was read, so it distinguishes "there is no text in
+    here" from "the text in here is too big to read". A member skipped for its
+    *extension* does not count as either -- a zip of `.tif` images that also holds
+    one oversize CSV is still an archive whose text was refused for size, and an
+    archive of only images is already answered above by `IMAGE_NO_TEXT`.
+    """
+    skipped = meta.get("skipped") or []
+    by_size = [s for s in skipped if "member cap" in s.get("reason", "")]
+    by_extension = [s for s in skipped if s.get("reason", "").startswith("extension ")]
+    return bool(by_size) and len(by_size) + len(by_extension) == len(skipped)
 
 
 def _nested_only(census: dict) -> bool:
@@ -1360,6 +1442,8 @@ def extract_article(article_dir, limits: Optional[Limits] = None, force: bool = 
     # `chars > 0` was the only length test, so a 185-character front-matter-only
     # JATS body with no PDF beside it came out `complete`. No new limit:
     # `min_main_text_chars` is already the number and already carries its why.
+    if any((r.meta or {}).get("truncated") for r in results):
+        caveats.append(SUPPLEMENT_READ_AS_PREFIX)
     if main_info.get("thin"):
         caveats.append(MAIN_TEXT_THIN)
     if main_info.get("landing_page_only"):

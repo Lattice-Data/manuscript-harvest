@@ -347,12 +347,12 @@ def test_the_corpus_totals_hold():
     """
     ledgers = [led for led in supplements.survey(CORPUS)
                if led.measurable]
-    assert len(ledgers) == 259
-    assert sum(led.declared for led in ledgers) == 2303
-    assert sum(led.count(FETCHED) for led in ledgers) == 2016
+    assert len(ledgers) == 260
+    assert sum(led.declared for led in ledgers) == 2305
+    assert sum(led.count(FETCHED) for led in ledgers) == 2017
     assert sum(led.count(NOT_RECONCILED) for led in ledgers) == 176
-    assert sum(led.evidence_lost for led in ledgers) == 21
-    assert len([led for led in ledgers if led.evidence_lost]) == 12
+    assert sum(led.evidence_lost for led in ledgers) == 22
+    assert len([led for led in ledgers if led.evidence_lost]) == 13
 
 
 @pytest.mark.skipif(not CORPUS.is_dir(), reason="no local corpus")
