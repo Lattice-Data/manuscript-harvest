@@ -281,22 +281,30 @@ def test_the_science_supplement_reads_as_english_and_not_as_a_cipher():
     assert any(b["text"].strip() == "Materials and Methods" for b in blocks)
 
 
-def test_a_pdf_whose_glyphs_have_no_characters_behind_them_is_not_ok():
-    """10.1038/s41588-024-01702-0's reporting summary is the case the repair
+def test_a_pdf_whose_glyphs_have_no_characters_behind_them_is_read_by_ocr_not_called_ok():
+    """10.1038/s41588-024-01702-0's reporting summary is the case the *repair*
     cannot answer: every one of its 6,869 glyphs is unnamed, and its fonts are
     CID-keyed CFF subsets with identity ordering, no ToUnicode, no character map
     and glyph names of the form `cid00042`. Nothing in the file says what its
-    glyphs mean, so reading it would be a guess and the honest outcome is a
-    status that stops it counting as text."""
+    glyphs mean, so reading the text layer would be a guess.
+
+    The page still renders, though, which is what OCR is for -- so the characters
+    now come from the pixels rather than from the fonts, and the status says which.
+    `ok_via_ocr` and not `ok` is the whole point: the invariant below still holds
+    over this file, because a file whose glyphs have no characters behind them must
+    never be plainly `ok`.
+    """
     _needs("10.1038_s41588-024-01702-0/supplementary/"
            "14_41588_2024_1702_MOESM2_ESM.pdf")
     record = json.loads(_needs("10.1038_s41588-024-01702-0/extracted/"
                                "extraction.json").read_text())
     entry = next(e for e in record["supplementary"]
                  if e["path"].endswith("14_41588_2024_1702_MOESM2_ESM.pdf"))
-    assert entry["status"] == extractor.GARBLED
-    assert entry["blocks"] == 0 and entry["chars"] == 0
-    assert entry["glyphs_unnamed"] == entry["glyphs_drawn"]
+    assert entry["status"] == extractor.OK_VIA_OCR
+    assert entry["status"] != extractor.OK
+    assert entry["chars"] > 0
+    assert entry["ocr"]["pages"] == entry["ocr"]["pages_total"] == 3, \
+        "3 pages is under max_ocr_pages, so this one is not a prefix"
 
 
 def test_no_file_is_ok_while_most_of_its_glyphs_have_no_character():
