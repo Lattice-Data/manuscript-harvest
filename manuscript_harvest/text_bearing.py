@@ -113,7 +113,7 @@ AUDIO_VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".wmv", ".mpg", ".mpeg
 #: -- but pinned by a test, so an extension cannot quietly leave the set.
 KEPT_EXTENSIONS = {
     # prose and tables
-    ".pdf", ".txt", ".md", ".csv", ".tsv", ".xlsx", ".xls", ".xlsm",
+    ".pdf", ".txt", ".md", ".csv", ".tsv", ".gmt", ".xlsx", ".xls", ".xlsm",
     ".docx", ".doc", ".rtf", ".pptx",
     # structured text
     ".xml", ".nxml", ".json", ".html",

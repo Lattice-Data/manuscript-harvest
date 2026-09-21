@@ -18,7 +18,7 @@ import openpyxl.worksheet._read_only
 import pytest
 
 from manuscript_harvest.extract import archive, docxfile, extractor, htmlfile, jats, ooxml, pdf
-from manuscript_harvest.extract import rtf, sections
+from manuscript_harvest.extract import docfile, rtf, sections
 from manuscript_harvest.extract import spreadsheet, tables
 from manuscript_harvest.extract.blocks import (
     CAPTION,
@@ -1976,7 +1976,8 @@ def test_a_file_whose_glyphs_cannot_be_named_is_not_ok():
     a code it could not map, and letting them through as prose is the bug.
     """
     data = make_unreadable_font_pdf([[_METHODS]], broken_cmap=True)
-    blocks, status, meta = pdf.blocks_from_pdf(data, "sm.pdf", L)
+    with no_tesseract():
+        blocks, status, meta = pdf.blocks_from_pdf(data, "sm.pdf", L)
     assert status == pdf.GARBLED
     assert blocks == [] and meta["chars"] == 0
     assert meta["glyphs_unnamed"] == meta["glyphs_drawn"] > 0
@@ -2112,7 +2113,8 @@ def test_a_scanned_pdf_is_read_by_ocr():
     assert status == "ok_via_ocr"
     assert blocks and "Donor characteristics" in blocks[0].text
     assert meta["ocr"] == {"dpi": 300, "language": "eng", "pages": 2,
-                           "chars": meta["chars"]}
+                           "pages_total": 2, "chars": meta["chars"]}
+    assert "truncated" not in meta["ocr"], "the whole document was read"
     assert meta["chars"] > L.min_pdf_text_chars
 
 
@@ -2164,15 +2166,25 @@ def test_ocr_that_finds_nothing_legible_leaves_the_file_scanned():
     assert meta["ocr"]["chars"] < L.min_pdf_text_chars
 
 
-def test_a_scan_longer_than_the_ocr_cap_is_not_ocred():
-    """245 pages over 70 files, longest 11, against a cap of 25. What this stops is
-    a scanned 88-page peer-review bundle."""
+def test_a_scan_longer_than_the_ocr_cap_is_read_to_the_cap_and_says_so():
+    """The cap bounds the read rather than refusing the document.
+
+    It used to decline outright, on the argument that a long scan is "a document to
+    read by hand rather than a supplementary table". That argues against OCR'ing
+    337 pages; it does not argue for reading zero, and front matter is where a
+    supplement puts what this corpus is read for --
+    `10.1164/rccm.202207-1384oc`'s Online Methods is on page 2 of 337.
+    """
     with tesseract(returns=make_pdf_pages([[OCR_TEXT * 3]])):
         blocks, status, meta = pdf.blocks_from_pdf(
             make_scanned_pdf(pages=3), "scan.pdf", Limits(max_ocr_pages=2))
 
-    assert status == pdf.SCANNED
-    assert "3 pages is over the 2-page OCR cap" in meta["reason"]
+    assert status == pdf.OK_VIA_OCR
+    assert meta["ocr"]["pages"] == 2 and meta["ocr"]["pages_total"] == 3
+    assert meta["ocr"]["truncated"] is True
+    assert "first 2 of 3 pages" in meta["reason"], \
+        "a prefix that does not say it is one reads as a whole document"
+    assert "max_ocr_pages" in meta["reason"], "and it names the knob that bounded it"
 
 
 def test_ocr_failing_costs_one_file_not_the_run():
@@ -3174,13 +3186,14 @@ def test_a_broken_rtf_is_unreadable_not_a_crash():
     assert isinstance(text, str)
 
 
-def test_the_dispatcher_sends_rtf_to_the_parser_and_doc_to_the_refusal():
-    """The other seven extensions in `LEGACY_DOC_EXTENSIONS` keep the refusal --
-    only RTF's premise was wrong."""
+def test_the_dispatcher_parses_rtf_and_still_refuses_what_has_no_parser():
+    """`.rtf` and `.doc` both left `LEGACY_DOC_EXTENSIONS` once they had parsers.
+    The five that remain keep the refusal, and `.odt` stands for them: reading it
+    would mean a converter, which is the argument the whole set was refused on."""
     ok = extractor.extract_bytes(_rtf(b"Methods. Islets were dissociated.\\par"),
                                  "supplementary/01_s1.rtf", L)
-    refused = extractor.extract_bytes(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 64,
-                                      "supplementary/01_s1.doc", L)
+    refused = extractor.extract_bytes(b"opendocument bytes",
+                                      "supplementary/01_s1.odt", L)
 
     assert ok.status == "ok" and "Islets were dissociated" in ok.blocks[0].text
     assert refused.status == "unsupported_format"
@@ -3211,3 +3224,136 @@ def test_an_oversize_binary_stream_is_still_refused():
 
     assert status == "too_large" and plain is None
     assert "truncated" not in meta
+
+
+def test_a_garbled_file_ocr_could_not_save_keeps_the_glyph_diagnosis():
+    """The glyph count stays the primary cause and the OCR failure is appended.
+
+    `_ocr_pass` writes its own reason into the same dict, so the naive version of
+    this reported "tesseract is not on PATH" as why the document cannot be read --
+    true, and silent about the fonts. A reader would install tesseract and get the
+    same file back.
+    """
+    data = make_unreadable_font_pdf([[_METHODS]], broken_cmap=True)
+
+    with no_tesseract():
+        _, status, meta = pdf.blocks_from_pdf(data, "sm.pdf", L)
+
+    assert status == pdf.GARBLED
+    assert meta["reason"].startswith(f"{meta['glyphs_unnamed']} of ")
+    assert "no character behind them" in meta["reason"]
+    assert "OCR could not recover it either" in meta["reason"]
+    assert meta["reason"].count("tesseract binary") == 1, "said once, not twice"
+
+
+def test_a_garbled_file_that_renders_is_read_by_ocr():
+    """These files render perfectly and only their text layer is broken, which is
+    what OCR is for. Measured on the three in the corpus: 7,200 / 76,778 / 51,301
+    characters where all three previously yielded none."""
+    data = make_unreadable_font_pdf([[_METHODS]], broken_cmap=True)
+
+    with tesseract(returns=make_pdf_pages([[OCR_TEXT * 3]])):
+        blocks, status, meta = pdf.blocks_from_pdf(data, "sm.pdf", L)
+
+    assert status == pdf.OK_VIA_OCR
+    assert blocks and "Donor characteristics" in blocks[0].text
+    assert not any("VWXdLeV" in b.text for b in blocks), \
+        "the garbled blocks are MuPDF's fallback, not text, and must not come along"
+
+
+def test_a_zip_over_the_file_cap_is_walked_from_disk(tmp_path):
+    """A zip's size says nothing about what reading it costs: the directory is at
+    the end and `zipfile` seeks to it. `10.1038/s41467-021-23949-5` ships an 850 MB
+    and a 1,422 MB archive whose members are 1.9 MB and 3.7 MB each -- the container
+    over every cap, nothing inside it over any -- and both were refused whole."""
+    target = tmp_path / "big.zip"
+    target.write_bytes(make_zip([("t.csv", b"gene,n\nTP53,4\n"),
+                                 ("u.csv", b"cell,n\nbeta,9\n")]))
+
+    result = extractor.extract_path(target, "supplementary/01_big.zip",
+                                    Limits(max_file_mb=0))
+
+    assert result.status == "ok"
+    assert result.meta["container_read_from_disk"] is True
+    assert result.meta["members_read"] == 2
+
+
+def test_the_member_caps_still_apply_to_a_disk_walked_zip(tmp_path):
+    """Only the lid is spared. A member over `max_member_mb` that cannot be sampled
+    is still refused, which is what keeps this from being a way to read anything."""
+    target = tmp_path / "big.zip"
+    target.write_bytes(make_zip([("book.xlsx", make_xlsx({"S": [["a", 1]]}))]))
+
+    result = extractor.extract_path(target, "supplementary/01_big.zip",
+                                    Limits(max_file_mb=0, max_member_mb=0))
+
+    assert result.status == "too_large"
+    assert "member cap" in result.note
+
+
+def test_an_xlsx_over_the_cap_is_still_refused_rather_than_walked(tmp_path):
+    """`.xlsx` and `.docx` are zips too, and walking one as an archive would hand
+    the raw `xl/worksheets/*.xml` to the XML parser instead of to the workbook
+    parser that knows what a sheet is."""
+    target = tmp_path / "big.xlsx"
+    target.write_bytes(make_xlsx({"S1": [["gene", "n"], ["TP53", 4]]}))
+
+    result = extractor.extract_path(target, "supplementary/01_big.xlsx",
+                                    Limits(max_file_mb=0))
+
+    assert result.status == "too_large"
+    assert "over the 0 MB cap" in result.note
+
+
+# -- legacy Word ------------------------------------------------------------
+# One file in the corpus, and the reason it needed a real parser rather than a
+# `strings` pass is that Word keeps field codes in the text stream: the naive
+# extraction of that file yields `ADDIN EN.CITE <EndNote>...` between its
+# sentences and loses paragraph order. The corpus-backed assertions are in
+# `test_extract_corpus.py`.
+
+
+def test_a_doc_that_is_not_ole_is_unreadable_not_a_crash():
+    text, status, meta = docfile.text_from_doc(b"not a compound file at all")
+    assert status == "unreadable" and text == ""
+    assert "reason" in meta
+
+
+def test_a_field_instruction_is_dropped_and_its_result_kept():
+    """`0x13` begins a field, `0x14` separates instruction from result, `0x15`
+    ends it. The instruction is what carries `ADDIN EN.CITE`; the result is what a
+    reader sees on the page, so that is what survives."""
+    stream = ("Cells were treated. \x13ADDIN EN.CITE <EndNote><Cite>junk"
+              "\x14(Smith 2017)\x15 Then washed.").encode("cp1252")
+
+    text = docfile._decode_pieces(stream, [(0, False, len(stream))])
+
+    assert text == "Cells were treated. (Smith 2017) Then washed."
+    assert "ADDIN" not in text and "EndNote" not in text
+
+
+def test_a_field_with_no_result_contributes_nothing():
+    stream = "Before \x13ADDIN junk\x15 after.".encode("cp1252")
+    assert docfile._decode_pieces(stream, [(0, False, len(stream))]) == \
+        "Before  after."
+
+
+def test_nested_fields_do_not_switch_the_outer_one_back_on():
+    """Word nests fields, and a `0x15` inside a nested instruction would otherwise
+    end the outer instruction and let the rest of it through as prose."""
+    stream = "A \x13OUTER \x13INNER\x15 MORE-OUTER\x14result\x15 B".encode("cp1252")
+
+    text = docfile._decode_pieces(stream, [(0, False, len(stream))])
+
+    assert "OUTER" not in text and "INNER" not in text
+    assert "A " in text and " B" in text
+
+
+def test_paragraph_and_cell_marks_become_whitespace():
+    stream = "Heading\x0dcell one\x07cell two\x07\x0dnext".encode("cp1252")
+    text = docfile._decode_pieces(stream, [(0, False, len(stream))])
+    assert text == "Heading\ncell one\tcell two\t\nnext"
+
+
+def test_an_empty_piece_list_yields_no_text_and_no_exception():
+    assert docfile._decode_pieces(b"", []) == ""

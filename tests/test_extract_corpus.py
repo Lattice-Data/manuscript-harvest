@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 
 from manuscript_harvest.extract import blocks as blocks_mod
+from manuscript_harvest.extract import docfile
 from manuscript_harvest.extract import (extractor, jats, pdf, review,
                                         section_audit, spreadsheet, tables)
 from manuscript_harvest.extract.blocks import read_blocks
@@ -280,22 +281,30 @@ def test_the_science_supplement_reads_as_english_and_not_as_a_cipher():
     assert any(b["text"].strip() == "Materials and Methods" for b in blocks)
 
 
-def test_a_pdf_whose_glyphs_have_no_characters_behind_them_is_not_ok():
-    """10.1038/s41588-024-01702-0's reporting summary is the case the repair
+def test_a_pdf_whose_glyphs_have_no_characters_behind_them_is_read_by_ocr_not_called_ok():
+    """10.1038/s41588-024-01702-0's reporting summary is the case the *repair*
     cannot answer: every one of its 6,869 glyphs is unnamed, and its fonts are
     CID-keyed CFF subsets with identity ordering, no ToUnicode, no character map
     and glyph names of the form `cid00042`. Nothing in the file says what its
-    glyphs mean, so reading it would be a guess and the honest outcome is a
-    status that stops it counting as text."""
+    glyphs mean, so reading the text layer would be a guess.
+
+    The page still renders, though, which is what OCR is for -- so the characters
+    now come from the pixels rather than from the fonts, and the status says which.
+    `ok_via_ocr` and not `ok` is the whole point: the invariant below still holds
+    over this file, because a file whose glyphs have no characters behind them must
+    never be plainly `ok`.
+    """
     _needs("10.1038_s41588-024-01702-0/supplementary/"
            "14_41588_2024_1702_MOESM2_ESM.pdf")
     record = json.loads(_needs("10.1038_s41588-024-01702-0/extracted/"
                                "extraction.json").read_text())
     entry = next(e for e in record["supplementary"]
                  if e["path"].endswith("14_41588_2024_1702_MOESM2_ESM.pdf"))
-    assert entry["status"] == extractor.GARBLED
-    assert entry["blocks"] == 0 and entry["chars"] == 0
-    assert entry["glyphs_unnamed"] == entry["glyphs_drawn"]
+    assert entry["status"] == extractor.OK_VIA_OCR
+    assert entry["status"] != extractor.OK
+    assert entry["chars"] > 0
+    assert entry["ocr"]["pages"] == entry["ocr"]["pages_total"] == 3, \
+        "3 pages is under max_ocr_pages, so this one is not a prefix"
 
 
 def test_no_file_is_ok_while_most_of_its_glyphs_have_no_character():
@@ -602,3 +611,100 @@ def test_every_jats_file_in_the_corpus_parses():
         if status == "unreadable":
             failures.append((path.parent.name, meta.get("reason")))
     assert not failures, failures
+
+
+# -- the four defects this corpus was the evidence for -----------------------
+
+
+def test_the_real_doc_yields_prose_and_no_field_codes():
+    """`10.1002/pros.24020`'s supplementary information, the corpus's only `.doc`.
+
+    The field-code assertions are the point: Word keeps them in the text stream,
+    so the naive extraction of this file puts `ADDIN EN.CITE <EndNote>...` between
+    its sentences.
+    """
+    path = _needs("10.1002_pros.24020/supplementary/"
+                  "01_pros24020-sup-0001-joseph_et_al_2020_supplementary.doc")
+    text, status, _ = docfile.text_from_doc(path.read_bytes())
+
+    assert status == "ok"
+    assert text.startswith("Supplementary Information for")
+    assert "castration-insensitive cells of the proximal prostate" in text
+    for leak in ("ADDIN", "EN.CITE", "<EndNote>", "RecNum", "F:\\"):
+        assert leak not in text, f"{leak} is a field instruction, not document text"
+
+
+def test_the_doc_decode_accounts_for_every_declared_character():
+    """`ccpText` is what the document says it holds and the piece table must cover
+    exactly it.
+
+    This is the assertion that catches a piece table read with the compressed bit
+    inverted -- which yields plausible mojibake rather than an error -- and a
+    decode that quietly stopped at the first piece. It is also the measurement
+    that corrected the estimate this parser was scoped on: a `strings` pass over
+    the 23.3 MB file suggested ~96,000 characters of prose, and the document
+    declares 21,996. The rest was the embedded-image stream and the font tables.
+    """
+    import struct
+    path = _needs("10.1002_pros.24020/supplementary/"
+                  "01_pros24020-sup-0001-joseph_et_al_2020_supplementary.doc")
+    data = path.read_bytes()
+    ole = docfile._Ole(data)
+    doc = ole.stream("WordDocument")
+    csw = struct.unpack_from("<H", doc, 0x20)[0]
+    after_rgw = 0x20 + 2 + csw * 2
+    cslw = struct.unpack_from("<H", doc, after_rgw)[0]
+    ccp_text = struct.unpack_from(f"<{cslw}i", doc, after_rgw + 2)[3]
+
+    fc_clx, lcb_clx = docfile._fc_clx(doc)
+    pieces = docfile._piece_table(ole.stream("1Table"), fc_clx, lcb_clx)
+
+    assert sum(p[2] for p in pieces) == ccp_text == 21996
+    # Fewer characters come out than went in, and that is the field instructions
+    # being dropped rather than a truncated read.
+    assert 0.6 < len(docfile.doc_to_text(data)) / ccp_text < 0.9
+
+
+def test_the_gmt_in_an_archive_is_read_as_the_table_it_is():
+    """Gene Matrix Transposed is tab-separated. `10.1016/j.ccell.2021.09.008`'s
+    `Data S1.gmt` is 1.1 MB of it inside a zip that reported `no_text`."""
+    path = _needs("10.1016_j.ccell.2021.09.008/supplementary/26_mmc26.zip")
+    result = extractor.extract_path(path, "supplementary/26_mmc26.zip", L)
+
+    assert result.status == "ok"
+    assert any(block.kind == "table" for block in result.blocks)
+
+
+def test_the_garbled_supplements_are_read_by_ocr():
+    """All three rendered perfectly and only their text layers were broken.
+
+    `rccm.202207-1384oc`'s is the one that justified the change: 337 pages of
+    Online Methods for a paper whose supplements no tier can fetch.
+    """
+    cases = [
+        ("10.1164_rccm.202207-1384oc/supplementary/01_rustam_data_supplement.pdf",
+         "Human Lung Tissue"),
+        ("10.1038_s41586-022-05670-5/supplementary/03_41586_2022_5670_MOESM3_ESM.pdf",
+         None),
+    ]
+    for relative, expected in cases:
+        path = _needs(relative)
+        result = extractor.extract_path(path, f"supplementary/{path.name}", L)
+        assert result.status == "ok_via_ocr", relative
+        assert result.chars > 10_000, relative
+        assert result.meta["ocr"]["truncated"] is True, \
+            "both are over max_ocr_pages, so both are prefixes and must say so"
+        if expected:
+            assert expected in "\n".join(b.text for b in result.blocks)
+
+
+def test_the_over_cap_zips_are_walked_from_disk():
+    """850 MB and 1,422 MB containers whose members are 1.9 MB and 3.7 MB."""
+    for name in ("05_41467_2021_23949_MOESM5_ESM.zip",
+                 "06_41467_2021_23949_MOESM6_ESM.zip"):
+        path = _needs(f"10.1038_s41467-021-23949-5/supplementary/{name}")
+        result = extractor.extract_path(path, f"supplementary/{name}", L)
+
+        assert result.status == "ok", name
+        assert result.meta["container_read_from_disk"] is True
+        assert result.blocks

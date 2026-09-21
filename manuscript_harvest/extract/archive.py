@@ -134,9 +134,39 @@ def read_members(
     prefix_readable: Sequence[str] = (),
 ) -> Tuple[List[Tuple[str, bytes]], dict]:
     """Return `[(member_name, member_bytes), ...]` for readable, wanted members."""
+    return _open_and_walk(io.BytesIO(data), limits, wanted_extensions, prefix_readable)
+
+
+def read_members_at(
+    path, limits: Limits, wanted_extensions: Sequence[str],
+    prefix_readable: Sequence[str] = (),
+) -> Tuple[List[Tuple[str, bytes]], dict]:
+    """`read_members` for a zip too big to want in memory, read from disk.
+
+    A zip keeps its central directory at the end and `zipfile` seeks to it, so the
+    member list and every member size are knowable without reading the file --
+    which is what makes `extract.max_file_mb` the wrong question to ask of a zip.
+    `10.1038/s41467-021-23949-5` ships an 850 MB and a 1,422 MB archive whose
+    members are 1.9 MB and 3.7 MB each: the container is over every cap and nothing
+    inside it is, and both were refused whole.
+
+    Only the container is spared the cap. Each member still passes
+    `max_member_mb`, the count still passes `max_archive_members`, and members are
+    still read into memory one at a time -- so what this removes is a bound on the
+    *lid*, not the bound on what comes out of it.
+    """
+    with open(path, "rb") as handle:
+        return _open_and_walk(handle, limits, wanted_extensions, prefix_readable)
+
+
+def _open_and_walk(
+    source, limits: Limits, wanted_extensions: Sequence[str],
+    prefix_readable: Sequence[str],
+) -> Tuple[List[Tuple[str, bytes]], dict]:
+    """Shared by both entry points; `source` is anything `ZipFile` accepts."""
     meta: dict = {"members_total": 0, "members_read": 0, "skipped": []}
     try:
-        archive = zipfile.ZipFile(io.BytesIO(data))
+        archive = zipfile.ZipFile(source)
     except (zipfile.BadZipFile, OSError) as e:
         meta["reason"] = f"{type(e).__name__}: {e}"
         return [], meta
