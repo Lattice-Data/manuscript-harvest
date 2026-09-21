@@ -457,25 +457,57 @@ existed. For what earlier runs left behind:
     manuscript-fetch drop-orphans --apply --include-unique   # and the rest
 
 **`--apply` alone is lossless, and that split is the point.** Each file is classified
-by content, not by name: 136 of the 202 are byte-identical to a file the manifest
-still references, 3 more are archives whose every member is (`science.abo1984`'s
-orphaned 31.7 MB zip holds 264 members, all of them already stored under names PMC
-flattened beyond recognition), and **63 files / 868 MB are bytes stored nowhere
-else** — content a manifest lost track of rather than a duplicate.
-`10.1126/science.aat1699` is why they need a second flag: it references no
-supplements at all and sits on `expected_but_missing`, while 326.9 MB of its
-supplementary PDFs and tables are on disk from an older successful fetch. Those are
-reported per article as `kept` so the decision is made once, with the evidence, by a
-human.
+by content, not by name. When the command landed, 136 of 202 orphans were
+byte-identical to a file the manifest still references and 3 more were archives whose
+every member is (`science.abo1984`'s orphaned 31.7 MB zip holds 264 members, all of
+them already stored under names PMC flattened beyond recognition); those are gone
+now, and what the corpus currently holds is the other kind — **11 articles, 41 files,
+535.0 MB, all of it bytes stored under no other name.** Content a manifest lost track
+of rather than a duplicate, so a plain `--apply` reports `0 file(s) to remove` and
+`--include-unique` is the only flag that would touch them.
+`10.1126/science.aat1699` is why that second flag exists at all: it referenced no
+supplements while 326.9 MB of its supplementary PDFs and tables sat on disk from an
+older successful fetch. Every one is reported per article as `kept`, so the decision
+is made once, with the evidence, by a human.
 
 No manifest is rewritten by a deletion — these files have no entries, so the record
 is already correct without them, which is the mirror image of `drop-media`'s
-write-per-file. The one write it can make is `--adopt-landing`: 26 articles hold a
-`landing.html` that no entry names, because a re-fetch before the `_still_on_disk`
-fallback existed dropped the key while leaving the file. They are kept either way —
-the page is a proxy error, a Cloudflare challenge or a TDM-policy page, which is the
-evidence for *why* a tier failed and the only reason the browser tier saves it — and
-that flag gives them the entry they never got.
+write-per-file. The one write *this* command makes is `--adopt-landing`: 26 articles
+hold a `landing.html` that no entry names, because a re-fetch before the
+`_still_on_disk` fallback existed dropped the key while leaving the file. They are
+kept either way — the page is a proxy error, a Cloudflare challenge or a TDM-policy
+page, which is the evidence for *why* a tier failed and the only reason the browser
+tier saves it — and that flag gives them the entry they never got.
+
+**`adopt` is `drop-orphans` in the keeping direction**, and it exists because the
+report above had only one exit. Every safety property of `drop-orphans` is about not
+deleting a file whose bytes are stored nowhere else — and the only thing a human
+could then *do* with those `kept` lines was delete them anyway, so 0.584 GB across
+12 articles sat in a state no command could resolve toward keeping it.
+
+    manuscript-fetch adopt <slug> supplementary/07_…-TableS8.txt           # report
+    manuscript-fetch adopt <slug> supplementary/07_…-TableS8.txt --apply   # write
+    manuscript-fetch adopt <slug> --set-complete --note "18 of 18 by hand" --apply
+
+**Paths are named, never swept, and that asymmetry with `--adopt-landing` is
+deliberate.** `landing.html` can be a corpus-wide flag because it is one filename
+with one meaning. A supplement is not: `10.1038/s41588-025-02454-1` holds three
+unreferenced Nature PDFs of which one is a byte-for-byte re-issue of a PMC file
+already referenced and two are documents the PMC set never had, and no rule over
+filenames tells those apart. Adopting the wrong one puts a duplicate in `totals` and
+a second copy of the same text in front of extraction, so the caller names the files
+and owns the judgement. It refuses a path already in the manifest, one that is not a
+file, and one with no `<NN>_` prefix — the index would have to be invented.
+
+`--set-complete` is the other half, and it takes `--note` or it writes nothing. It
+records `supplementary_status=fetched_by_hand` for the case no tier can reach:
+`10.1164/rccm.202207-1384oc` has no supplements in PMC and a Cloudflare interstitial
+at the publisher, so its verdict stays *every supplement was lost* however many files
+arrive by hand. The note is where "18 of 18 from academic.oup.com, PMC hosts none"
+lives; without it the new status is an assertion with no evidence behind it, which is
+what the old one already was. It takes no paths, because a set can be confirmed
+complete without any file needing adoption — the files may already be referenced and
+only the verdict be wrong.
 
 ### Disk usage
 
@@ -694,13 +726,27 @@ vocabulary — things true about an extraction without being a per-file failure:
 | `supplements_expected_but_missing` | yes | the fetch stage says files were listed and not retrieved |
 | `main_text_thin` | yes | shorter than `min_main_text_chars`: front matter, not an article |
 | `landing_page_only` | yes | the main text is a saved publisher landing page |
+| `main_text_is_not_the_requested_article` | yes | the fetch stage says the stored full text is some other article |
 | `supplement_set_unverified` | no | supplements were fetched; no tier could confirm the set is complete |
+| `supplement_read_as_prefix` | no | a card was built from the head of a file too big to read whole, so it describes a sample and not the table |
 | `manifest_entry_without_a_path` | no | a supplementary entry has no file on disk to read |
 
 `supplement_set_unverified` deliberately does not block: it is the common outcome
-for any page-scraping route, so it is a caveat, not a defect. Before these existed
-the extractor never read the fetch stage's own verdict, so an article whose manifest
-said `expected_but_missing` extracted as `complete` with an empty supplement list.
+for any page-scraping route, so it is a caveat, not a defect — 240 of 392 articles
+carry it. Before these existed the extractor never read the fetch stage's own
+verdict, so an article whose manifest said `expected_but_missing` extracted as
+`complete` with an empty supplement list.
+
+`supplement_read_as_prefix` does not block either, and is the subtlest of the seven:
+the card is real and useful, but a curator reading row counts off it would be wrong
+and nothing else in the record would have said so. It fires on 4 articles here. It
+was also the caveat that proved the vocabulary needed a test with teeth — it was
+appended on every truncated read and *missing from `CAVEATS`*, so `readiness`
+rendered the bare token where a sentence belongs. The test that should have caught it
+only checked the caveats one fixture happened to produce, which is a test that passes
+on nothing; `test_every_caveat_the_module_can_append_has_a_description` now walks
+`extractor.py` for `caveats.append(...)` and fails on any name the vocabulary cannot
+describe.
 
 **There is deliberately no caveat for a `drop-media` removal**, and none of the above
 fires on one. `manifest_entry_without_a_path` means "this manifest is malformed", and
@@ -854,6 +900,7 @@ commented-out `fetch.max_response_mb` backstop is for.
 ## Select: blocks → the evidence one question needs
 
     manuscript-select readiness                  # can a "not found" be believed?
+    manuscript-select supplements                # declared vs fetched vs read
     manuscript-select candidates <doi>           # what a regex finds, with no role
     manuscript-select pack <doi> --sections methods,data_availability
     manuscript-select sheet --out labels.html    # a page to hand-label
@@ -861,7 +908,7 @@ commented-out `fetch.max_response_mb` backstop is for.
     manuscript-select verify answers.json --article <doi>
     manuscript-select eval answers/ --truth truth/accessions --baseline
 
-Offline like the extract stage. Four jobs, and the reason they are here rather than
+Offline like the extract stage. Five jobs, and the reason they are here rather than
 downstream is that every one of them can be tested without a model.
 
 **`readiness` — what emptiness is allowed to mean.** Ask "which datasets did this
@@ -873,6 +920,34 @@ have missed anything in. Five states — `ready`, `ready_with_caveats`,
 negative answer is worth recording, and 27 of the 37 development-corpus directories
 reach them. `ready_with_caveats` carries a `gaps` list, so the answer states its own
 bound instead of implying there wasn't one.
+
+**`supplements` — the strongest word the fetch stage has does not mean what it
+sounds like.** `supplementary_status: fetched` means one tier's own index bounded the
+set *that tier* enumerated. `10.1016/j.cell.2020.11.028` reads `fetched` — rendered
+as "supplements complete" — with 3 of the 14 items its own JATS declares actually on
+disk, and nothing in the pipeline compared the two, so a paper scored from a third of
+its supplementary material was indistinguishable from a complete one. This command
+makes the comparison and writes `extracted/supplement_items.json` beside each
+extraction. It keeps two questions apart on purpose, because conflating them
+misreports the cause:
+
+    DECLARED -> FETCHED   did the file arrive?      a fetcher gap
+    FETCHED  -> READ      did text come out of it?  an extraction gap
+
+Over the corpus: 2,303 declared items, 2,015 fetched, 1,995 read, and **41 declared
+text-bearing items across 17 articles that never arrived**. A single "missing"
+verdict would send someone to re-run the fetcher for a problem it does not have. It
+is a writer rather than a report — it says what it wrote and which articles have
+something outstanding, and the per-item detail lives in the sidecar.
+
+**What it cannot see, stated plainly.** The declared set comes from the publisher's
+own JATS `<supplementary-material>` elements, so a paper whose *prose* references an
+item the publisher never declared passes unnoticed: `10.1016/j.cell.2020.08.013`
+mentions Figures S1–S7 fifty-four times, its JATS declares five supplements, none of
+them is a figure, and this reports it fetch-complete. And **124 of 392 papers have no
+JATS at all** — they read `declaration unavailable`, never `complete`, because an
+unmeasurable paper that looks like a clean one is the failure the module exists to
+prevent.
 
 **`pack` — filter, rank, budget.** The subtle part is that **a section preference is
 never a filter**. Corpus-wide 599 of 4,009 main-text paragraphs carry `section: null`,
@@ -1099,6 +1174,14 @@ corpus browser either; "recently added" is the newest dozen. Adding one would me
 serving files rather than linking to them, since browsers refuse `file://`
 navigation from an `http://` page.
 
+**`adopt` is not a button, and that one is about the command rather than the panel.**
+The four destructive commands are here because each takes a whole corpus or a slug
+and the preview says what it would do. `adopt` takes *named paths* and asks the
+caller to have decided which of three unreferenced PDFs is a duplicate — a
+judgement the report cannot make, which is why the command refuses to sweep. A
+button whose argument is "the right files, chosen by reading the bytes" is a worse
+interface than a shell, so `COMMANDS` in `ui/jobs.py` deliberately stops at nine.
+
 ## Skills
 
 `.claude/skills/` holds packaged answers to the question the three stages
@@ -1207,8 +1290,9 @@ The skill is split so the judgment can be swapped without touching the machinery
                         verify every quote, prune, recompute, tabulate, diff
     TEXT       manuscript_harvest   this package
 
-`pe/` is 1,697 lines that name the task **nowhere in code**, and
-`tests/test_seam.py` holds that line by tokenising every module and rejecting a
+`pe/` is 1,697 lines that name the task **nowhere in code**, and the skill's own
+`tests/test_seam.py` — under `.claude/skills/perturbation-detection/`, not this
+repo's `tests/` — holds that line by tokenising every module and rejecting a
 task word in any identifier, string or key. It was not always so: `pe/` was
 1,038 task lines against 1,185 generic ones, interleaved inside four files.
 Moving them out changed nothing measurable — all 392 records re-validated with
@@ -1272,9 +1356,14 @@ with one present reads about a point higher than the badge.
 | `tests/test_browser_tier.py` | the browser tier offline — proxy rewriting, settling, challenges, caps |
 | `tests/test_open_access_tiers.py` | the four open-access tiers end to end: which status each outcome earns |
 | `tests/test_fetch_cli.py` | the fetch CLI: missing-login warning, proxy breaker, exit codes, `usage`/`prune`/`check` |
-| `tests/test_extract_units.py` | sections, table cards, and each parser: JATS, PDF, xlsx, xls, docx, HTML, zip, tar, gzip |
+| `tests/test_extract_units.py` | sections, table cards, and each parser: JATS, PDF, xlsx, xls, docx, RTF, `.doc`, HTML, zip, tar, gzip |
 | `tests/test_extract_article.py` | source choice, per-file statuses, the extraction record, the CLI |
 | `tests/test_extract_corpus.py` | the real files that taught the extractor its rules — skipped without `corpus/` |
+| `tests/test_text_bearing.py` | which filenames text can come out of, for both the fetch refusal and `drop-media` |
+| `tests/test_orphans.py` | files no manifest entry points at: what `drop-orphans` may delete, and what `adopt` may keep |
+| `tests/test_supplements.py` | the declared-vs-fetched-vs-read ledger, one test per way its first version misreported |
+| `tests/test_revalidate.py` | correcting a corpus fetched before anything asked which paper it was: it must name the two and not touch the 390 |
+| `tests/test_article_state.py` | the one sentence three statuses become: every `_supplement_status` value has a clause, and an unknown one still reads |
 | `tests/test_review.py` | the review layer: what is asked, in what order, and when an answer expires |
 | `tests/test_section_audit.py` | the section audit: alignment, scoring, and what must *not* count as an error |
 | `tests/test_manual_fetch_units.py` | the comparison rules: publisher filename conventions, archives, versions |

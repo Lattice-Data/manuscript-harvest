@@ -118,6 +118,9 @@ CAVEATS = {
         "the fetch stage says supplementary material was listed and not retrieved",
     SUPPLEMENTS_UNVERIFIED:
         "supplements were fetched but no tier could confirm the set is complete",
+    SUPPLEMENT_READ_AS_PREFIX:
+        "a table card was built from the head of a file too big to read whole, "
+        "so it describes a sample and not the table",
     MAIN_TEXT_THIN:
         "the main text is shorter than min_main_text_chars: front matter, not an article",
     LANDING_PAGE_ONLY:
