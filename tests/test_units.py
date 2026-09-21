@@ -1479,3 +1479,119 @@ def test_a_filename_survives_an_extension_that_is_not_the_last_segment():
                          NoHeaders()) == "mmc1.pdf"
     # And a URL that names nothing is still not invented.
     assert _filename_for("https://h/no/extension/anywhere", NoHeaders()) == "anywhere"
+
+
+# -- streaming a body too big to be a bytes ---------------------------------
+
+
+class _StreamResponse:
+    """The slice of a streamed `requests.Response` that `download_to` reads."""
+
+    def __init__(self, chunks, status_code=200, headers=None):
+        self.chunks = list(chunks)
+        self.status_code = status_code
+        self.headers = headers or {"Content-Type": "application/octet-stream"}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def iter_content(self, chunk_size=None):
+        for chunk in self.chunks:
+            if isinstance(chunk, Exception):
+                raise chunk
+            yield chunk
+
+
+class _StreamSession:
+    def __init__(self, response):
+        self.response = response
+        self.calls = []
+        self.headers = {}
+
+    def get(self, url, **kwargs):
+        self.calls.append({"url": url, **kwargs})
+        return self.response
+
+
+def _streaming_http(response):
+    http = Http(min_interval_seconds=0)
+    http._session = _StreamSession(response)
+    return http
+
+
+def test_a_streamed_body_lands_whole_and_is_hashed_from_what_was_written(tmp_path):
+    """The digest describes the bytes on disk, which is what `orphans.classify`
+    later uses to decide a file is stored nowhere else."""
+    body = b"gene,logfc\n" + b"CD8A,1.4\n" * 1000
+    http = _streaming_http(_StreamResponse([body[:500], body[500:]]))
+    target = tmp_path / "supplementary" / "01_big.csv"
+
+    written = http.download_to("https://x/big.csv", target)
+
+    assert target.read_bytes() == body
+    assert written["bytes"] == len(body)
+    assert written["sha256"] == store.sha256_bytes(body)
+    assert written["content_type"] == "application/octet-stream"
+
+
+def test_a_stream_that_dies_halfway_leaves_no_file(tmp_path):
+    """A truncated file of the right name is worse than none: `manifest_is_complete`
+    asks only whether a named file is present, so the article would read as settled
+    around a half-downloaded supplement."""
+    http = _streaming_http(_StreamResponse([b"first", OSError("connection reset")]))
+    target = tmp_path / "01_big.csv"
+
+    with pytest.raises(OSError):
+        http.download_to("https://x/big.csv", target)
+    assert not target.exists()
+
+
+def test_a_stream_over_the_cap_is_stopped_and_removed(tmp_path):
+    """The cap is enforced while streaming rather than after: the point of this
+    path is never holding the whole body, so neither may the check."""
+    http = _streaming_http(_StreamResponse([b"x" * 600, b"x" * 600]))
+    target = tmp_path / "01_big.bin"
+
+    with pytest.raises(HttpError, match="cap while streaming"):
+        http.download_to("https://x/big.bin", target, max_bytes=1000)
+    assert not target.exists()
+
+
+def test_a_streamed_error_status_writes_nothing(tmp_path):
+    http = _streaming_http(_StreamResponse([b"nope"], status_code=403))
+    target = tmp_path / "01_big.bin"
+
+    with pytest.raises(HttpError, match="HTTP 403"):
+        http.download_to("https://x/big.bin", target)
+    assert not target.exists()
+
+
+def test_the_cookies_reach_the_request(tmp_path):
+    """NCBI's proof-of-work state lives in the browser context; without it the
+    stream is the 1.8 KB challenge page rather than the file."""
+    http = _streaming_http(_StreamResponse([b"body"]))
+
+    http.download_to("https://x/f.bin", tmp_path / "f.bin", cookies={"pow": "cleared"})
+
+    assert http._session.calls[0]["cookies"] == {"pow": "cleared"}
+    assert http._session.calls[0]["stream"] is True
+
+
+def test_a_staged_file_is_filed_exactly_as_a_bytes_one_would_be(tmp_path):
+    """`save_file` and `save_staged_file` return the same three keys, which is what
+    lets `_write_group` stop caring which path produced an entry."""
+    staged = tmp_path / "stage" / "raw.bin"
+    staged.parent.mkdir()
+    staged.write_bytes(b"payload")
+    article = tmp_path / "article"
+
+    entry = store.save_staged_file(article, "supplementary/07_table.bin", staged)
+
+    assert entry == {"path": "supplementary/07_table.bin", "bytes": 7,
+                     "sha256": store.sha256_bytes(b"payload")}
+    assert (article / "supplementary/07_table.bin").read_bytes() == b"payload"
+    assert not staged.exists(), "moved, not copied -- 423 MB is not worth duplicating"
+    assert set(entry) == set(store.save_file(article, "other.bin", b"payload"))

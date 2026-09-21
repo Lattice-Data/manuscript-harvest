@@ -483,6 +483,80 @@ def adopt_landing_html(directory, record: dict) -> dict:
     return entry
 
 
+class AdoptRefused(Exception):
+    """A supplement adoption that would have written something untrue."""
+
+
+def adopt_supplement(directory, record: dict, relative_path: str) -> dict:
+    """Give an unreferenced supplement the manifest entry it never got.
+
+    Mutates `record` and returns the entry. The caller writes the manifest.
+
+    This is the reverse of the sweep: `sweep_article` keeps bytes stored nowhere
+    else and leaves them for a human, and until now the only thing a human could
+    do with that report was delete it. `10.1126/science.aax6234` is the case that
+    wanted the other option -- `07_..-TableS8.txt` is 22.4 MB of the article's own
+    supplementary table, the URL it came from is in `attempts` beside an
+    `http_error` from a *later* run, and the fetch that actually produced the bytes
+    is no longer in the record. Deleting it would have cost the table; leaving it
+    unreferenced kept the file and hid it from extraction, which walks entries.
+
+    **What is measured and what is refused.** `bytes` and `sha256` come off the
+    file. `index`, `label` and `original_name` are read from the stored name, whose
+    `<NN>_<name>` shape `fetcher._write_group` wrote and this module's own docstring
+    documents -- so they are parsed, not guessed. `url` and `tier` are **left
+    absent**: no run in this record is known to have fetched these bytes, and a URL
+    filled in from the filename would read as observed provenance. `adopted` says
+    why, the same contract `adopt_landing_html` keeps.
+
+    Three refusals, because each would write a falsehood:
+
+    * a path the record already names -- adopting twice would double-count the file
+      in `totals` and give one file two entries;
+    * a file that is not on disk -- an entry whose `path` resolves to nothing is
+      exactly what `manifest_is_complete` treats as an incomplete fetch;
+    * a name without the `<NN>_` prefix -- the index would have to be invented, and
+      `index` is what orders the set.
+
+    Adopting does **not** touch `supplementary_status`. That word is
+    `fetcher._supplement_status`'s verdict about the *set*, and one recovered file
+    does not make a set that is still missing another file complete:
+    `science.aax6234` stays `partial_failure` on `TablseS5.gz`, correctly. What
+    changes is that extraction can now see the file at all.
+    """
+    directory = Path(directory)
+    target = directory / relative_path
+    if relative_path in store.referenced_paths(record):
+        raise AdoptRefused(f"{relative_path} is already named by this manifest")
+    if not target.is_file():
+        raise AdoptRefused(f"{relative_path} is not a file in {directory}")
+    name = target.name
+    prefix, _, original = name.partition("_")
+    if not (original and prefix.isdigit()):
+        raise AdoptRefused(
+            f"{name} has no <NN>_ prefix, so its index would have to be invented")
+    entry = {
+        "path": relative_path,
+        "bytes": target.stat().st_size,
+        "sha256": sha256_path(target),
+        "index": int(prefix),
+        "label": original,
+        "original_name": original,
+        "adopted": True,
+        "adopted_reason": ("file was on disk unreferenced; the run that saved it is "
+                           "no longer in this record, so its URL and tier are "
+                           "unknown"),
+    }
+    entries = list(record.get("supplementary") or [])
+    entries.append(entry)
+    # By stored index rather than append order, so the set reads in the order the
+    # filenames already imply -- an adopted `07_` after the `06_` it followed on
+    # disk, not last because it was recovered last.
+    entries.sort(key=lambda e: (e.get("index") or 0, e.get("path") or ""))
+    record["supplementary"] = entries
+    return entry
+
+
 def sweep_corpus(corpus_dir, apply: bool = False, slugs=None,
                  include_unique: bool = False, adopt_landing: bool = False) -> List[dict]:
     """Walk the corpus, classify what nothing references, and with `apply` act on it.

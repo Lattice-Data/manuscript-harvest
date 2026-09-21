@@ -955,3 +955,117 @@ def test_a_sweep_that_cannot_delete_records_it_and_finishes(monkeypatch, tmp_pat
         "the file the sweep could not take is still there for the next pass"
     assert store.manifest_is_complete(second) is True, \
         "and no record claims it is gone, so no batch re-fetches the article"
+
+
+# -- adopting, the keeping direction ----------------------------------------
+# `drop-orphans` keeps bytes stored nowhere else and reports them, and for as long
+# as that was the only outcome the report had exactly one resolution: delete. 0.584
+# GB across 12 live articles sat in that state, including 22.4 MB of
+# `10.1126/science.aax6234`'s own supplementary table -- a file the sweep had
+# already destroyed 49 MB of this article's siblings to protect.
+
+
+def test_adopting_measures_the_file_and_invents_no_provenance(tmp_path):
+    """`bytes`, `sha256`, `index` and `label` are all readable off the file and its
+    stored name. `url` and `tier` are not: no run in the record is known to have
+    fetched these bytes, so a URL built from the filename would read as observed
+    provenance for a fetch nobody can point at."""
+    body = b"gene\tlogfc\nCD8A\t1.4\n"
+    directory = _article(tmp_path, supplements=[("mmc1.txt", b"first")])
+    _orphan(directory, "supplementary/07_NIHMS1595611-supplement-TableS8.txt", body)
+    record = _record(directory)
+
+    entry = orphans.adopt_supplement(
+        directory, record, "supplementary/07_NIHMS1595611-supplement-TableS8.txt")
+
+    assert entry["bytes"] == len(body)
+    assert entry["sha256"] == store.sha256_bytes(body)
+    assert entry["index"] == 7
+    assert entry["label"] == "NIHMS1595611-supplement-TableS8.txt"
+    assert entry["original_name"] == "NIHMS1595611-supplement-TableS8.txt"
+    assert entry["adopted"] is True
+    assert "url" not in entry and "tier" not in entry
+
+
+def test_an_adopted_file_is_no_longer_unreferenced(tmp_path):
+    """The whole point: the sweep stops offering it, and extraction -- which walks
+    entries, not the directory -- can finally see it."""
+    directory = _article(tmp_path, supplements=[("mmc1.txt", b"first")])
+    _orphan(directory, "supplementary/07_table8.txt", b"payload")
+    record = _record(directory)
+    assert "supplementary/07_table8.txt" not in store.referenced_paths(record)
+
+    orphans.adopt_supplement(directory, record, "supplementary/07_table8.txt")
+    store.write_manifest(directory, record)
+
+    assert "supplementary/07_table8.txt" in store.referenced_paths(record)
+    report = sweep_article_report(directory, apply=False, include_unique=True)
+    assert not report["files"] and not report["kept"], \
+        "the sweep reads the manifest off disk, so this also pins that the caller " \
+        "writing it is what makes the adoption take effect"
+
+
+def test_adopting_twice_is_refused(tmp_path):
+    """Two entries for one file double-counts it in `totals` and puts the same text
+    in front of extraction twice."""
+    directory = _article(tmp_path, supplements=[("mmc1.txt", b"first")])
+    _orphan(directory, "supplementary/07_table8.txt", b"payload")
+    record = _record(directory)
+    orphans.adopt_supplement(directory, record, "supplementary/07_table8.txt")
+
+    with pytest.raises(orphans.AdoptRefused, match="already named"):
+        orphans.adopt_supplement(directory, record, "supplementary/07_table8.txt")
+    assert len(record["supplementary"]) == 2, "one adopted, one original"
+
+
+def test_adopting_a_file_that_is_not_there_is_refused(tmp_path):
+    """An entry whose `path` resolves to nothing is what `manifest_is_complete`
+    reads as an incomplete fetch, so this would turn a settled article into one
+    every later batch re-fetches."""
+    directory = _article(tmp_path, supplements=[("mmc1.txt", b"first")])
+    record = _record(directory)
+
+    with pytest.raises(orphans.AdoptRefused, match="not a file"):
+        orphans.adopt_supplement(directory, record, "supplementary/99_absent.txt")
+    assert store.manifest_is_complete(record) is True
+
+
+def test_a_name_without_an_index_prefix_is_refused(tmp_path):
+    """`index` orders the set and there is nothing to read it from here, so it would
+    have to be invented."""
+    directory = _article(tmp_path, supplements=[("mmc1.txt", b"first")])
+    _orphan(directory, "supplementary/loose.txt", b"payload")
+    record = _record(directory)
+
+    with pytest.raises(orphans.AdoptRefused, match="no <NN>_ prefix"):
+        orphans.adopt_supplement(directory, record, "supplementary/loose.txt")
+
+
+def test_adopting_leaves_the_supplement_set_verdict_alone(tmp_path):
+    """`supplementary_status` is `fetcher._supplement_status`'s verdict about the
+    *set*. `science.aax6234` is still missing `TablseS5.gz` after `TableS8.txt` comes
+    back, so `partial_failure` is the true word and adopting must not overwrite it --
+    the file is recovered, the set is not."""
+    directory = _article(tmp_path, supplements=[("mmc1.txt", b"first")])
+    record = _record(directory)
+    record["supplementary_status"] = "partial_failure"
+    _orphan(directory, "supplementary/07_table8.txt", b"payload")
+
+    orphans.adopt_supplement(directory, record, "supplementary/07_table8.txt")
+    store.finalize_status(record)
+
+    assert record["supplementary_status"] == "partial_failure"
+    assert record["status"] == "partial"
+
+
+def test_an_adopted_entry_sorts_by_its_stored_index(tmp_path):
+    """Order comes from the filenames already on disk, so a recovered `07_` reads
+    after the `06_` it followed there rather than last because it came back last."""
+    directory = _article(tmp_path, supplements=[("a.txt", b"a"), ("b.txt", b"b")])
+    _orphan(directory, "supplementary/03_c.txt", b"c")
+    record = _record(directory)
+
+    orphans.adopt_supplement(directory, record, "supplementary/03_c.txt")
+
+    assert [e["path"] for e in record["supplementary"]] == [
+        "supplementary/01_a.txt", "supplementary/02_b.txt", "supplementary/03_c.txt"]

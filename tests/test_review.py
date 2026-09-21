@@ -62,7 +62,7 @@ def test_the_queue_order_is_the_documented_one(tmp_path):
     directory, record = _extracted(
         tmp_path,
         fulltext=make_pdf_pages([[page]]),
-        supplements=[("s1.xlsx", make_xlsx(AMBIGUOUS)), ("notes.rtf", b"{\\rtf1 x}")])
+        supplements=[("s1.xlsx", make_xlsx(AMBIGUOUS)), ("notes.odt", b"opendocument bytes")])
     kinds = [i["kind"] for i in _queue(directory, record)]
 
     rank = {kind: n for n, kind in enumerate([
@@ -75,7 +75,7 @@ def test_the_queue_order_is_the_documented_one(tmp_path):
 def test_sign_off_is_always_last(tmp_path):
     directory, record = _extracted(
         tmp_path, xml=jats_article(METHODS_BODY),
-        supplements=[("s1.xlsx", make_xlsx(AMBIGUOUS)), ("notes.rtf", b"{\\rtf1 x}")])
+        supplements=[("s1.xlsx", make_xlsx(AMBIGUOUS)), ("notes.odt", b"opendocument bytes")])
     queue = _queue(directory, record)
     assert queue[-1]["kind"] == review.SIGN_OFF
     assert sum(1 for i in queue if i["kind"] == review.SIGN_OFF) == 1
@@ -107,7 +107,7 @@ def test_figure_images_are_never_queued(tmp_path):
 
 def test_an_unparseable_supplement_is_queued(tmp_path):
     directory, record = _extracted(tmp_path, xml=jats_article(METHODS_BODY),
-                                   supplements=[("notes.rtf", b"{\\rtf1 text}")])
+                                   supplements=[("notes.odt", b"opendocument bytes")])
     item = next(i for i in _queue(directory, record)
                 if i["kind"] == review.FILE_HAS_CONTENT)
     assert item["key"]["path"] == record["supplementary"][0]["path"]
@@ -150,7 +150,7 @@ def test_every_queued_key_is_unique_within_an_article(tmp_path):
     directory, record = _extracted(
         tmp_path, xml=jats_article(METHODS_BODY),
         supplements=[("s1.xlsx", make_xlsx({f"S{i}": AMBIGUOUS["S1"] for i in range(4)})),
-                     ("notes.rtf", b"{\\rtf1 x}")])
+                     ("notes.odt", b"opendocument bytes")])
     keys = [review.answer_key(i["kind"], i["key"]) for i in _queue(directory, record)]
     assert len(keys) == len(set(keys))
 
@@ -268,7 +268,7 @@ def test_the_applied_breakdown_sums_to_the_applied_total(tmp_path):
     stored answers read "14 override(s) applied: 1 table header"."""
     directory, record = _extracted(
         tmp_path, xml=jats_article(METHODS_BODY),
-        supplements=[("s1.xlsx", make_xlsx(AMBIGUOUS)), ("notes.rtf", b"{\\rtf1 x}")])
+        supplements=[("s1.xlsx", make_xlsx(AMBIGUOUS)), ("notes.odt", b"opendocument bytes")])
     queue = _queue(directory, record)
     header = next(i for i in queue if i["kind"] == review.TABLE_HEADER)
     content = next(i for i in queue if i["kind"] == review.FILE_HAS_CONTENT)
@@ -357,9 +357,9 @@ def test_a_review_is_part_of_the_extraction_key(tmp_path):
 def test_a_cleared_file_stays_listed_and_the_article_can_be_complete(tmp_path):
     """Nothing disappears: the file is still in `unextracted_text_files`, and one
     key away is the human who cleared it. The per-file status does not move -- the
-    taxonomy stays closed and a .rtf stays `unsupported_format`."""
+    taxonomy stays closed and an .odt stays `unsupported_format`."""
     directory, record = _extracted(tmp_path, xml=jats_article(METHODS_BODY),
-                                   supplements=[("notes.rtf", b"{\\rtf1 text}")])
+                                   supplements=[("notes.odt", b"opendocument bytes")])
     assert record["status"] == "partial"
     path = record["supplementary"][0]["path"]
     item = next(i for i in _queue(directory, record)
@@ -508,7 +508,7 @@ def test_a_re_fetched_file_drops_its_override(tmp_path):
 def test_the_sheet_is_one_self_contained_page(tmp_path):
     directory, record = _extracted(
         tmp_path, xml=jats_article(METHODS_BODY),
-        supplements=[("s1.xlsx", make_xlsx(AMBIGUOUS)), ("notes.rtf", b"{\\rtf1 x}")])
+        supplements=[("s1.xlsx", make_xlsx(AMBIGUOUS)), ("notes.odt", b"opendocument bytes")])
     queue = _queue(directory, record)
     page = reviewsheet.render(record, queue, None, article_dir=directory)
     assert "<script src" not in page and "http://" not in page

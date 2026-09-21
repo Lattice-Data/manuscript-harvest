@@ -1239,6 +1239,18 @@ class FakeContext:
     def clear_cookies(self, domain=None):
         self.cleared_domains.append(domain)
 
+    def cookies(self, url=None):
+        """What `_download_streamed` hands to the HTTP client.
+
+        Real and not a stub `[]`: NCBI's proof-of-work state is the only reason a
+        streamed request gets the file rather than the 1.8 KB challenge page, so a
+        test that could not tell the cookies were passed would not be testing the
+        thing that makes the route work.
+        """
+        self.cookies_asked_for = url
+        return [{"name": "pow", "value": "cleared", "domain": "pmc.ncbi.nlm.nih.gov",
+                 "path": "/"}]
+
     def add_cookies(self, cookies):
         self.added_cookies.extend(cookies)
 

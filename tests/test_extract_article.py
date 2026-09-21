@@ -313,7 +313,7 @@ def test_supplement_kinds_get_the_statuses_they_deserve(tmp_path):
             ("movie.mp4", b"\x00\x00\x00 ftypmp42"),
             ("counts.h5ad", b"\x89HDF\r\n\x1a\n"),
             ("legends.docx", make_docx([("paragraph", "Figure S1. UMAP of nuclei.")])),
-            ("notes.rtf", b"{\\rtf1 text}"),
+            ("notes.odt", b"opendocument bytes"),
             ("scan.pdf", make_scanned_pdf()),
         ])
     record = extract_article(directory, limits=L)
@@ -325,10 +325,10 @@ def test_supplement_kinds_get_the_statuses_they_deserve(tmp_path):
     assert by_path["movie.mp4"]["status"] == "media_no_text"
     assert by_path["counts.h5ad"]["status"] == "data_file_skipped"
     assert by_path["legends.docx"]["status"] == "ok"
-    assert by_path["notes.rtf"]["status"] == "unsupported_format"
+    assert by_path["notes.odt"]["status"] == "unsupported_format"
     assert by_path["scan.pdf"]["status"] == "no_text_scanned_pdf"
     # Only files that should have yielded text count against the article.
-    assert record["unextracted_text_files"] == [by_path["notes.rtf"]["path"],
+    assert record["unextracted_text_files"] == [by_path["notes.odt"]["path"],
                                                 by_path["scan.pdf"]["path"]]
     assert record["status"] == "partial"
 

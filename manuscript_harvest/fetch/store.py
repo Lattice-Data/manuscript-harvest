@@ -18,6 +18,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
@@ -207,6 +208,49 @@ def save_file(directory, relative_path: str, content: bytes) -> dict:
         "path": relative_path,
         "bytes": len(content),
         "sha256": sha256_bytes(content),
+    }
+
+
+def save_staged_file(directory, relative_path: str, staged) -> dict:
+    """Move an already-downloaded file into place and describe it.
+
+    `save_file`'s counterpart for bodies that were never a `bytes`. `http.
+    download_to` streams the tail of the size distribution straight to disk --
+    Playwright cannot return anything past ~384 MB, so a 423 MB supplement has no
+    in-memory form to hand to `save_file` at all -- and this is what then files it
+    under the article's numbering.
+
+    Returns the same three keys `save_file` does, so `_write_group` does not care
+    which path produced an entry.
+
+    **Measured here rather than trusted from the downloader.** The digest could
+    have been passed in -- `download_to` already computed one over the same chunks
+    it wrote -- and re-reading a 423 MB file costs a second or two. It is measured
+    anyway because these two are the only descriptions of the bytes that will ever
+    exist: `sha256` is what `orphans.classify` uses to decide a file is stored
+    nowhere else, and a digest of what was *streamed* rather than of what is *on
+    disk* would diverge the moment a move half-failed.
+
+    `replace` rather than `rename`, so a retry over a previous attempt's file
+    overwrites rather than raising on Windows; `shutil.move` rather than either
+    when the stage is on another filesystem, which it is not today (the stage is a
+    sibling temp file in the article directory, chosen precisely so the move is
+    atomic) but would be the moment someone points a temp dir elsewhere.
+    """
+    staged = Path(staged)
+    target = Path(directory) / relative_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if staged.resolve() != target.resolve():
+        shutil.move(str(staged), str(target))
+
+    digest = hashlib.sha256()
+    with open(target, "rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(block)
+    return {
+        "path": relative_path,
+        "bytes": target.stat().st_size,
+        "sha256": digest.hexdigest(),
     }
 
 
