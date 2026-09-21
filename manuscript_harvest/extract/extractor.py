@@ -557,7 +557,8 @@ def extract_bytes(
             # Split out of `LEGACY_DOC_EXTENSIONS` because that set's argument --
             # reading these means a system converter -- is true of `.doc` and was
             # never true of RTF, which is ASCII control words and brace groups.
-            # See `rtf.py`. The other seven extensions keep the refusal.
+            # See `rtf.py`. `.doc` left the set next, for the reason in
+            # `docfile.py`, so the six office formats below keep the refusal.
             text, status, meta = rtf.text_from_rtf(data)
             if status != OK:
                 return result(status, [], "rtf", meta, note=meta.get("reason"))

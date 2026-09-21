@@ -669,14 +669,14 @@ of the stage as the blocks are: a thin extraction has to be legible.
 | `image_no_text` | a figure image; no extractable text (a vision pass would be needed) |
 | `media_no_text` | audio or video |
 | `data_file_skipped` | binary or columnar data (`.h5ad`, `.bam`, …), not prose |
-| `ok_via_ocr` | the pages are scans and OCR read them: weaker evidence than a text layer |
+| `ok_via_ocr` | the text layer was absent or broken and OCR read the pages: weaker evidence than a text layer |
 | `no_text_scanned_pdf` | the pages are scans and OCR did not run or found nothing legible |
 | `no_text` | readable and genuinely empty, or everything inside was capped out |
-| `unsupported_format` | no parser (`.doc`, `.rtf`, `.pptx`, `.7z`, `.rar`) |
+| `unsupported_format` | no parser (`.pptx`, `.ppt`, `.odt`, `.ods`, `.key`, `.pages`, `.7z`, `.rar`) |
 | `too_large` | over `max_file_mb`, or a member over `max_member_mb`; recorded, not read |
 | `missing` | in the manifest but not on disk |
 | `unreadable` | corrupt, or a parser named its own failure |
-| `garbled_text_encoding` | draws correctly and cannot be read: its fonts never say what their glyphs mean |
+| `garbled_text_encoding` | draws correctly and its fonts never say what their glyphs mean, and OCR could not recover it either |
 | `parser_error` | a parser raised; the file is named and the run continues |
 
 The article is `complete` when the main text is usable and every file that should
@@ -743,12 +743,20 @@ really is a glyph id there. Measured over the 972 PDFs in this corpus: 183 have 
 font with a gap in its CMap, and exactly one of them comes out with different text —
 the Science supplement. The other 182 gaps are for glyphs their documents never draw.
 
-**Where it cannot be repaired, it is reported.** 10.1038/s41588-024-01702-0's
-reporting summary has 6,869 glyphs and no character behind any of them: CID-keyed
-CFF subsets, identity ordering, no ToUnicode, no character map, glyph names of the
-form `cid00042`. Nothing in that file says what its glyphs mean, so reading it would
-be a guess. It gets the status, its blocks are dropped rather than written out as
-prose, and the article goes `partial`.
+**Where it cannot be repaired, it is reported — and then OCR'd.**
+10.1038/s41588-024-01702-0's reporting summary has 6,869 glyphs and no character
+behind any of them: CID-keyed CFF subsets, identity ordering, no ToUnicode, no
+character map, glyph names of the form `cid00042`. Nothing in that file says what
+its glyphs mean, so reading its text layer would be a guess. MuPDF's blocks are
+dropped for exactly that reason — they are its fallback for codes it could not map,
+which is the `TheVe VWXdLeV` above — and the page images go to OCR instead, because
+a file whose *only* defect is its text layer is what OCR is for. This one comes back
+`ok_via_ocr` with 7,200 characters off three pages and the article reads `complete`,
+but the glyph count stays on the record in `glyphs_unnamed`, and the content is worth
+knowing about: it is Nature Reporting Summary tickboxes, so what OCR recovered is
+`=) °= c nature portfolio` and boilerplate about editorial policy rather than
+methods. The status says the evidence is weaker than a text layer; it does not
+promise the text was worth having.
 
 The rule asks the *document*, through the count of glyphs MuPDF could not name, and
 not the prose. "This text has no English function words in it" flags 26 files in
@@ -1349,12 +1357,13 @@ itself twice on its first run, producing the low-value-heading rule and the
 
 Deliberate non-goals first — scope commitments, not gaps:
 
-- **No vision pass**, and OCR only for pages that carry no text layer at all.
-  Since `fetch.text_bearing_only` a figure image is not even fetched — 47% of the
-  supplementary entries in this corpus were files no text can be extracted from — and
-  the ones already stored are removed by `drop-media`, which keeps their names, sizes
-  and hashes. Set the key to `false` to keep fetching them. OCR is not the exception
-  to that: it reads the 70 *PDFs* that are scans, needs `tesseract` installed, and
+- **No vision pass**, and OCR only for pages whose text layer is absent or proven
+  broken. Since `fetch.text_bearing_only` a figure image is not even fetched — 47% of
+  the supplementary entries in this corpus were files no text can be extracted from —
+  and the ones already stored are removed by `drop-media`, which keeps their names,
+  sizes and hashes. Set the key to `false` to keep fetching them. OCR is not the
+  exception to that: it reads *PDFs* — 71 files here, 68 of them scans and three
+  whose fonts do not say what their glyphs mean — needs `tesseract` installed, and
   marks what it produces `ok_via_ocr` rather than `ok`. Nothing here looks at a
   figure and describes it.
 - **No table structure recovered from PDFs.** `page.find_tables()` exists, but a
@@ -1381,24 +1390,48 @@ Deliberate non-goals first — scope commitments, not gaps:
 
 Gaps and dead ends, each with the detail at the code that handles it:
 
-- **No parser for `.doc`, `.rtf` or `.pptx`, and that is a decision rather than a
-  gap.** Three `.rtf` totalling 1.7 MB and one 23.3 MB `.doc` in this corpus, and
-  reading them means an external converter per format — `unrtf` for one, `antiword`
-  or `catdoc` for the other — so two system dependencies for four files. Compare the
-  two calls made next to it: `xlrd` stopped being optional when the `.xls` count came
-  out at 56 files and 129 MB, and the tar and gzip readers cost nothing but standard
-  library for six files and 107 MB. Four files behind two system dependencies is
-  neither, and `unsupported_format` already queues the file for a human who can open
-  it in any word processor. `.7z` and `.rar` are refused for the same reason with a
-  smaller number: zero files.
+- **`.rtf` and `.doc` are read now; `.pptx` and six other office formats still
+  refuse, and that part is a decision rather than a gap.** All four files used to be
+  `unsupported_format` on one argument — reading them means an external converter, so
+  two system dependencies for four files — and that argument turned out to be true of
+  one format and false of the other. RTF is not a binary container: it is 7-bit ASCII
+  control words and brace groups, so `unrtf` is a convenience rather than a
+  requirement and the corpus's three files (1.7 MB) parse with the stdlib
+  (`rtf.py`). `.doc` really is an OLE2 container, and it was still done with the
+  stdlib because the alternative is a sixth hard dependency for one 23.3 MB file
+  (`docfile.py`) — and because a `strings` pass is *not* the same thing: Word keeps
+  field codes in the text stream, so scanning this exact file yields
+  `ADDIN EN.CITE <EndNote>...` between 25 of its 134 runs and loses paragraph order.
+  Reading the piece table fixes both. What neither does is tables-as-tables: a `.rtf`
+  row arrives as delimited text, not a `TableCard`. The six left in
+  `LEGACY_DOC_EXTENSIONS` — `.pptx`, `.ppt`, `.odt`, `.ods`, `.key`, `.pages` — keep
+  the refusal at zero files each, and `unsupported_format` still queues one for a
+  human who can open it in any word processor. `.7z` and `.rar` are refused the same
+  way, on the same count.
 - Archives other than zip **are** read now — `.tar`, `.tgz` and single-file
   `.gz`/`.bz2`/`.xz`, on content rather than on the suffix, because the one `.tgz`
   here is an uncompressed tar and three of the five `.gz` files are one CSV each.
-- **`garbled_text_encoding` is not OCR'd, and it is the better candidate.** Those
-  two files render perfectly and only their text layer is broken, which is exactly
-  what OCR is for — but the measurement behind the OCR pass is the 70 scanned files,
-  and a status meaning "the fonts do not say what their glyphs are" should not start
-  sometimes meaning "and we OCR'd it anyway" without its own measurement
+- **`.gmt` is read as the delimited file it is**, alongside `.csv` and `.tsv`. Gene
+  Matrix Transposed is tab-separated, one gene set per line. It had been skipped on
+  extension, and the archive holding `10.1016/j.ccell.2021.09.008`'s 1.1 MB
+  `Data S1.gmt` therefore reported `no_text` — said of a file that is nothing but
+  text. The rows are gene symbols rather than prose, so this buys a table card and a
+  set name, not a methods section; the reason to do it is that the old answer was
+  false, not that the content is rich.
+- **`garbled_text_encoding` is OCR'd now, and what is left is the page cap.** Those
+  files render perfectly and only their text layer is broken, which is exactly what
+  OCR is for; the pass was refused twice before it earned the extension, and the
+  second refusal named its own condition for revisiting — "a garbled file that is
+  prose, under the page cap, and load-bearing". One turned up two of three ways:
+  `10.1164/rccm.202207-1384oc`'s data supplement is the Online Methods for a paper
+  whose supplements no tier in this package can fetch. No file in this corpus is
+  `garbled_text_encoding` any more, and the three that were are `ok_via_ocr`. But two
+  of those three are *over* `extract.max_ocr_pages` (25), so they carry the first 25
+  pages of 55 and of 337 and say so in their `reason` — a truncation the review queue
+  can see rather than a clean read. The blocks MuPDF produced are deliberately
+  discarded when OCR succeeds: for a scanned page they are the few real characters
+  it yielded, but here they are its fallback for codes it could not map, which is
+  how 192 paragraphs of `TheVe VWXdLeV` got into a corpus in the first place
   (`pdf._ocr_pass`).
 - **Table structure is still not recovered from PDFs**, OCR'd or not. A scanned
   supplementary table yields its cell text as paragraphs — searchable, not a card.
@@ -1419,10 +1452,21 @@ Gaps and dead ends, each with the detail at the code that handles it:
   input including its own example IDs (`pmc_supplements.py`).
 - Publisher supplement URL construction is implemented only for Springer/Nature;
   others fall back to the browser tier.
-- Files over `fetch.max_file_mb` are recorded, not fetched. Independently, the
-  browser transport cannot return anything near ~512 MB because Playwright marshals
-  bodies as strings — raising the cap will not help, and the failure says to fetch
-  by hand.
+- Files over `fetch.max_file_mb` are recorded, not fetched — that cap is a number
+  someone chose. Independently there is a wall nobody chose: Playwright's Node driver
+  marshals a response body as a **base64 string**, so it dies at V8's `0x1fffffe8`
+  string cap, which is 536,870,888 base64 characters and therefore only about **384
+  MB of actual file**. This file used to call that ~512 MB, and the arithmetic is not
+  pedantry — it is why a 423 MB supplement failed a `max_file_mb: 500` cap it was
+  nowhere near. Raising the cap still cannot help. **It no longer means fetching by
+  hand, though:** `_download_streamed` writes bodies past `_TRANSPORT_SAFE_BYTES`
+  (300 MB, leaving headroom for a Content-Length that understates the body) straight
+  to disk over `requests`, carrying the browser's cookies, and `_download_one` routes
+  there on the Content-Length pre-flight rather than reaching the wall at all. What
+  still fails is the case the pre-flight cannot see: a server that sends no
+  Content-Length, so the size is unknown until the binding dies. That one is a retry,
+  and the failure names the route rather than resignation
+  (`proxy_browser._transport_failure`).
 - `hasSuppl` is trusted for indexed journal articles but **not** for preprints or
   articles Europe PMC does not hold, both of which report `N` over files that exist
   (`fetcher.suppl_flag_is_authoritative`).
