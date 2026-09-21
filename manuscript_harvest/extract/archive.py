@@ -100,6 +100,24 @@ def _line_bounded(chunk: bytes) -> bytes:
     return chunk[:cut + 1] if cut != -1 else chunk
 
 
+def _looks_like_text(chunk: bytes) -> bool:
+    """Is this prefix line-oriented text worth sampling, or opaque bytes?
+
+    Asked of a decompressed prefix, where no filename is available to ask instead.
+    Two tests, both cheap and both about the same thing: a NUL byte does not occur
+    in the text formats this stage reads, and a payload with no newline in its
+    first megabytes is not row-oriented whatever else it is -- so a prefix of it
+    would be a fragment rather than a sample.
+    """
+    if not chunk or b"\x00" in chunk[:65536]:
+        return False
+    if b"\n" not in chunk[:1 << 20]:
+        return False
+    sample = chunk[:65536]
+    printable = sum(1 for b in sample if 9 <= b <= 13 or 32 <= b <= 126 or b >= 128)
+    return printable / len(sample) > 0.9
+
+
 def _is_junk(name: str) -> bool:
     """A member the container's own tooling added, not content.
 
@@ -414,6 +432,23 @@ def decompress(data: bytes, limits: Limits) -> Tuple[Optional[bytes], str, dict]
                       f"(`max_member_mb`)")
             if claimed is not None and claimed > cap:
                 reason += f"; the gzip trailer declares {claimed} bytes"
+            # The cap's worth already decompressed is not waste if the payload is
+            # row-oriented text: the first N lines of a TSV are the first N rows of
+            # its table, and a card is capped at `max_scan_rows` anyway. The same
+            # reasoning as the oversize-member prefix in `read_members`, applied to
+            # the sibling path -- `10.1126/science.adf5357`'s Table_7 is 38 MB on
+            # disk and 329 MB of TSV, and refusing it outright threw away a read
+            # that had already happened.
+            #
+            # Decided on the bytes, not on a name: a `.gz` wrapper hides the inner
+            # extension (this one unwraps to `Table_7`, no suffix at all), and the
+            # prefix is right here to look at.
+            prefix = _line_bounded(b"".join(chunks))
+            if _looks_like_text(prefix):
+                return prefix, OK, {**meta, "reason": reason,
+                                    "truncated": [{"name": "(decompressed stream)",
+                                                   "bytes_read": len(prefix),
+                                                   "member_bytes": claimed}]}
             return None, TOO_LARGE, {**meta, "reason": reason}
         if not engine.eof:
             # Fewer bytes than asked for and the stream never ended: the input ran

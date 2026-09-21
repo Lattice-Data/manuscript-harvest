@@ -3184,3 +3184,30 @@ def test_the_dispatcher_sends_rtf_to_the_parser_and_doc_to_the_refusal():
 
     assert ok.status == "ok" and "Islets were dissociated" in ok.blocks[0].text
     assert refused.status == "unsupported_format"
+
+
+def test_an_oversize_compressed_stream_is_sampled_rather_than_discarded():
+    """The cap's worth was already decompressed by the time the file was refused.
+    `10.1126/science.adf5357`'s Table_7 is 38 MB on disk and 329 MB of TSV, and
+    throwing that read away bought nothing."""
+    payload = b"gene,score\n" + b"".join(b"G%08d,%d\n" % (n, n) for n in range(120000))
+    assert len(payload) > 1024 * 1024, "must exceed the 1 MB cap used below"
+    data = make_gz(payload)
+
+    plain, status, meta = archive.decompress(data, Limits(max_member_mb=1))
+
+    assert status == "ok"
+    assert plain.endswith(b"\n") and b"gene,score" in plain
+    assert len(plain) < len(payload), "a prefix, not the whole file"
+    assert meta["truncated"][0]["bytes_read"] == len(plain)
+
+
+def test_an_oversize_binary_stream_is_still_refused():
+    """Sampling is only honest for row-oriented text; decided on the bytes because
+    a `.gz` hides the inner name -- adf5357's unwraps to `Table_7`, no suffix."""
+    data = make_gz(b"\x00\x01\x02\x03" * 40000)
+
+    plain, status, meta = archive.decompress(data, Limits(max_member_mb=0))
+
+    assert status == "too_large" and plain is None
+    assert "truncated" not in meta

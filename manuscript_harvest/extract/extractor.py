@@ -782,6 +782,12 @@ def _extract_compressed(data: bytes, relative_path: str, limits: Limits, role: s
         origin_prefix=f"{meta['compression']}:", depth=depth + 1, overrides=overrides,
     )
     note = f"{meta['compression']} wrapper around one file, {name}"
+    if meta.get("truncated"):
+        # Same three-places rule the archive path follows: a card from the head of
+        # a 329 MB stream is indistinguishable from one built off a whole table.
+        read, whole = meta["truncated"][0]["bytes_read"], meta["truncated"][0]["member_bytes"]
+        note += (f"; read as a prefix -- {read} of {whole} bytes, so the card "
+                 f"describes the head of the file and not all of it")
     if meta.get("truncated_stream"):
         note += "; the compressed stream is truncated, so this is a partial read"
     if inner.note:
