@@ -277,16 +277,34 @@ development scaffolding, not the product. It keeps working and it stays in
 6. **`pe/` renamed to `harness/`.**
 7. **Ground truth lives in `criteria/`**, beside the criteria it constrains.
 
-## One thing left hanging
+## The pack hash, and how it was cleared
 
-`pack_sha256` covers `criteria/prompt.md` and `task/*`. The rename and the move
-both changed it — from `e598d73e` on 2026-09-20 to `1da18023` now — while
-changing no rule. The 392 stored records carry the old hash, so a future
-re-validation will report *"MIXED PACK HASHES at the same task_version — the
-rules changed without the version being bumped"*, which would be false.
+`pack_sha256` covers `criteria/prompt.md` and `task/*`, and it hashes paths as
+well as contents. The rename and the move both changed it — `e598d73e` before,
+`017cc03d` now — while changing no rule. The 392 stored records carried the old
+value, so a re-validation would have reported *"MIXED PACK HASHES at the same
+task_version — the rules changed without the version being bumped"*, which would
+have been false.
 
-Nothing fails today: the hash is recorded per record and the only consumer warns
-when two appear in one run. Re-validating the corpus would clear it and costs no
-model time, because it reads the stored raw responses. **Verified inert**: the
-spliced prompt the model receives is byte-identical before and after this
-reorganisation, `sha256 53443e91…`, 85,939 characters.
+**Cleared on 2026-09-21 by re-validating, which costs no model time.**
+`harness.validate` re-reads the stored raw responses; there is no second run and
+no extraction. Both runs the corpus is made of had to be replayed, in order:
+
+    harness.validate --work <run-root>/work-corpus-v0025-r1 --write-corpus
+    harness.validate --work <run-root>/work-glyphfix-17     --write-corpus
+
+**The order is the trap.** The corpus is not one run's output. 375 records come
+from `work-corpus-v0025-r1` and 17 from `work-glyphfix-17`, which re-scored the
+papers the PDF glyph repair actually moved. Re-validating only the first would
+have silently reverted those 17 to their pre-glyph-fix answers — a regression
+with no error message, in a directory git does not track.
+
+**Result: 0 of 392 determinations moved**, and Stage A, the Stage B cap and the
+model's own answer are unchanged on every paper. 123 yes, 261 no, 7 unclear, 1
+not applicable, before and after. The corpus and the pack now agree on
+`017cc03d`.
+
+That zero is the evidence the whole reorganisation was inert. It is a stronger
+statement than the byte-identical prompt on its own, because it exercises the
+pack loader, the validator and the decision rules rather than only the text
+handed to the model.
