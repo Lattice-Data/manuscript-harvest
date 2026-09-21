@@ -192,7 +192,7 @@ def test_the_confusion_matrix_can_name_the_new_value():
 
 @pytest.fixture(scope="module")
 def gate_text():
-    spec = (Path(__file__).resolve().parent.parent / "prompt.md").read_text()
+    spec = (Path(__file__).resolve().parent.parent / "criteria" / "prompt.md").read_text()
     start = spec.index("### Step 0b:")
     return spec[start:spec.index("## Step 1:")]
 

@@ -87,7 +87,7 @@ So: where collection contents and the paper disagree, **the curator overrides th
 pipeline**, and that override is not a pipeline defect. If the determination ever
 needs to follow the deposited data, the collection manifest has to become a
 second input to the run — a pipeline change, not a criteria change. Ruling 23 in
-`CURATOR-RULINGS.md` holds the case.
+`criteria/rulings.md` holds the case.
 
 A related consequence, decided in the same batch: a paper that reanalyses or
 integrates other groups' public data **is** primary research, and perturbed
@@ -356,7 +356,7 @@ python -m harness.compare --baseline <old_run_dir>   # version-to-version diff
 
 ## Changing the criteria
 
-**Read `CURATOR-RULINGS.md` first.** It records every determination the curator
+**Read `criteria/rulings.md` first.** It records every determination the curator
 made by reading the paper, with the reasoning. Check whether a ruling already
 constrains the criterion you are about to edit, and use those papers as the first
 acceptance-set candidates. Where a ruling and `prompt.md` disagree, that is a bug

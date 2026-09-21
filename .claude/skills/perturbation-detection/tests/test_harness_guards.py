@@ -683,7 +683,7 @@ def test_prepare_strips_comments_rather_than_only_blank_lines():
 
 def _acceptance_set_ids():
     skill = Path(__file__).resolve().parent.parent
-    listing = skill / "papers-accept-v0023.txt"
+    listing = skill / "history" / "sets" / "papers-accept-v0023.txt"
     assert listing.is_file(), "the v0.0.23 acceptance set is missing"
     dois = [ln.split("#", 1)[0].strip() for ln in listing.read_text().splitlines()]
     return skill, [d for d in dois if d]

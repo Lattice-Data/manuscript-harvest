@@ -39,6 +39,14 @@ from harness.validate import (  # noqa: E402
 )
 from harness.pack import PackError, TaskPack, load as load_pack, pack_files, pack_sha256  # noqa: E402
 
+
+def _spec_dir(base):
+    """Where `PACK_GLOBS` looks for the spec. A fixture that writes it
+    anywhere else builds a pack whose spec is not hashed."""
+    d = base / "criteria"
+    d.mkdir(exist_ok=True)
+    return d
+
 ROOT = Path(__file__).resolve().parent.parent
 SEMVER = re.compile(r"\b\d+\.\d+\.\d+\b")
 
@@ -140,13 +148,13 @@ def test_the_version_line_reader_still_works(pack):
 
 def test_the_pack_hash_covers_the_spec_and_the_pack_files(pack):
     names = {p.relative_to(ROOT).as_posix() for p in pack_files(ROOT)}
-    assert "prompt.md" in names
+    assert "criteria/prompt.md" in names
     assert "task/task.yaml" in names
     assert not any("__pycache__" in n for n in names)
 
 
 def test_the_hash_moves_when_a_rule_moves(tmp_path):
-    spec = tmp_path / "prompt.md"
+    spec = _spec_dir(tmp_path) / "prompt.md"
     spec.write_text("Version: {{TASK_VERSION}}\nrule one\n")
     (tmp_path / "task").mkdir()
     (tmp_path / "task" / "task.yaml").write_text("name: t\nversion: 0.0.1\n")
@@ -162,7 +170,7 @@ def test_the_hash_does_not_depend_on_where_the_skill_is_checked_out(tmp_path):
     a, b = tmp_path / "a", tmp_path / "b"
     for base in (a, b):
         (base / "task").mkdir(parents=True)
-        (base / "prompt.md").write_text("Version: {{TASK_VERSION}}\nrule\n")
+        (_spec_dir(base) / "prompt.md").write_text("Version: {{TASK_VERSION}}\nrule\n")
         (base / "task" / "task.yaml").write_text("name: t\nversion: 0.0.1\n")
     assert pack_sha256(a) == pack_sha256(b)
     shutil.rmtree(b)
@@ -172,7 +180,7 @@ def test_moving_a_rule_between_files_changes_the_hash(tmp_path):
     """Contents alone are not enough: a file split conserves the bytes and still
     changes where a reader has to look, so the path is hashed too."""
     (tmp_path / "task").mkdir()
-    (tmp_path / "prompt.md").write_text("Version: {{TASK_VERSION}}\n")
+    (_spec_dir(tmp_path) / "prompt.md").write_text("Version: {{TASK_VERSION}}\n")
     (tmp_path / "task" / "task.yaml").write_text("name: t\nversion: 0.0.1\nrule: x\n")
     before = pack_sha256(tmp_path)
     (tmp_path / "task" / "task.yaml").write_text("name: t\nversion: 0.0.1\n")
@@ -194,7 +202,7 @@ def test_a_missing_pack_is_an_error_not_a_default(tmp_path):
 @pytest.mark.parametrize("field", ["name", "version", "spec"])
 def test_an_incomplete_pack_names_the_missing_field(field):
     config = {"name": "t", "version": "0.0.1",
-              "spec": {"path": "prompt.md",
+              "spec": {"path": "criteria/prompt.md",
                        "anchors": {"instruction": "a", "schema_start": "b",
                                    "schema_end": "c"},
                        "placeholders": {"paper_id": "{{P}}", "paper_text": "{{T}}",

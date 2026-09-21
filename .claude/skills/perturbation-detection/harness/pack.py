@@ -78,7 +78,7 @@ def spec_version_line(spec_md: Path) -> str:
 #: Neither is this module, which is why `task/*.py` reads as "the rule modules"
 #: rather than "everything in task/": the loader moved out of the pack precisely
 #: because it is not a rule.
-PACK_GLOBS = ("prompt.md", "task/*.yaml", "task/*.py")
+PACK_GLOBS = ("criteria/prompt.md", "task/*.yaml", "task/*.py")
 
 
 class PackError(Exception):
@@ -128,7 +128,7 @@ class TaskPack:
         self.name = str(config["name"])
         self.version = str(config["version"])
         spec = config["spec"]
-        self.spec_path = root / str(spec.get("path") or "prompt.md")
+        self.spec_path = root / str(spec.get("path") or "criteria/prompt.md")
         self.anchors = dict(spec.get("anchors") or {})
         self.placeholders = dict(spec.get("placeholders") or {})
         self.read_back_marker = str(spec.get("read_back_marker") or "\nPAPER_TEXT:")

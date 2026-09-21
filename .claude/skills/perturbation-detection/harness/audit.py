@@ -92,7 +92,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--work", default=str(work_default()))
     parser.add_argument("--out", default=str(output_default(output_name("review_txt"))))
-    parser.add_argument("--prompt", default=str(ROOT / "prompt.md"))
+    parser.add_argument("--prompt", default=str(ROOT / "criteria" / "prompt.md"))
     args = parser.parse_args()
 
     run = load_validated(Path(args.work))

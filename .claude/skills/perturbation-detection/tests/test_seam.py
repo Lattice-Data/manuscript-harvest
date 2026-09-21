@@ -185,7 +185,7 @@ def test_every_rule_bearing_file_is_in_the_pack_hash():
     """A rule the hash does not cover is a rule two runs can differ on silently."""
     from harness.pack import pack_files
     covered = {p.relative_to(ROOT).as_posix() for p in pack_files(ROOT)}
-    expected = {"prompt.md"} | {f"task/{f}" for f in TABLE_FILES.values()} | {
+    expected = {"criteria/prompt.md"} | {f"task/{f}" for f in TABLE_FILES.values()} | {
         "task/rules.py", "task/report.py", "task/screens.py", "task/change.py",
         "task/task.yaml"}
     assert expected <= covered, f"not hashed: {sorted(expected - covered)}"

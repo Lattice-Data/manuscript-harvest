@@ -92,7 +92,7 @@ outputs:
 # prompt must satisfy: they were five bare string literals across two modules,
 # and a prompt missing one died on an unmessaged ValueError.
 spec:
-  path: prompt.md
+  path: criteria/prompt.md
   anchors:
     instruction: "## Instruction prompt"
     schema_start: "## Output schema"

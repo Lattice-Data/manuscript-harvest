@@ -457,7 +457,7 @@ def main() -> int:
     parser.add_argument("--threshold", type=float, default=None,
                         help="overrides config.yaml fuzzy_match.threshold")
     parser.add_argument("--config", default=str(ROOT / "config.yaml"))
-    parser.add_argument("--prompt", default=str(ROOT / "prompt.md"))
+    parser.add_argument("--prompt", default=str(ROOT / "criteria" / "prompt.md"))
     parser.add_argument("--corpus", default=None,
                         help="the corpus tree, required with --write-corpus; "
                              "overrides config.yaml corpus_dir, which has no "

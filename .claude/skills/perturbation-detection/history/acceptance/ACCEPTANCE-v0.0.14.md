@@ -93,7 +93,7 @@ governing question explicitly:
 > the drug."
 
 That is the reasoning of curator ruling 2 reached from the written rule rather
-than in spite of it, which is the property `CURATOR-RULINGS.md` says not to rely
+than in spite of it, which is the property `../../criteria/rulings.md` says not to rely
 on. It reports `unclear` rather than `no` only because the text is partial and
 Stage B caps the negative — and it carries `would_have_paired: "yes"`, so it
 **routes to the review queue for a curator to ratify instead of flipping

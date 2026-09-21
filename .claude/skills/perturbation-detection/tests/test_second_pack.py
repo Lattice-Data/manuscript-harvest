@@ -63,6 +63,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from harness.pack import tables  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def _spec_dir(base):
+    """Where `PACK_GLOBS` looks for the spec. A fixture that writes it
+    anywhere else builds a pack whose spec is not hashed."""
+    d = base / "criteria"
+    d.mkdir(exist_ok=True)
+    return d
 yaml = pytest.importorskip("yaml")
 
 
@@ -278,13 +286,13 @@ def _copy_harness(base: Path) -> None:
 def _minimal_pack(base: Path) -> None:
     """A pack with NO secondary array and NO ref arrays -- the shape that broke."""
     (base / "task").mkdir(parents=True)
-    (base / "prompt.md").write_text(_MINIMAL_SPEC)
+    (_spec_dir(base) / "prompt.md").write_text(_MINIMAL_SPEC)
     (base / "task" / "task.yaml").write_text(yaml.safe_dump({
         "name": "minimal", "version": "0.0.1",
         "outputs": {"run_root_subdir": "minimal", "env_var": "MINIMAL_RUN_ROOT",
                     "per_paper_file": "answer.json", "summary_csv": "s.csv",
                     "review_txt": "r.txt", "diff_txt": "d.txt"},
-        "spec": {"path": "prompt.md",
+        "spec": {"path": "criteria/prompt.md",
                  "anchors": {"instruction": "## Instruction prompt",
                              "schema_start": "## Output schema",
                              "schema_end": "## Toggle decisions"},

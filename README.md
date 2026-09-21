@@ -1332,17 +1332,22 @@ sort to the top of the review queue.
 
 The skill is split so the judgment can be swapped without touching the machinery:
 
-    JUDGMENT   task/    the spec + four lookup tables — "what counts, how to
-                        decide, what to read first, what counts as a change"
-    PLUMBING   pe/      assemble sources, splice the prompt, one call per paper,
+    JUDGMENT   criteria/ + task/   the spec, the curator ground truth, and four
+                        lookup tables — "what counts, how to decide, what to
+                        read first, what counts as a change"
+    PLUMBING   harness/  assemble sources, splice the prompt, one call per paper,
                         verify every quote, prune, recompute, tabulate, diff
     TEXT       manuscript_harvest   this package
 
-`pe/` is 3,535 lines that name the task **nowhere in code**, and the skill's own
-`tests/test_seam.py` — under `.claude/skills/perturbation-detection/`, not this
-repo's `tests/` — holds that line by tokenising every module and rejecting a
-task word in any identifier, string or key. It was not always so: `pe/` was
-1,038 task lines against 1,185 generic ones, interleaved inside four files.
+`harness/` is 3,535 lines that name the task **nowhere in code**, and the skill's
+own `tests/test_seam.py` — under `.claude/skills/perturbation-detection/`, not
+this repo's `tests/` — holds that line by tokenising every module and rejecting
+a task word in any identifier, string or key. It was called `pe/` until
+2026-09-21 — an undocumented abbreviation of *perturbation extraction*, which is
+the one thing that layer is meant not to know, and which the seam test could not
+catch because a directory name is not inside a file. It was not always
+task-blind either: it was 1,038 task lines against 1,185 generic ones,
+interleaved inside four files.
 Moving them out changed nothing measurable — all 392 records re-validated with
 zero differing beyond the pack hash, and three text outputs came out
 byte-identical — which is the only evidence that a refactor of that size was a
@@ -1350,9 +1355,10 @@ refactor.
 
 **The seam has been tested by swapping.** A second pack answering "which tissue
 did the sequenced material come from?" runs on this corpus through a
-byte-identical `pe/`, for 867 lines of pack against 3,535 of harness it does not
-touch — where the perturbation pack it replaces is 2,972. The first attempt did not
-run at all, and the five fixes it forced are the reason the claim is worth anything.
+byte-identical harness, for 867 lines of pack against 3,535 it does not touch —
+where the perturbation pack it stands in for is 2,972. The first attempt did not
+run at all, and the five fixes it forced are the reason the claim is worth
+anything.
 
 The pack also carries **one version**. `prompt_version` and `schema_version`
 collapsed into `task_version`, declared once in `task/task.yaml` and spliced into
@@ -1364,10 +1370,11 @@ measured: at v0.0.12 three of four declaration sites were updated, the model
 split on the contradiction, and 386 of 392 records were filed with a spurious
 issue.
 
-Read `.claude/skills/perturbation-detection/SKILL.md` to run it, `prompt.md` in
-the same directory for the criteria — that file, not this one, is the source of
-truth for what counts as a perturbation — and `EXPLAINED.md` beside it for the
-whole thing in plain language with every number measured.
+Read `.claude/skills/perturbation-detection/SKILL.md` to run it,
+`criteria/prompt.md` for the criteria — that file, not this one, is the source of
+truth for what counts as a perturbation — `criteria/rulings.md` for the curator
+rulings that constrain them, and `MAP.md` for what every file in the skill is
+for, what it guarantees and what it does not.
 
 ## Tests
 
