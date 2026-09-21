@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Stage 2 from the terminal, one paper per `claude -p` call.
 #
-#   ./pe/run_headless.sh <work_dir> [N_PARALLEL]
+#   ./harness/run_headless.sh <work_dir> [N_PARALLEL]
 #
 # Why this works without an API key: `claude -p` (print/headless mode) uses the
 # same logged-in Claude Code session as the interactive app. There is no
@@ -12,12 +12,12 @@
 # across time. Override with PERTURBATION_MODEL=<id> for a one-off run.
 #
 # Reads work/manifest.json, skips papers that already have a result, and runs the
-# rest. Safe to re-run: it is the same idempotency rule `pe.pending` uses.
+# rest. Safe to re-run: it is the same idempotency rule `harness.pending` uses.
 set -uo pipefail
 
 # Default outside the skill directory: `claude -p` cannot write under
 # `.claude/` and exits 0 anyway, so a result written there is lost
-# silently. See pe/runroot.py. An explicit path is honoured verbatim.
+# silently. See harness/runroot.py. An explicit path is honoured verbatim.
 RUN_ROOT="${PERTURBATION_RUN_ROOT:-$HOME/.manuscript-harvest/perturbation}"
 WORK="${1:-$RUN_ROOT/work}"
 JOBS="${2:-3}"
@@ -64,14 +64,14 @@ run_one() {
     return 1
   fi
   # No `[ -s "$raw_file" ]` skip here. The queue below was computed with
-  # pe.pending.status_of, whose whole point is that a non-empty raw file is NOT
+  # harness.pending.status_of, whose whole point is that a non-empty raw file is NOT
   # enough -- it must parse, carry every required field, and match the manifest's
   # sources. A paper with a malformed result (seen in practice: one `claude -p`
   # call wrote JSON with a doubled closing quote) was therefore QUEUED here and
   # then unconditionally skipped, so the terminal path could never re-run it.
   # This function trusts the queue; only papers status_of called not-done reach it.
   if [ ! -f "$prompt_file" ]; then
-    echo "MISS  $doi (no prompt file -- run pe.prepare first)"
+    echo "MISS  $doi (no prompt file -- run harness.prepare first)"
     return 1
   fi
 
@@ -91,7 +91,7 @@ Reply with only the word DONE when the file is written."
 
   # `--output-format json` rather than `text`: the envelope carries usage,
   # total_cost_usd, num_turns and duration_api_ms, none of which the text form
-  # reports and all of which pe.usage otherwise has to reconstruct from CLI
+  # reports and all of which harness.usage otherwise has to reconstruct from CLI
   # transcripts. stdout and stderr are SPLIT -- merging them, as this did, would
   # interleave progress chatter into the JSON and leave neither parseable.
   # Kept on disk rather than a temp, and NOT deleted after it is folded into the
@@ -113,7 +113,7 @@ Reply with only the word DONE when the file is written."
       # results are attributable across machines and across time, but nothing
       # recorded it, so the pin bought no attribution at all. Written beside the
       # result rather than into it: the JSON is the model's own output and the
-      # harness does not edit it before pe.validate reads it.
+      # harness does not edit it before harness.validate reads it.
       printf '%s\n' "$MODEL" > "$work/meta/$doi.model"
       echo "OK    $doi"
     else
@@ -321,16 +321,16 @@ export -f run_one is_auth_failure is_usage_limit keep_envelope limit_message \
           envelope_verdict set_session_dead
 export PY
 
-# "Pending" means the same thing here as in pe.pending: a raw file existing
+# "Pending" means the same thing here as in harness.pending: a raw file existing
 # and non-empty is NOT enough -- it must parse and carry every required field.
 # A malformed write (seen in practice: one `claude -p` call produced JSON with
 # a doubled closing quote) is a non-empty file that a naive existence check
-# would treat as finished forever. Import pe.pending's own status_of rather
+# would treat as finished forever. Import harness.pending's own status_of rather
 # than re-implementing a weaker version of it.
 DOIS=$("$PY" - "$WORK" <<'PYEOF'
 import json, os, pathlib, sys
 sys.path.insert(0, os.getcwd())
-from pe.pending import status_of
+from harness.pending import status_of
 
 work = sys.argv[1]
 for e in json.load(open(os.path.join(work, "manifest.json"))):
@@ -339,7 +339,7 @@ for e in json.load(open(os.path.join(work, "manifest.json"))):
     # status_of(entry, work), not status_of(entry). Without `work` it falls back
     # to the manifest's recorded path strings, so a run directory that was moved
     # or copied -- which the acceptance protocol does -- is judged against the
-    # OLD directory while pe.pending uses the derived ones. The two disagreeing
+    # OLD directory while harness.pending uses the derived ones. The two disagreeing
     # about what is done is what `entry_paths` exists to prevent.
     state, _ = status_of(e, pathlib.Path(work))
     if state != "done":
@@ -350,8 +350,8 @@ PYEOF
   # pending" -- so a broken pack, or any import error, reported
   # "nothing to do ... every paper already has a result" and exited 0. Found by
   # running a second task pack whose record.yaml declares no secondary array:
-  # pe/validate.py raised IndexError at import and this script called it success.
-  # The same vacuous-pass shape pe/runstate.py exists to prevent, one layer up.
+  # harness/validate.py raised IndexError at import and this script called it success.
+  # The same vacuous-pass shape harness/runstate.py exists to prevent, one layer up.
   echo "FAILED to compute the pending list -- see the traceback above." >&2
   echo "  Nothing was run. This is NOT an empty queue." >&2
   exit 4
@@ -397,7 +397,7 @@ fi
 
 echo "running $COUNT paper(s), $JOBS at a time"
 echo
-# Teed into run.log because that is where ./pe/watch.sh looks for failures. It
+# Teed into run.log because that is where ./harness/watch.sh looks for failures. It
 # never existed, so watch.sh's "N failed" was hardcoded to 0 by accident -- a
 # progress display that could not report a problem.
 printf '%s\n' "$DOIS" | xargs -P "$JOBS" -I{} bash -c 'run_one "$@"' _ {} "$WORK" \
@@ -412,7 +412,7 @@ if [ -f "$WORK/.session-dead" ]; then
   echo "RUN ABORTED: $(cat "$WORK/.session-dead")"
   if grep -q 'USAGE LIMIT' "$WORK/.session-dead" 2>/dev/null; then
     echo "  Wait for the reset above, then re-run this exact command. Papers that"
-    echo "  aborted wrote no result at all, so pe.pending sees them as missing and"
+    echo "  aborted wrote no result at all, so harness.pending sees them as missing and"
     echo "  the re-run picks up only the gap."
   else
     echo "  Re-authenticate ('claude', then /login), then re-run this exact"
@@ -421,6 +421,6 @@ if [ -f "$WORK/.session-dead" ]; then
   echo
 fi
 echo "done. next:"
-echo "  $PY -m pe.pending  --work $WORK      # what still needs a rerun"
-echo "  $PY -m pe.validate --work $WORK --write-corpus"
-echo "  $PY -m pe.summarize --work $WORK"
+echo "  $PY -m harness.pending  --work $WORK      # what still needs a rerun"
+echo "  $PY -m harness.validate --work $WORK --write-corpus"
+echo "  $PY -m harness.summarize --work $WORK"

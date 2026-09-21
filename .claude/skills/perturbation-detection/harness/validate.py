@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Stage 3: verify evidence quotes source-by-source, prune, then recompute.
 
-    python -m pe.validate [--work work/] [--write-corpus]
+    python -m harness.validate [--work work/] [--write-corpus]
 
 prompt.md v0.0.5 batch spec step 6 changes this stage's job. Under v0.0.4 the
 validator only *flagged*: it checked quotes, downgraded confidence, and left the
@@ -31,10 +31,10 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from pe.paper_text import (  # noqa: E402
+from harness.paper_text import (  # noqa: E402
     _CONTROL_CHARS, split_assembled, verify_quote_sourced,
 )
-from pe.pack import (  # noqa: E402
+from harness.pack import (  # noqa: E402
     PackError, load as load_pack, read_back_marker, tables,
 )
 
@@ -43,8 +43,8 @@ try:
 except ImportError:
     yaml = None
 
-from pe.runroot import output_name, work_default  # noqa: E402
-from pe.runstate import (  # noqa: E402
+from harness.runroot import output_name, work_default  # noqa: E402
+from harness.runstate import (  # noqa: E402
     RunError, entry_paths, load_manifest, resolve_corpus, resolve_run_dir,
 )
 
@@ -168,7 +168,7 @@ def parse_raw(text: str) -> dict:
 def paper_text_from_prompt(prompt_file: Path, marker: str | None = None) -> str:
     """Recover exactly the PAPER_TEXT the model saw, so validation is honest.
 
-    `marker` is the pack's `spec.read_back_marker` -- the line `pe.prepare` wrote
+    `marker` is the pack's `spec.read_back_marker` -- the line `harness.prepare` wrote
     before the paper text. It was hardcoded here as `"\nPAPER_TEXT:"` while
     `task.yaml` declared it and `pack.py` parsed it into
     `TaskPack.read_back_marker`, which **nothing read**. A dead pack key looks
@@ -178,7 +178,7 @@ def paper_text_from_prompt(prompt_file: Path, marker: str | None = None) -> str:
     readily as against the paper.
 
     Defaulted rather than required only so the tests that call this with a
-    hand-built prompt stay readable; every caller in `pe/` passes the pack's
+    hand-built prompt stay readable; every caller in `harness/` passes the pack's
     value. The default is `read_back_marker()`, which comes from the pack too.
     """
     body = prompt_file.read_text()
@@ -227,7 +227,7 @@ def record_version(result: dict, run_version: str | None = None) -> tuple[str | 
 def model_of(work: Path, doi: str) -> str | None:
     """Which model produced this paper's raw result, if the runner recorded it.
 
-    `pe/run_headless.sh` pins the model so results are attributable across
+    `harness/run_headless.sh` pins the model so results are attributable across
     machines and across time, and wrote that pin nowhere -- so the record could
     not answer "which model said this", the only question the pin exists to make
     answerable. The runner writes it beside the result rather than into it,
@@ -281,7 +281,7 @@ def validate_result(result: dict, sources_text: dict[str, str], threshold: float
         # failure the version collapse was undertaken to remove: `issues` is
         # where real problems surface, and one entry on every paper makes the
         # column unreadable. The fact is recorded structurally in
-        # `validation.task_version_source` and tallied by pe.summarize, which is
+        # `validation.task_version_source` and tallied by harness.summarize, which is
         # the same lesson `suppressed_candidates` taught -- a per-paper note is
         # neither enforceable nor countable; a structured field plus a corpus
         # counter is both.
@@ -307,7 +307,7 @@ def validate_result(result: dict, sources_text: dict[str, str], threshold: float
         result["text_completeness"] = "truncated"
         result["text_completeness_source"] = "harness"
 
-    # The truncation ladder ran out. pe.prepare wrote this into the manifest and
+    # The truncation ladder ran out. harness.prepare wrote this into the manifest and
     # nothing read it, so the flag was decoration: both papers that hit it on the
     # 392-paper run were capped at "unclear"/degraded_text like any truncated
     # paper and sorted to triage P4 -- "route to re-fetch, not to reading", which
@@ -356,7 +356,7 @@ def validate_result(result: dict, sources_text: dict[str, str], threshold: float
     # determination has to meet its parent's evidence standard or it degenerates
     # into an emphasis marker -- the v0.0.10 lesson, applied to the gate.
     # `withheld` is passed rather than read back off the record: the field it
-    # lands in is the PACK's to name, and `pe/` requiring a symbol only one pack
+    # lands in is the PACK's to name, and `harness/` requiring a symbol only one pack
     # defines is leak 1 of `test_second_pack.py` -- which is exactly how this was
     # caught, one import too late.
     defects, d_checked, d_rejected = validate_defects(
@@ -472,7 +472,7 @@ def main() -> int:
     threshold = args.threshold
     if threshold is None:
         threshold = (config.get("fuzzy_match") or {}).get("threshold", 0.85)
-    # Resolved by the same helper pe.prepare uses, so the two cannot disagree
+    # Resolved by the same helper harness.prepare uses, so the two cannot disagree
     # about which tree a run used. This was once a hardcoded "./corpus" here
     # while prepare honoured `corpus_dir`, so a config pointing anywhere else
     # made prepare read the right tree and --write-corpus mkdir a wrong one
@@ -503,7 +503,7 @@ def main() -> int:
     # record. The pack is the one declaration; there is nothing else to read.
     version = expected_schema
 
-    # From the pack, once, rather than per paper. `pe.prepare` wrote it; this is
+    # From the pack, once, rather than per paper. `harness.prepare` wrote it; this is
     # the other half of that agreement.
     marker = pack.read_back_marker if pack is not None else None
     work = resolve_run_dir(Path(args.work))
@@ -583,5 +583,5 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except RunError as exc:
-        print(f"pe.validate: {exc}", file=sys.stderr)
+        print(f"harness.validate: {exc}", file=sys.stderr)
         raise SystemExit(2) from None

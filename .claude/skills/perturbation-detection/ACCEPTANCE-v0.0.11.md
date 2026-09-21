@@ -95,7 +95,7 @@ corpus-scale tally should be read with that in mind.
 
 **`model != final` on `sciimmunol.adz8650` (1/22) is pre-existing, and is not
 fabrication.** Identical at v0.0.10 (`model=no`, `final=unclear`) with
-`quotes_failed=0`, so it is Stage B's cap, not quote pruning. `pe.summarize`
+`quotes_failed=0`, so it is Stage B's cap, not quote pruning. `harness.summarize`
 labels this counter "fabrication rate", which is misleading whenever Stage B is
 the cause.
 

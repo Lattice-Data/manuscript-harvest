@@ -10,7 +10,7 @@
 # same paper. Measured baseline, v0.0.23 acceptance: 3 of 30 flipped, and one
 # took a determination with it. 22 of these 24 are papers that flip or could.
 #
-#   python -m pe.prepare --set papers-accept-stageb.txt --work <W> --corpus <repo>/corpus
+#   python -m harness.prepare --set papers-accept-stageb.txt --work <W> --corpus <repo>/corpus
 #   ... run stage 2 ...
 #   python score-acceptance-stageb.py
 #

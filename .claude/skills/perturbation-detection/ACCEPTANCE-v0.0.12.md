@@ -86,7 +86,7 @@ change: `baseline-v0012-50b/` preserves both runs plus `noise-floor.json`.
 `j.jcmgh.2025.101665`, `science.aay3224`, `scitranslmed.abh2624`. A future change
 that moves only those papers has not been shown to change anything.
 
-`pe.compare` gained `--baseline2`. Correct use, demonstrated on this data:
+`harness.compare` gained `--baseline2`. Correct use, demonstrated on this data:
 
 ```
 noise floor: the baseline disagrees with itself on 3/50 paper(s)
@@ -98,7 +98,7 @@ changed BEYOND the noise floor: 0   (within noise: ...)
 directory was passed as `--baseline2` against a v0.0.11 `--baseline`; the tool
 computed a *version diff* and reported it as variance. That inversion launders a
 real effect into "nothing moved" — the precise opposite of the flag's purpose.
-`pe.compare` now compares `prompt_version` across the two baseline runs and exits
+`harness.compare` now compares `prompt_version` across the two baseline runs and exits
 2 on a mismatch, and when no second run is supplied it says so instead of staying
 quiet:
 

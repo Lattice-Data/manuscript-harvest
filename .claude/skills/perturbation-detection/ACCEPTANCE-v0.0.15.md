@@ -37,7 +37,7 @@ misattributed, 0 perturbations dropped.
 
 Every one of the 10 is suppressed under `disease_model_establishment` and every
 one lands in triage **P2** — the ratification queue — rather than flipping
-silently. `pe.compare` over the 5 papers that have a preserved two-run v0.0.12
+silently. `harness.compare` over the 5 papers that have a preserved two-run v0.0.12
 baseline reports 2 changed against a noise floor of 0/5, both classified
 `SUPPRESSED`. **Zero `UNEXPLAINED`.**
 
@@ -165,7 +165,7 @@ confidence < 0.6) is checked first. Six such papers sit in tier 3, including
 ruling 5's own, so they were run as a supplementary set.
 
 Run 2 initially stopped at 3/6 on a session limit (`You've hit your session
-limit`) — nothing to do with the papers. `pe.pending` named the three and the
+limit`) — nothing to do with the papers. `harness.pending` named the three and the
 re-run picked up only those, which is the idempotency rule working. Both runs are
 now complete at 6/6, 78/78 quotes verified.
 

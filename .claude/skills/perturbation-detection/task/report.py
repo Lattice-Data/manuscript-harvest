@@ -1,6 +1,6 @@
 """TABLE 3's predicates: the triage ladder, the CSV row, the corpus counters.
 
-Moved out of `pe/summarize.py`, which was 71% this task by line -- and almost all
+Moved out of `harness/summarize.py`, which was 71% this task by line -- and almost all
 of it table DATA rather than logic. The lists are `report.yaml`; the functions
 that read a record are here.
 
@@ -11,7 +11,7 @@ place and not the other. `COLUMNS` and `row_for`'s 44-key literal were the same
 shape of duplication: two hand-maintained halves that `csv.DictWriter` would only
 catch at run time.
 
-What `pe/summarize.py` keeps: reading a run, writing a CSV, sorting by tier, and
+What `harness/summarize.py` keeps: reading a run, writing a CSV, sorting by tier, and
 refusing to report on an empty set. It no longer knows what any column means.
 """
 
@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from collections import Counter
 
-from pe.pack import tables
+from harness.pack import tables
 from task.rules import is_human, normalise_organism  # noqa: F401
 
 _REP = tables()["report"]
@@ -106,7 +106,7 @@ def triage_priority(result: dict) -> int:
     if present == "no" and result.get("perturbation_present_any_assay") == "yes":
         return 5
     # P6 is "the record has a defect", and an `unclear` carrying no usable reason
-    # is one: `pe.validate` says so in `issues` ("the unclear bucket is not
+    # is one: `harness.validate` says so in `issues` ("the unclear bucket is not
     # triageable without a reason"), yet the paper used to fall past every tier
     # into P9, the bottom of the queue. No renumbering -- this widens an existing
     # tier rather than inserting one. Measured on the 392-paper v0.0.12 run: it

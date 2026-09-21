@@ -1,9 +1,9 @@
 """Score the v0.0.23 acceptance runs against ACCEPTANCE-v0.0.23.md's predictions.
 
-**Lives at the skill root, NOT in `pe/`.** `tests/test_seam.py` asserts the
+**Lives at the skill root, NOT in `harness/`.** `tests/test_seam.py` asserts the
 harness names no task word in code, and this file is nothing but task words:
 hardcoded DOIs, curator groups, `perturbation_present`. It was written into
-`pe/` and the seam test caught it immediately. `task/` is the wrong home too --
+`harness/` and the seam test caught it immediately. `task/` is the wrong home too --
 that holds the rule TABLES the harness reads, and a scorer carrying one
 version's expectations is not a rule table. It sits beside the acceptance
 document whose predictions it encodes, and is run directly:

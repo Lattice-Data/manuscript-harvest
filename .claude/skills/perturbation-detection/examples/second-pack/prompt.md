@@ -4,7 +4,7 @@ Version: {{TASK_VERSION}}
 
 ## Changelog
 
-- **0.1.0: first version.** Written to test whether the harness in `pe/` is
+- **0.1.0: first version.** Written to test whether the harness in `harness/` is
   genuinely task-agnostic, so it is deliberately a different SHAPE from the
   perturbation pack rather than a relabelling of it: a different primary field, a
   different item array with a different pairing field, an enum the other pack
@@ -20,7 +20,7 @@ Constants for a run:
 
 | Constant | Value |
 |---|---|
-| `task_version` | `{{TASK_VERSION}}` — spliced in by `pe.prepare` from `task/task.yaml`. |
+| `task_version` | `{{TASK_VERSION}}` — spliced in by `harness.prepare` from `task/task.yaml`. |
 | `pack_sha256` | computed by the harness over every rule-bearing file. |
 | temperature | `0` |
 | calls per paper | 1 |

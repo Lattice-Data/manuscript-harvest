@@ -5,13 +5,13 @@ text the model is shown, so it is also what a quote has to be found in. Splittin
 them would put the writer of the `<<<SOURCE>>>` markers in one file and the
 reader in another, and those are the two things that must never disagree.
 
-No LLM calls, and no task vocabulary -- this and `pe/prepare.py` were the two
+No LLM calls, and no task vocabulary -- this and `harness/prepare.py` were the two
 files in the skill that never named perturbations even before the 0.0.13 split,
 which is what made them the evidence a seam existed to be found.
 
 Two things left here and went to the modules that already owned them:
-`prompt_version` -> `pe.pack.spec_version_line`, since reading the spec is the
-pack loader's job; and `entry_paths` -> `pe.runstate`, since what a run directory
+`prompt_version` -> `harness.pack.spec_version_line`, since reading the spec is the
+pack loader's job; and `entry_paths` -> `harness.runstate`, since what a run directory
 looks like is that module's whole subject. Neither had anything to do with
 assembling text. `reconstruct_text` went earlier still, superseded by
 `build_sources` when v0.0.5 made supplementary files first-class sources.
@@ -206,7 +206,7 @@ def build_sources(blocks: list[dict], exclude_sections=EXCLUDE_SECTIONS,
 
     # `chars` and `supp_chars` are seeded here rather than only on the way out.
     # The main-text-only path returned before the block that set them, so
-    # `pe.prepare --no-supplementary` -- a toggle prompt.md documents -- died on
+    # `harness.prepare --no-supplementary` -- a toggle prompt.md documents -- died on
     # `KeyError: 'chars'` and had never once worked. Every key this dict will ever
     # carry now exists before the first return.
     stats = {

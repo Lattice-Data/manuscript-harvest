@@ -27,7 +27,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pe.paper_text import section_chars, verify_quote_sourced  # noqa: E402
+from harness.paper_text import section_chars, verify_quote_sourced  # noqa: E402
 from task.rules import (  # noqa: E402
     DEFECT_KINDS, capping_defects, methods_claim_refuted, validate_defects,
 )
@@ -220,7 +220,7 @@ def test_the_fake_speaks_the_real_verifier_s_contract():
 
 def test_a_real_quote_survives_the_real_verifier_end_to_end():
     """No fake at all. This is the one that would have caught it: the harness's
-    own verifier, wired to `validate_defects` the way `pe.validate` wires it.
+    own verifier, wired to `validate_defects` the way `harness.validate` wires it.
     The quote is `10.1016_j.healun.2026.02.1666`'s, which the v0.0.25 run
     rejected while `verify_quote_sourced` scored it 1.0 against the same source.
     """

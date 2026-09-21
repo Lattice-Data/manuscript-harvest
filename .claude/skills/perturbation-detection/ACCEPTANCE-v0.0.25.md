@@ -27,7 +27,7 @@ Nothing below Step 0 is touched. No criterion moved.
 |---|---|---|
 | 1 | **self-report agreement across the two runs** | still reported, but **no longer the blocker** — the determination does not read those fields any more. Measured for continuity: 27/30 at v0.0.23, 20/24 at v0.0.24 |
 | 2 | **`stage_b_capped` agrees across the two runs, on all 24** — and the gate must have been **EXERCISED**: at least one cap in either run decided by a QUOTE-VERIFIED `text_defects` entry | the NEW blocker. This is what the version is for, and it is the first version in which the cap has a trigger that can be checked. The exercise half is not decoration — see below |
-| 3 | every kept defect carries a verified quote | asserted by `pe.validate`; a failure here means the verifier was bypassed |
+| 3 | every kept defect carries a verified quote | asserted by `harness.validate`; a failure here means the verifier was bypassed |
 | 4 | the two rung-3 papers stay capped | `harness_withheld` alone, independent of anything the model says |
 | 5 | no non-negative is capped | the asymmetry |
 | 6 | `stage_a` does not move | a Step 0 change must not reach the criteria |
@@ -120,9 +120,9 @@ From the skill directory:
 
 ```bash
 W=~/.manuscript-harvest/perturbation/work-accept-v0025-r1
-python -m pe.prepare --set papers-accept-stageb.txt --work "$W" --corpus /abs/path/to/corpus
-./pe/run_headless.sh "$W"
-python -m pe.validate --work "$W"
+python -m harness.prepare --set papers-accept-stageb.txt --work "$W" --corpus /abs/path/to/corpus
+./harness/run_headless.sh "$W"
+python -m harness.validate --work "$W"
 ```
 
 Then the same for `-r2`, and `python score-acceptance-stageb.py --r1 ... --r2 ...`.

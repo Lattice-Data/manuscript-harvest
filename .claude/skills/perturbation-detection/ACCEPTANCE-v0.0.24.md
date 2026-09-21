@@ -12,7 +12,7 @@ this version's whole subject.
 
 ## What changed, and what it deliberately did not
 
-v0.0.24 touches Step 0 and nothing below it. `pe.prepare` now splices an
+v0.0.24 touches Step 0 and nothing below it. `harness.prepare` now splices an
 `ASSEMBLY:` block into every prompt stating what the text pipeline removed —
 which sources were supplied and how large, how many supplementary files of how
 many found, which sections were stripped, which content kinds reached the model,
@@ -78,7 +78,7 @@ read off a sidecar. What can be stated is the shape of each end of the range:
 
 | must NOT release | why |
 |---|---|
-| `sciimmunol.adz8650`, `genes15030298` | rung 3: the harness truncated them, and `pe.validate` overrides a `"full"` claim to `"truncated"` on a harness-truncated text. The cap here is a harness fact |
+| `sciimmunol.adz8650`, `genes15030298` | rung 3: the harness truncated them, and `harness.validate` overrides a `"full"` claim to `"truncated"` on a harness-truncated text. The cap here is a harness fact |
 | `science.aat1699` | 323 control characters per 10k and three pages missing — the one corpus text that is genuinely broken. **A release here is a finding to read, not an automatic failure: curator ruling 6 on this paper is `no`, which is what a released cap would produce.** Recorded either way |
 | `2021.09.16.460628` | the extractor also found no methods label anywhere, so the model's `methods_missing` has independent support |
 
@@ -130,14 +130,14 @@ Approved order, 2026-09-16: this pass, then the corpus run.
 
 ## How to run it
 
-From the skill directory, not the repo root (`pe` and `task` resolve relative to
+From the skill directory, not the repo root (`harness` and `task` resolve relative to
 it):
 
 ```bash
 W=~/.manuscript-harvest/perturbation/work-accept-stageb-r1
-python -m pe.prepare --set papers-accept-stageb.txt --work "$W" --corpus ../../../corpus
-./pe/run_headless.sh "$W"
-python -m pe.validate --work "$W"
+python -m harness.prepare --set papers-accept-stageb.txt --work "$W" --corpus ../../../corpus
+./harness/run_headless.sh "$W"
+python -m harness.validate --work "$W"
 ```
 
 Then the same with `-r2`, and `python score-acceptance-stageb.py`. Two things to
@@ -146,12 +146,12 @@ get right, both of which have cost a run before:
 - **No `--write-corpus` on either run.** An acceptance run is not a corpus
   update, and the stored records are the v0.0.22 baseline these are compared to.
 - **`--corpus <absolute path to the repo's corpus>`, explicitly, on
-  `pe.prepare`.** A stale 382-paper tree sits inside this directory; both trees
+  `harness.prepare`.** A stale 382-paper tree sits inside this directory; both trees
   are gitignored, so a run over the wrong one is invisible in git. Confirm
   `24/24 prepared` before stage 2. **The relative `../../../corpus` that
   SKILL.md documents resolves against the CWD, so it is wrong from a git
   worktree** — there it points at the worktree root, which has no corpus tree at
-  all, both trees being gitignored. `pe.prepare` refuses rather than preparing 0
+  all, both trees being gitignored. `harness.prepare` refuses rather than preparing 0
   papers and exiting 0, which is how this was caught on the first attempt at the
   r1 run; pass the absolute path from anywhere but the main checkout.
 
@@ -173,7 +173,7 @@ half that was right is now fixed.**
 | criterion | result |
 |---|---|
 | 1. self-report agrees across runs (BLOCKER) | **FAIL — 20/24** |
-| 2. harness-proved cap still holds | PASS — but via `pe.validate`'s override, see below |
+| 2. harness-proved cap still holds | PASS — but via `harness.validate`'s override, see below |
 | 3. no non-negative was capped | PASS (exercised by 3 papers) |
 | 4. `stage_a` did not move | **FAIL — 1 paper** |
 | 5. expectations met | **FAIL — 2 papers, both prediction errors** |
@@ -228,7 +228,7 @@ rejected a correct claim, so it must go.
 ## Criterion 2 passed for the wrong reason, and that is a spec defect
 
 `sciimmunol.adz8650` and `genes15030298` — the two rung-3 papers — **both
-reported `ok`/`full` in both runs**, and `pe.validate` overrode each to
+reported `ok`/`full` in both runs**, and `harness.validate` overrode each to
 `truncated` and re-capped (`STAGE-B-CAP MODEL=no`). The cap held, so the
 criterion passes.
 
@@ -236,7 +236,7 @@ But the model was not wrong by the rule as written. Step 0 says `"full"` means
 *nothing missing beyond what `ASSEMBLY:` says was removed* — and for a
 budget-truncated paper, what is missing is exactly what `ASSEMBLY:` reports as
 removed. **`full` is the literally correct answer to the question v0.0.24
-asks**, while `pe.validate` treats that same answer as an error to correct. Two
+asks**, while `harness.validate` treats that same answer as an error to correct. Two
 parts of one spec, disagreeing, with the harness winning silently. A one-line
 carve-out fixes it: a budget truncation `ASSEMBLY:` reports is not among the cuts
 that may be disregarded.

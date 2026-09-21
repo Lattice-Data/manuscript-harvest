@@ -5,12 +5,12 @@ asserted the four `schema_version` declarations inside prompt.md agreed with eac
 other — a real guard for a real bug: at v0.0.12 three of the four moved to 0.0.7
 and one did not, the model split on the contradiction (**386 of 392 records
 followed the schema example and emitted 0.0.7, 6 followed the instruction line
-and emitted 0.0.6**), and `pe.validate` compared against a literal calibrated to
+and emitted 0.0.6**), and `harness.validate` compared against a literal calibrated to
 the minority, filing a spurious issue on 386 correct records.
 
 0.0.13 removes the class of bug instead of testing for it. The version is
 declared once, in `task/task.yaml`, and prompt.md carries `{{TASK_VERSION}}` at
-every site that declares it — spliced in by `pe.prepare` exactly as
+every site that declares it — spliced in by `harness.prepare` exactly as
 `{{PAPER_ID}}` is. Four declarations that must agree becomes one declaration and
 three substitutions, so the tests below assert **the absence of a literal**
 rather than the agreement of several. A test that four copies match is a test
@@ -32,12 +32,12 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pe.pack import spec_version_line  # noqa: E402
-from pe.prepare import build_template  # noqa: E402
-from pe.validate import (  # noqa: E402
+from harness.pack import spec_version_line  # noqa: E402
+from harness.prepare import build_template  # noqa: E402
+from harness.validate import (  # noqa: E402
     LEGACY_VERSION_FIELD, expected_task_version, record_version, validate_result,
 )
-from pe.pack import PackError, TaskPack, load as load_pack, pack_files, pack_sha256  # noqa: E402
+from harness.pack import PackError, TaskPack, load as load_pack, pack_files, pack_sha256  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 SEMVER = re.compile(r"\b\d+\.\d+\.\d+\b")
@@ -89,11 +89,11 @@ def test_the_spec_no_longer_asks_the_model_for_a_schema_version(pack):
 
 
 def test_nothing_in_pe_hardcodes_a_version(pack):
-    """The harness holds no opinion about the version. `pe.validate` used to
+    """The harness holds no opinion about the version. `harness.validate` used to
     compare against a literal `"0.0.6"`, which is how a correct record got
     flagged 386 times."""
     offenders = {}
-    for path in sorted((ROOT / "pe").glob("*.py")):
+    for path in sorted((ROOT / "harness").glob("*.py")):
         for number, line in enumerate(path.read_text().splitlines(), 1):
             stripped = line.strip()
             if stripped.startswith("#") or "0.0.1" in stripped and "prompt.md" in stripped:
@@ -124,7 +124,7 @@ def test_prepare_substitutes_the_version_the_pack_declares(pack, tmp_path):
 
 
 def test_the_version_line_reader_still_works(pack):
-    """`pe.pack.spec_version_line` reads the `Version:` line, and pe.prepare uses
+    """`harness.pack.spec_version_line` reads the `Version:` line, and harness.prepare uses
     it to assert the substitution has something to substitute. A regex that
     silently stopped matching would return "unknown" and disable that assertion.
 
@@ -294,7 +294,7 @@ def test_a_legacy_record_files_no_issue_at_all():
     was undertaken to remove: `validation.issues` is where real problems surface,
     and one entry on every paper makes the column unreadable. A correctly-labelled
     old record is not a problem, so it is recorded structurally and counted by
-    pe.summarize instead — the same lesson `suppressed_candidates` taught, that a
+    harness.summarize instead — the same lesson `suppressed_candidates` taught, that a
     per-paper free-text note is neither enforceable nor countable.
     """
     issues = validate_result(_legacy_record(), {"main": "x"}, 0.85,

@@ -7,9 +7,9 @@ that was not actually read, while cache-read does not. A list-price dollar
 equivalent is printed last, because a subscription run is not billed per token
 and that figure is a size, not an invoice.
 
-    python -m pe.usage --list
-    python -m pe.usage --work work-corpus-v0021-r1
-    python -m pe.usage --work work-corpus-v0021-r1 --per-paper
+    python -m harness.usage --list
+    python -m harness.usage --work work-corpus-v0021-r1
+    python -m harness.usage --work work-corpus-v0021-r1 --per-paper
 
 Stage 2 invokes `claude -p` with `--output-format text`, so the only thing the
 per-paper log captures is the agent's final reply -- every log in the 392-paper
@@ -67,8 +67,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pe.pricing import RATES, canonical, cost  # noqa: E402
-from pe.runroot import run_root  # noqa: E402
+from harness.pricing import RATES, canonical, cost  # noqa: E402
+from harness.runroot import run_root  # noqa: E402
 
 #: Where the CLI persists sessions: one directory per working directory, named
 #: by flattening that path's separators. `run_headless.sh` cd's to the skill
@@ -87,7 +87,7 @@ def _encoded(path: Path | str) -> str:
 def _project_glob() -> str:
     """Match this skill's transcripts, including worktree checkouts of it.
 
-    Derived from the filesystem rather than written down, because `pe/` may not
+    Derived from the filesystem rather than written down, because `harness/` may not
     name the task in code (tests/test_seam.py) -- and because a hardcoded name
     would be wrong in any worktree anyway. A worktree's repo path differs but
     the tail inside the repo does not, so the glob anchors on the tail.
@@ -103,7 +103,7 @@ PROJECT_GLOB = _project_glob()
 
 #: The marker that makes a session attributable: the prompt file the agent is
 #: told to read, which carries the work directory and the DOI slug. Written by
-#: `pe.prepare` and quoted verbatim into the task string by `run_headless.sh`.
+#: `harness.prepare` and quoted verbatim into the task string by `run_headless.sh`.
 PROMPT_PATH = re.compile(
     r"/(work-[^/\s\"']+)/prompts/([^/\s\"']+)\.txt"
 )
@@ -676,7 +676,7 @@ def render(sessions: list[Session], work: str, per_paper: bool = False) -> str:
         drift = abs(sum(reported) - total) / total
         if drift > 0.01:
             out.append(f"  ! the CLI reported ${sum(reported):,.2f} for the same work, "
-                       f"a {drift:.0%} gap — pe/pricing.py:RATES is probably stale")
+                       f"a {drift:.0%} gap — harness/pricing.py:RATES is probably stale")
 
     return "\n".join(out)
 
@@ -743,5 +743,5 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except UsageError as exc:
-        print(f"pe.usage: {exc}", file=sys.stderr)
+        print(f"harness.usage: {exc}", file=sys.stderr)
         raise SystemExit(2) from None

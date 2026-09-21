@@ -6,7 +6,7 @@ in the directory whose whole job is to hold the answer to one question. A second
 pack found it the hard way: it had to copy the file verbatim, so every pack would
 carry an identical copy of machinery none of them owns.
 
-So `task/` now has no `__init__.py` at all. It is a namespace package, like `pe/`
+So `task/` now has no `__init__.py` at all. It is a namespace package, like `harness/`
 already was, and it contains nothing but the spec, the four tables and the four
 rule modules. Nothing in it is generic.
 
@@ -17,7 +17,7 @@ plugin shape, and `tests/test_seam.py` enforces exactly that asymmetry.
 
 **What is NOT here, deliberately.** `pack_sha256` covers the rules -- the spec and
 `task/*` -- and not this file, for the same reason it does not cover
-`pe/validate.py`: a change to how tables are READ is a change to the harness, and
+`harness/validate.py`: a change to how tables are READ is a change to the harness, and
 the harness is not what one run differs from another by. Moving this file out of
 the pack therefore changes every pack's hash exactly once, which is honest -- the
 set of rule-bearing files really did change.
@@ -34,16 +34,16 @@ try:
 except ImportError:  # pragma: no cover - yaml is a package requirement
     yaml = None
 
-#: The skill root: the directory holding prompt.md, pe/ and task/. Unchanged by
-#: the move -- this file went from `task/__init__.py` to `pe/pack.py`, and
+#: The skill root: the directory holding prompt.md, harness/ and task/. Unchanged by
+#: the move -- this file went from `task/__init__.py` to `harness/pack.py`, and
 #: `parent.parent` is the same directory from either.
 ROOT = Path(__file__).resolve().parent.parent
 
 def read_back_marker(root: Path | None = None) -> str:
-    """The line `pe.validate` searches for, backwards, to recover the paper text.
+    """The line `harness.validate` searches for, backwards, to recover the paper text.
 
-    Read from the pack, cached, because it is needed once per paper. `pe.prepare`
-    writes the marker and `pe.validate` reads it back, so the two must agree
+    Read from the pack, cached, because it is needed once per paper. `harness.prepare`
+    writes the marker and `harness.validate` reads it back, so the two must agree
     about it -- which is exactly why it is declared once, in `task.yaml`, rather
     than written as a literal at each end.
     """
@@ -53,11 +53,11 @@ def read_back_marker(root: Path | None = None) -> str:
 def spec_version_line(spec_md: Path) -> str:
     """Whatever the spec's `Version:` line says. Named for what it returns.
 
-    It was `pe.paper_text.prompt_version`, and that name is now a lie: since
+    It was `harness.paper_text.prompt_version`, and that name is now a lie: since
     0.0.13 the spec carries `{{TASK_VERSION}}` there, so this returns the
-    PLACEHOLDER, not a version. Its only caller is `pe.prepare`, which uses it to
+    PLACEHOLDER, not a version. Its only caller is `harness.prepare`, which uses it to
     assert the substitution has something to substitute -- a spec that hardcoded
-    a version instead would be the drift 0.0.13 removed, and `pe.prepare` says so
+    a version instead would be the drift 0.0.13 removed, and `harness.prepare` says so
     when it finds one.
 
     The version a run is graded against is `TaskPack.version`, from task.yaml.
@@ -216,7 +216,7 @@ def tables(root: Path | None = None, *, reload: bool = False) -> dict[str, dict]
     """The four tables, read once and cached.
 
     Cached because `rules.py` reads them at import to define its constants, and
-    because every module in `pe/` would otherwise re-parse four files per paper.
+    because every module in `harness/` would otherwise re-parse four files per paper.
     `reload=True` exists for the tests that write a pack into a tmp_path.
 
     A missing table is an error, not an empty default. A pack that half-loads is

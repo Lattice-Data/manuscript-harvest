@@ -214,7 +214,7 @@ in this pass was labelled without being read.
 
 **The 392-paper corpus is therefore ~66M tokens per run larger than this pass
 suggested by paper count alone**, because the acceptance set is skewed toward
-long papers. Reconstruct any run's real numbers with `python -m pe.usage --work
+long papers. Reconstruct any run's real numbers with `python -m harness.usage --work
 <dir> --per-paper`; the list-price equivalent is still printed as a footer if a
 size in dollars is wanted.
 

@@ -47,7 +47,7 @@ criterion, and the measurement changed both remaining parts.** Results in
 
 **Also found, and not yet fixed:** Step 0 defines `"full"` as nothing missing
 beyond what `ASSEMBLY:` reports, which makes `"full"` the literally correct answer
-on a budget-truncated paper — while `pe.validate` overrides that same answer.
+on a budget-truncated paper — while `harness.validate` overrides that same answer.
 Both rung-3 papers did exactly this in both runs. One spec, two answers, harness
 winning silently; a one-line carve-out in Step 0 fixes it and needs approval like
 any other Step 0 edit.
@@ -61,7 +61,7 @@ Every number below is measured from files on disk; nothing here cost a model cal
 
 **Decisions, and what they changed in this document.**
 
-- **Build Part 1 first, then re-measure.** One prompt edit plus a `pe.prepare`
+- **Build Part 1 first, then re-measure.** One prompt edit plus a `harness.prepare`
   splice, no schema change and no new required field — so no attractor surface. If
   the two-run self-report flip rate goes to 0 of 24, Parts 2 and 3 may be
   unnecessary, and that is measurable in 48 spawns before committing to them. Shipped
@@ -183,7 +183,7 @@ while leaving the redundancy that produces it.
 
 ### Part 1 — Tell the model what the pipeline removed, and define `full` against it
 
-`pe.prepare` already knows all of it. Splice a harness-generated block into the prompt
+`harness.prepare` already knows all of it. Splice a harness-generated block into the prompt
 beside `SOURCE_IDS`:
 
 ```
@@ -217,7 +217,7 @@ explicit_cut_marker, garbled_run, no_methods_content}`.
   `body_sections_missing`, so both survive — the check only kills false claims.)
 - A claim that does not survive is normalized to `full` with
   `text_completeness_source = "harness"` and an `issue` filed. **This is the exact
-  mirror of the one-way override already at `pe/validate.py:264`**, which today only
+  mirror of the one-way override already at `harness/validate.py:264`**, which today only
   ratchets `full → truncated`.
 
 This is option 3 in the form the data allows: not "cap only when the harness also saw
@@ -254,10 +254,10 @@ harness's check."
 
 ### Where the code goes — the seam is unchanged
 
-`pe/validate.py` already threads `truncated_by_harness` and `needs_section_pass` in
+`harness/validate.py` already threads `truncated_by_harness` and `needs_section_pass` in
 from the manifest and `task/rules.stage_b` already decides. Part 2 adds one more
 harness fact to the same channel and one more field name to `task/record.yaml`. No
-task vocabulary enters `pe/`; `tests/test_seam.py` stays green. `decide.yaml: inputs`
+task vocabulary enters `harness/`; `tests/test_seam.py` stays green. `decide.yaml: inputs`
 and `change.yaml: inputs_from` must move together, which `task/change.py` asserts at
 import.
 
@@ -312,7 +312,7 @@ alongside it.
   Deletes the mechanism rather than stabilising it.
 - **Make Stage B advisory** — flag + triage tier, determination untouched, the
   `confidence-is-display-not-router` shape. This is the *most* stable answer available
-  and it is a live option, not a strawman: `pe.validate` already sets
+  and it is a live option, not a strawman: `harness.validate` already sets
   `needs_review = True` on every record unconditionally, so the `unclear` is not the
   only thing standing between a degraded `no` and a curator. Not recommended because
   it gives up the cap's purpose rather than repairing its trigger — but see §7.
@@ -375,7 +375,7 @@ one decision is left open at the bottom because it moves determinations.
 
 A claim whose quote does not verify is **normalised, not obeyed**: the defect
 entry is dropped, an `issue` is filed, and it cannot cap. That is the existing
-one-way override at `pe/validate.py:264` pointed the other way, and it is what
+one-way override at `harness/validate.py:264` pointed the other way, and it is what
 `atvbaha.122.317953` needs — it claimed `truncated` in r1 and named no locus at
 all.
 
@@ -407,7 +407,7 @@ model's own summary. They stop being the trigger.
 
 Step 0 defines `"full"` as *nothing missing beyond what `ASSEMBLY:` says was
 removed*, which makes `"full"` correct on a budget-truncated paper while
-`pe.validate` overrides it. Both rung-3 papers did exactly that, twice. The
+`harness.validate` overrides it. Both rung-3 papers did exactly that, twice. The
 carve-out: **a budget truncation `ASSEMBLY:` reports is a defect, not a
 disregardable cut** — so the model reaches the harness's answer instead of being
 corrected into it.

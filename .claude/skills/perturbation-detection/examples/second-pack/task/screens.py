@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from pe.pack import tables
+from harness.pack import tables
 
 _REP = tables()["report"]
 SIGNALS: dict[str, list[str]] = dict(_REP["signals"]["tissue"])

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Stage 4: the triage table and the corpus counters.
 
-    python -m pe.summarize [--work work/] [--out output/perturbations_summary.csv]
+    python -m harness.summarize [--work work/] [--out output/perturbations_summary.csv]
 
 prompt.md v0.0.10 batch spec steps 10 and 11 (priorities renumbered there and
 here together; see `triage_priority`). Step 10 fixes both the column set
@@ -20,8 +20,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pe.runroot import output_default, output_name, work_default  # noqa: E402
-from pe.runstate import RunError, load_validated  # noqa: E402
+from harness.runroot import output_default, output_name, work_default  # noqa: E402
+from harness.runstate import RunError, load_validated  # noqa: E402
 
 # The columns, the ladder, the row builder and the 21 counters are the pack's:
 # `task/report.yaml` for the lists and `task/report.py` for the functions that
@@ -38,7 +38,7 @@ def main() -> int:
     run = load_validated(Path(args.work))
     # A CSV of 392 blank rows is not a summary of anything, and it used to be
     # written with exit 0. Every other tool now refuses the same way.
-    run.require_papers("pe.summarize")
+    run.require_papers("harness.summarize")
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
 
@@ -86,5 +86,5 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except RunError as exc:
-        print(f"pe.summarize: {exc}", file=sys.stderr)
+        print(f"harness.summarize: {exc}", file=sys.stderr)
         raise SystemExit(2) from None

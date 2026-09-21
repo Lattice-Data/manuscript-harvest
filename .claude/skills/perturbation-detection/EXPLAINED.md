@@ -521,7 +521,7 @@ Three layers. Only the top one is about perturbations.
 ```
 
 **As of pack 0.0.13 this is the tree, not an aspiration.** The judgment is
-`task/`; the harness is `pe/`. It was not always: `pe/` was 1,038 task lines to
+`task/`; the harness is `harness/`. It was not always: `harness/` was 1,038 task lines to
 1,185 generic ones, interleaved inside four files — `audit.py` 80% task,
 `summarize.py` 71%, `validate.py` 60%. Only `paper_text.py` and `prepare.py` were
 already clean, and they were the evidence the seam existed to be found.
@@ -539,7 +539,7 @@ version diff came out byte-identical.
 
 **And it has since been swapped.** A second pack — "which tissue did the
 sequenced material come from, and does the paper state it explicitly?" — runs on
-this corpus through a byte-identical `pe/`. It cost 27 lines of spec, 247 of
+this corpus through a byte-identical `harness/`. It cost 27 lines of spec, 247 of
 tables and 593 of rule modules -- 867 against 3,535 lines of harness it did not
 touch, where the perturbation pack it stands in for is 2,972.
 Getting there took five fixes, because the first attempt did not run at all: the
@@ -551,7 +551,7 @@ exit 0. None of the tests written to prevent exactly that caught any of them.
 That pack is archived at
 [`examples/second-pack/`](.claude/skills/perturbation-detection/examples/second-pack/README.md),
 with its result and its leak list, for whoever writes question #3. `tests/test_seam.py` tokenises every module
-in `pe/` and fails on a task word in any identifier, string or key — comments and
+in `harness/` and fails on a task word in any identifier, string or key — comments and
 docstrings exempt, because half the value here is the record of which DOI taught
 which rule, and forcing that history out of the harness would trade the thing
 worth keeping for a tidier grep.
@@ -688,13 +688,13 @@ for it.
 | **the four lookup tables — swap these** | [task/record.yaml](.claude/skills/perturbation-detection/task/record.yaml), [decide.yaml](.claude/skills/perturbation-detection/task/decide.yaml), [report.yaml](.claude/skills/perturbation-detection/task/report.yaml), [change.yaml](.claude/skills/perturbation-detection/task/change.yaml) |
 | the predicates a table cannot express | [task/rules.py](.claude/skills/perturbation-detection/task/rules.py), [report.py](.claude/skills/perturbation-detection/task/report.py), [screens.py](.claude/skills/perturbation-detection/task/screens.py), [change.py](.claude/skills/perturbation-detection/task/change.py) |
 | the pack's identity, version and spec contract | [task/task.yaml](.claude/skills/perturbation-detection/task/task.yaml) |
-| reading a pack, and hashing it — plumbing, not judgment | [pe/pack.py](.claude/skills/perturbation-detection/pe/pack.py) |
-| assemble the paper into one prompt | [prepare.py](.claude/skills/perturbation-detection/pe/prepare.py), [paper_text.py](.claude/skills/perturbation-detection/pe/paper_text.py) |
-| the one model step | [run_headless.sh](.claude/skills/perturbation-detection/pe/run_headless.sh) |
-| verify quotes, prune, recompute the verdict | [validate.py](.claude/skills/perturbation-detection/pe/validate.py) |
-| the reading queue and the six screens | [summarize.py](.claude/skills/perturbation-detection/pe/summarize.py), [audit.py](.claude/skills/perturbation-detection/pe/audit.py) |
-| version diffs and the noise floor | [compare.py](.claude/skills/perturbation-detection/pe/compare.py) |
-| what a run directory is, and the refusal to report on nothing | [runstate.py](.claude/skills/perturbation-detection/pe/runstate.py) |
+| reading a pack, and hashing it — plumbing, not judgment | [harness/pack.py](.claude/skills/perturbation-detection/harness/pack.py) |
+| assemble the paper into one prompt | [prepare.py](.claude/skills/perturbation-detection/harness/prepare.py), [paper_text.py](.claude/skills/perturbation-detection/harness/paper_text.py) |
+| the one model step | [run_headless.sh](.claude/skills/perturbation-detection/harness/run_headless.sh) |
+| verify quotes, prune, recompute the verdict | [validate.py](.claude/skills/perturbation-detection/harness/validate.py) |
+| the reading queue and the six screens | [summarize.py](.claude/skills/perturbation-detection/harness/summarize.py), [audit.py](.claude/skills/perturbation-detection/harness/audit.py) |
+| version diffs and the noise floor | [compare.py](.claude/skills/perturbation-detection/harness/compare.py) |
+| what a run directory is, and the refusal to report on nothing | [runstate.py](.claude/skills/perturbation-detection/harness/runstate.py) |
 | the seam, and the test that holds it | [tests/test_seam.py](.claude/skills/perturbation-detection/tests/test_seam.py) |
 | a second pack, archived — the proof the seam works | [examples/second-pack/](.claude/skills/perturbation-detection/examples/second-pack/README.md) |
 | the human rulings ledger | [CURATOR-RULINGS.md](.claude/skills/perturbation-detection/CURATOR-RULINGS.md) |

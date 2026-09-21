@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Emit the stage-2 args for papers that still have no result — the resume path.
 
-    python -m pe.pending                 # human-readable status
-    python -m pe.pending --json          # args array, paste into Workflow(args=...)
-    python -m pe.pending --json --out work/wf_args_retry.json
+    python -m harness.pending                 # human-readable status
+    python -m harness.pending --json          # args array, paste into Workflow(args=...)
+    python -m harness.pending --json --out work/wf_args_retry.json
 
 Why this exists: a stage-2 run can die part-way through for reasons unrelated to
 the papers -- a session/rate limit is the one actually hit on the 40-paper v0.0.5
@@ -27,12 +27,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pe.validate import parse_raw  # noqa: E402
+from harness.validate import parse_raw  # noqa: E402
 
-from pe.runroot import work_default  # noqa: E402
-from pe.runstate import entry_paths  # noqa: E402
+from harness.runroot import work_default  # noqa: E402
+from harness.runstate import entry_paths  # noqa: E402
 
-# The fields pe/extract_workflow.js reads off each manifest entry.
+# The fields harness/extract_workflow.js reads off each manifest entry.
 ARG_FIELDS = ("doi", "prompt_file", "prompt_lines", "prompt_chars", "chars",
               "raw_file", "source_ids")
 
@@ -42,7 +42,7 @@ ARG_FIELDS = ("doi", "prompt_file", "prompt_lines", "prompt_chars", "chars",
 # only if its result parses, carries every required field, and its `sources_seen`
 # matches the manifest, so a partial write is re-run rather than silently
 # accepted.
-from pe.pack import tables  # noqa: E402
+from harness.pack import tables  # noqa: E402
 
 _REC = tables()["record"]
 REQUIRED = tuple(_REC["required_fields"])
@@ -120,11 +120,11 @@ def main() -> int:
         print(f"\n{len(pending)} paper(s) to re-run, {chars:,} chars "
               f"(~{chars // 4:,} input tokens)")
         print("Resume with:")
-        print("  python -m pe.pending --json --out work/wf_args_retry.json")
-        print("  then Workflow(scriptPath='pe/extract_workflow.js', "
+        print("  python -m harness.pending --json --out work/wf_args_retry.json")
+        print("  then Workflow(scriptPath='harness/extract_workflow.js', "
               "args=<contents of that file>)")
     else:
-        print("\nnothing pending — run: python -m pe.validate --write-corpus")
+        print("\nnothing pending — run: python -m harness.validate --write-corpus")
     return 0
 
 

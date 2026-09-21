@@ -16,10 +16,10 @@
 #   pack_sha256    -- computed, never written here. Two records were produced
 #                    under byte-identical rules iff their pack hashes match, so
 #                    "was this scored under the same rules" needs no bookkeeping
-#                    and no opinion. See pe/task loader.
+#                    and no opinion. See harness/task loader.
 #
 # Nothing may restate `version` as a literal. prompt.md carries
-# `{{TASK_VERSION}}` at every declaration site and pe.prepare fills it, the way
+# `{{TASK_VERSION}}` at every declaration site and harness.prepare fills it, the way
 # it already fills {{PAPER_ID}} -- so a stale version in the prompt is not a bug
 # to catch but a state the file cannot be in. tests/test_task_version.py holds
 # that line.
@@ -88,7 +88,7 @@ outputs:
   diff_txt: version_diff.txt
 
 # The single-paper spec handed to the model, and the structural contract
-# pe.prepare needs to slice it. These anchors are the interface any replacement
+# harness.prepare needs to slice it. These anchors are the interface any replacement
 # prompt must satisfy: they were five bare string literals across two modules,
 # and a prompt missing one died on an unmessaged ValueError.
 spec:
@@ -103,10 +103,10 @@ spec:
     source_ids: "{{SOURCE_IDS}}"
     task_version: "{{TASK_VERSION}}"
     # What the pipeline removed before the model saw anything, rendered per
-    # paper by `pe.prepare.assembly_note`. A fact about one assembly, so it
+    # paper by `harness.prepare.assembly_note`. A fact about one assembly, so it
     # cannot be written into the spec -- the same reason `source_ids` is here.
     assembly: "{{ASSEMBLY}}"
-  # The line pe.validate searches for, backwards, to recover exactly the bytes
+  # The line harness.validate searches for, backwards, to recover exactly the bytes
   # the model was shown. Stated here so the writer and the reader cannot
   # disagree about it.
   read_back_marker: "\nPAPER_TEXT:"

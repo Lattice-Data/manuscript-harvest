@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Stage 5 (review aid): target the papers prompt.md says to check first.
 
-    python -m pe.audit [--work work/] [--out output/review_screen.txt]
+    python -m harness.audit [--work work/] [--out output/review_screen.txt]
 
 prompt.md's validation loop (added in v0.0.3) asks for three things. This produces
 those three as Screens A, B and C, plus three more that later versions needed --
@@ -43,11 +43,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pe.pack import read_back_marker  # noqa: E402
-from pe.validate import paper_text_from_prompt  # noqa: E402
+from harness.pack import read_back_marker  # noqa: E402
+from harness.validate import paper_text_from_prompt  # noqa: E402
 
-from pe.runroot import output_default, output_name, work_default  # noqa: E402
-from pe.runstate import RunError, entry_paths, load_validated  # noqa: E402
+from harness.runroot import output_default, output_name, work_default  # noqa: E402
+from harness.runstate import RunError, entry_paths, load_validated  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -96,15 +96,15 @@ def main() -> int:
     args = parser.parse_args()
 
     run = load_validated(Path(args.work))
-    run.require_papers("pe.audit")
+    run.require_papers("harness.audit")
 
     # entry_paths, not entry["prompt_file"]. Screens B and C grep the paper text,
     # so reading it from the manifest's recorded string means a run directory that
     # was copied -- which the acceptance protocol does, `baseline-v0012-50b`'s
     # manifest still points into `work-accept-v0012-r1/` -- greps a DIFFERENT
     # run's assembly, or crashes if that directory is gone. Deriving from
-    # (work, doi) is what makes a manifest portable and is what pe.pending and
-    # pe.validate already do.
+    # (work, doi) is what makes a manifest portable and is what harness.pending and
+    # harness.validate already do.
     loaded: list[tuple[str, dict, Path]] = [
         (entry["doi"], run.records[entry["doi"]], entry_paths(entry, run.work)[0])
         for entry in run.entries if entry["doi"] in run.records
@@ -116,7 +116,7 @@ def main() -> int:
         run.coverage(),
         # The version the RECORDS were produced under, not whatever the pack
         # says today: a screen re-run after a version bump would otherwise label
-        # old results as new. Read the same way pe.summarize reads it.
+        # old results as new. Read the same way harness.summarize reads it.
         f"Review screen — task v{'/'.join(_versions(loaded))} — "
         f"{len(loaded)} paper(s) validated",
         # Titles from task/report.yaml, so the header cannot describe a screen
@@ -146,5 +146,5 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except RunError as exc:
-        print(f"pe.audit: {exc}", file=sys.stderr)
+        print(f"harness.audit: {exc}", file=sys.stderr)
         raise SystemExit(2) from None

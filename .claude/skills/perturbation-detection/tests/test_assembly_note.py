@@ -32,8 +32,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pe.pack import PackError, load as load_pack, read_back_marker  # noqa: E402
-from pe.prepare import (  # noqa: E402
+from harness.pack import PackError, load as load_pack, read_back_marker  # noqa: E402
+from harness.prepare import (  # noqa: E402
     DEFAULT_BUDGET_CHARS, assembly_note, build_template, sources_within_budget,
 )
 
@@ -177,7 +177,7 @@ def test_switching_supplementary_off_says_so_instead_of_reporting_none_found():
 # --------------------------------------------------------------------------
 
 def test_the_note_cannot_be_mistaken_for_the_paper_text_or_a_source_block():
-    """`pe.validate` recovers the text the model saw by searching BACKWARDS for
+    """`harness.validate` recovers the text the model saw by searching BACKWARDS for
     the read-back marker, and splits it on `<<<SOURCE` markers. A note carrying
     either one would make the recovered "paper text" the wrong bytes, and then
     every quote would verify against the wrong thing."""
@@ -227,7 +227,7 @@ def test_a_pack_declaring_no_assembly_placeholder_is_refused():
     """Required rather than optional, and this is the line that makes it so.
     Optional would mean absent-by-default, which is how the note would silently
     stop reaching the model."""
-    from pe.pack import TaskPack
+    from harness.pack import TaskPack
 
     config = {"name": "t", "version": "0.0.1",
               "spec": {"path": "prompt.md",

@@ -2,7 +2,7 @@
 
 This is the pack that proved the three-layer split works. It answers a different
 question — *"which tissue or organ did the sequenced material come from, and does
-the paper state it explicitly?"* — through a **byte-identical `pe/`**.
+the paper state it explicitly?"* — through a **byte-identical `harness/`**.
 
 **It is an archive, not a runnable skill.** Read the next section before relying
 on anything in here.
@@ -10,11 +10,11 @@ on anything in here.
 ## What this is not
 
 - **Not in CI.** The `skills` job runs `pytest` and `ruff` against
-  `<skill>/tests` and `<skill>/pe`. Nothing under `examples/` is collected,
+  `<skill>/tests` and `<skill>/harness`. Nothing under `examples/` is collected,
   linted or executed by anything.
 - **Not maintained.** It is a snapshot. When the pack interface changes, this
   will silently stop matching it, and no test will say so.
-- **Not wired up.** There is no `pe/` here and no `tests/`. Running it means
+- **Not wired up.** There is no `harness/` here and no `tests/`. Running it means
   copying it beside a harness, as described below.
 
 That was a deliberate choice rather than an oversight: keeping it alive as a
@@ -46,7 +46,7 @@ evidence and as a shape example. The raw model output and the assembled prompts
 | `task/*.yaml` — identity + the four tables | 279 |
 | `task/*.py` — the four rule modules | 588 |
 | **written in total** | **1,022** |
-| `pe/` reused, untouched | 1,697 |
+| `harness/` reused, untouched | 1,697 |
 
 ## What it found
 
@@ -54,15 +54,15 @@ The first attempt did not run at all. Five leaks, none of which any existing
 test caught — including `test_seam.py`, written for exactly this purpose, which
 checks for task *vocabulary* while every leak was structural:
 
-1. `pe/validate.py` read `secondary_arrays[0]["path"]` unconditionally, so a
+1. `harness/validate.py` read `secondary_arrays[0]["path"]` unconditionally, so a
    pack with no considered-and-rejected array died at **import**.
-2. `pe/run_headless.sh` computed its queue in a command substitution, so leak
+2. `harness/run_headless.sh` computed its queue in a command substitution, so leak
    1's traceback left the queue empty — and an empty queue reads as "nothing
    pending". A pack that could not be imported reported **"nothing to do …
    every paper already has a result" and exited 0.**
-3. `pe/compare.py` printed prose naming `SUPP-EVIDENCE`, a change class only the
+3. `harness/compare.py` printed prose naming `SUPP-EVIDENCE`, a change class only the
    perturbation pack declares.
-4. `pe/compare.py` hardcoded `"WITHIN-NOISE"`, so a pack omitting that key had
+4. `harness/compare.py` hardcoded `"WITHIN-NOISE"`, so a pack omitting that key had
    papers counted into a class that was never printed.
 5. `test_seam.py`'s statement of the interface was hand-written and missing five
    names the harness genuinely imports.
@@ -105,12 +105,12 @@ cd /tmp/tissue-stated
 rm -rf task prompt.md tests corpus
 cp -R <this directory>/prompt.md <this directory>/task .
 
-TISSUE_RUN_ROOT=/tmp/tissue-run python -m pe.prepare \
+TISSUE_RUN_ROOT=/tmp/tissue-run python -m harness.prepare \
     --set papers-10.txt --corpus <repo>/corpus
-TISSUE_RUN_ROOT=/tmp/tissue-run ./pe/run_headless.sh /tmp/tissue-run/work 4
-python -m pe.validate  --work /tmp/tissue-run/work
-python -m pe.summarize --work /tmp/tissue-run/work
-python -m pe.audit     --work /tmp/tissue-run/work
+TISSUE_RUN_ROOT=/tmp/tissue-run ./harness/run_headless.sh /tmp/tissue-run/work 4
+python -m harness.validate  --work /tmp/tissue-run/work
+python -m harness.summarize --work /tmp/tissue-run/work
+python -m harness.audit     --work /tmp/tissue-run/work
 ```
 
 `task.yaml: outputs` gives it its own run root (`TISSUE_RUN_ROOT`,

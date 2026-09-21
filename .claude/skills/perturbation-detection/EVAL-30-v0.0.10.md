@@ -157,7 +157,7 @@ written.
 
 ## Tooling notes
 
-- `pe.compare` reports SUPPRESSED=1 where a human reads 2. On
+- `harness.compare` reports SUPPRESSED=1 where a human reads 2. On
   `j.stem.2022.11.013` the still-reported test matches the baseline's "AT2
   differentiation medium" against the new run's "Withdrawal of DAPT, DCI, or
   SB431542 from the AT2 differentiation medium", so the paper falls to

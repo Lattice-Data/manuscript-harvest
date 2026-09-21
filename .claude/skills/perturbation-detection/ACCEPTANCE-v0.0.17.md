@@ -8,7 +8,7 @@ perturbation when the research is about the cocktail.
 
 184 of 184 paper-runs completed: both runs validated 92/92 at 1069/1069 and
 1055/1055 quotes verified, 0 failed, 0 misattributed, 0 perturbations dropped.
-Run 2 stopped at 20/92 on a session limit and was resumed; `pe.pending` named the
+Run 2 stopped at 20/92 on a session limit and was resumed; `harness.pending` named the
 72 and the re-run took only those.
 
 ## Result: two fixes landed, one regression introduced, and the regression is mine

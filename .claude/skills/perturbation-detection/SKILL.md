@@ -20,7 +20,7 @@ explains how to run it.
 
 ```
   JUDGMENT   task/ + prompt.md   the spec + four lookup tables         SWAP
-  PLUMBING   pe/                 assemble sources · splice the prompt ·  KEEP
+  PLUMBING   harness/                 assemble sources · splice the prompt ·  KEEP
                                  one call per paper · verify every
                                  quote · prune · recompute · tabulate ·
                                  diff
@@ -28,16 +28,16 @@ explains how to run it.
                                  labelled text with provenance
 ```
 
-`pe/` is 3,535 lines that name this task **nowhere in code**, and
+`harness/` is 3,535 lines that name this task **nowhere in code**, and
 `tests/test_seam.py` holds that line by tokenising every module and rejecting a
 task word in any identifier, string or key. Swap `task/` and the same machinery
 answers a different question — which has been done: a second pack answering
 "which tissue did the sequenced material come from?" runs through a
-byte-identical `pe/`.
+byte-identical `harness/`.
 
-`task/` has **no `__init__.py`**. It is a namespace package, like `pe/`, and holds
+`task/` has **no `__init__.py`**. It is a namespace package, like `harness/`, and holds
 nothing but the spec, the four tables and the four rule modules. The loader that
-reads a pack is `pe/pack.py`, because it is machinery no pack owns: it spent one
+reads a pack is `harness/pack.py`, because it is machinery no pack owns: it spent one
 version inside `task/__init__.py`, and the second pack had to copy all 232 lines
 of it verbatim. The dependency therefore runs pack → harness, which looks
 backwards for a moment and is the ordinary plugin shape — the harness must never
@@ -112,16 +112,16 @@ In this repo, `manuscript-harvest` produces exactly this layout.
 
 Four steps. Only step 2 needs a model; the rest is plain Python.
 
-**Run every command from this directory.** `pe` and `task` are packages resolved
-relative to it, so `python -m pe.prepare` from the repo root is
-`ModuleNotFoundError: No module named 'pe'`.
+**Run every command from this directory.** `harness` and `task` are packages resolved
+relative to it, so `python -m harness.prepare` from the repo root is
+`ModuleNotFoundError: No module named 'harness'`.
 
 ```bash
 cd .claude/skills/perturbation-detection
-python -m pe.prepare  --set papers-30.txt --corpus ../../../corpus
-./pe/run_headless.sh
-python -m pe.validate --write-corpus --corpus ../../../corpus
-python -m pe.summarize
+python -m harness.prepare  --set papers-30.txt --corpus ../../../corpus
+./harness/run_headless.sh
+python -m harness.validate --write-corpus --corpus ../../../corpus
+python -m harness.summarize
 ```
 
 - `--set` is **required** and names a file of paper directory names, one per
@@ -129,15 +129,15 @@ python -m pe.summarize
   `papers-50b.txt` and `papers-all.txt` (the 392 the corpus run used). There is no
   `papers.txt`, and there never was — this line used to name one, and the argparse
   default named `validation_set.txt`, which has never existed either.
-- `--corpus` is **required** too, by `pe.prepare` and by `pe.validate
+- `--corpus` is **required** too, by `harness.prepare` and by `harness.validate
   --write-corpus`. It has no default on purpose. The old default was `./corpus`,
   which resolves against the CWD — and the CWD is this directory, where a stale
   382-paper tree sits beside the real 392-paper one at the repo root. So the
   default could only fire when someone forgot the flag, and it then scored a
   quietly different set of papers: both trees are gitignored, so nothing could
   tell you. A path that does not exist is refused rather than created, which is
-  how the stale tree came to exist in the first place (`pe.validate` once
-  hardcoded `./corpus` while `pe.prepare` honoured `config.yaml`, so
+  how the stale tree came to exist in the first place (`harness.validate` once
+  hardcoded `./corpus` while `harness.prepare` honoured `config.yaml`, so
   `--write-corpus` built a second corpus beside the CWD).
 - **Run artifacts land outside this directory**, under
   `~/.manuscript-harvest/perturbation/{work,output}` by default. That is not
@@ -146,44 +146,44 @@ python -m pe.summarize
   error. Two of six papers hit this on the first v0.0.9 run. Override the root
   with `PERTURBATION_RUN_ROOT`, or a single run with `--work` / `--out`; an
   explicit path is honoured verbatim. The skill directory keeps only what is
-  versioned and shared — `prompt.md`, `pe/`, `task/`, `config.yaml`.
+  versioned and shared — `prompt.md`, `harness/`, `task/`, `config.yaml`.
   The env var and the directory name are `task.yaml: outputs`, so a second pack
   gets its own run root rather than reading this one's papers as pending.
 - Step 2 runs `claude -p` once per paper. It uses the logged-in Claude Code
   session, **not** an API key — the Anthropic SDK and REST API will not work on
   this account. Set `PY=` if `python3` is not the interpreter you want. The model
   is pinned to `claude-opus-5`; override for one run with `PERTURBATION_MODEL`,
-  and `pe.validate` records whichever ran as `validation.model_id`.
+  and `harness.validate` records whichever ran as `validation.model_id`.
 - **Budget:** 30 papers at 3 parallel is roughly 45-75 minutes. Papers run from
   ~45k to ~1M characters. Session limits, not papers, are the binding constraint.
 - **A `FAIL` is usually transient.** One paper in six hit
   `API Error: Connection closed mid-response` on one run. Re-running picks up only
   the missing ones; do not read a FAIL as a content problem without opening the
   log.
-- To know when a long run has finished: `./pe/watch.sh <work_dir>` prints progress
+- To know when a long run has finished: `./harness/watch.sh <work_dir>` prints progress
   every 30s and raises a desktop notification at the end.
-  `./pe/watch.sh <work_dir> status` prints one line and exits. Both only read
+  `./harness/watch.sh <work_dir> status` prints one line and exits. Both only read
   state, so they are safe to start late or interrupt. **Pass a real work
   directory** — with no `manifest.json` there it exits 2 rather than printing
   `0/ done, 0 failed  FINISHED`, which is what it used to do for a path that did
   not exist.
 - **Do not poll with `pgrep -f run_headless.sh`.** The pattern matches the waiting
-  command's own command line, so the loop never exits. Use `./pe/watch.sh`.
-- Everything is resumable. `python -m pe.pending --work <work_dir>` reports what is
+  command's own command line, so the loop never exits. Use `./harness/watch.sh`.
+- Everything is resumable. `python -m harness.pending --work <work_dir>` reports what is
   still missing and why; re-running step 2 picks up only those. A paper counts as
   done only if its result parses, has every required field, and its
   `sources_seen` matches the manifest — so a partial write is re-run, not
   silently accepted.
 
 Alternative for step 2 when working inside an interactive Claude Code session:
-`pe/extract_workflow.js` runs one subagent per paper via the Workflow tool.
+`harness/extract_workflow.js` runs one subagent per paper via the Workflow tool.
 Faster and gives per-paper progress, but needs an interactive session.
 
 Then review:
 
 ```bash
-python -m pe.audit       # six targeted review screens (A–F)
-python -m pe.compare --baseline <old_run_dir>   # version-to-version diff
+python -m harness.audit       # six targeted review screens (A–F)
+python -m harness.compare --baseline <old_run_dir>   # version-to-version diff
 ```
 
 ## Output
@@ -208,7 +208,7 @@ python -m pe.compare --baseline <old_run_dir>   # version-to-version diff
   tier took the unused slot 7 precisely so 1–6 stayed comparable, and that is the
   pattern to copy. The ladder is now ONE list, `task/report.yaml: tiers`, read by
   both the predicate and the queue summary; it used to be written twice inside
-  `pe/summarize.py`, forty lines apart, with the only test pinning them
+  `harness/summarize.py`, forty lines apart, with the only test pinning them
   code-against-code.
 
 - **`suppressed_candidates`** (added in schema 0.0.6, prompt v0.0.10) — one entry per
@@ -269,11 +269,11 @@ python -m pe.compare --baseline <old_run_dir>   # version-to-version diff
 - **Supplementary files are included but must be deduplicated.** Cell Press
   ships an "accepted manuscript" PDF that is often 83–97% a copy of the article.
   Including it doubles cost and breaks source attribution, because a quote then
-  legitimately verifies against two sources. `pe.paper_text.build_sources`
+  legitimately verifies against two sources. `harness.paper_text.build_sources`
   handles this; don't bypass it.
 - **Never `str.replace` a prompt placeholder globally.** `prompt.md` mentions
   `{{PAPER_TEXT}}` twice — once as prose, once as the injection point. Replacing
-  both splices the whole paper into the instructions. `pe.prepare` uses
+  both splices the whole paper into the instructions. `harness.prepare` uses
   `rsplit(..., 1)`.
 - **Missing text must never read as a negative.** A paper whose text is
   truncated or has no Methods cannot resolve to "no"; it is capped at "unclear"
@@ -299,14 +299,14 @@ python -m pe.compare --baseline <old_run_dir>   # version-to-version diff
   one paper; the concrete list held.
 - **So run the acceptance test twice.** A single run cannot tell an attractor from
   ordinary variance — that is the same lesson v0.0.9 learned from two runs of one
-  paper disagreeing. Keep a determination-only baseline (`pe.compare --baseline`),
+  paper disagreeing. Keep a determination-only baseline (`harness.compare --baseline`),
   and include at least one paper that must NOT populate whatever you added.
 - **A suppressed candidate must never move the determination.** It is not a
   perturbation, so it never enters `perturbations` and Stage A cannot see it —
   which is structural, not a convention: `stage_a` reads only
   `processing_status`, `has_single_cell_assay`,
   `perturbation_present_any_assay` and the pairings inside `perturbations`. If a
-  suppression ever changes a call, a write escaped `pe.validate._validate_suppressed`.
+  suppression ever changes a call, a write escaped `harness.validate._validate_suppressed`.
   `tests/test_suppressed_candidates.py` asserts this over every Stage A input
   combination.
 - **An unverifiable suppression quote drops the quote, not the entry.** The
@@ -316,7 +316,7 @@ python -m pe.compare --baseline <old_run_dir>   # version-to-version diff
   statement — the Methods never placing a construct in the sequenced material is
   not quotable.
 - **Session limits, not papers, are the constraint at scale.** Expect to run a
-  large corpus over several sittings, using `pe.pending` between them.
+  large corpus over several sittings, using `harness.pending` between them.
 - `table` blocks are deliberately excluded: a Cell Press KEY RESOURCES TABLE
   lists every reagent in the lab, and this task turns on the *role* a reagent
   plays, not its presence.
@@ -345,7 +345,7 @@ python -m pe.compare --baseline <old_run_dir>   # version-to-version diff
   heading with nothing under it** — "Associated Data", "Supplementary Materials" —
   because the exclusion list took the content and left the label. That is what
   made `text_completeness` flip on byte-identical input, and the cap flip with
-  it. `pe.prepare.assembly_note` now states the cuts per paper in an `ASSEMBLY:`
+  it. `harness.prepare.assembly_note` now states the cuts per paper in an `ASSEMBLY:`
   block rendered from the assembly that just ran, and `"full"` is defined as
   *nothing missing beyond what `ASSEMBLY:` says was removed*. **If you add a
   filter to `config.yaml: exclude_sections` or `include_kinds`, the block picks it
@@ -366,7 +366,7 @@ property to rely on.
 
 Edit `prompt.md`, then bump **`task/task.yaml: version`** — the one place a
 version is written. `prompt.md` carries `{{TASK_VERSION}}` at every site that
-declares it and `pe.prepare` splices the value in, the same way it fills
+declares it and `harness.prepare` splices the value in, the same way it fills
 `{{PAPER_ID}}`, so a stale version in the spec is not a bug to catch but a state
 the file cannot be in. `tests/test_task_version.py` asserts the absence of a
 literal rather than the agreement of copies.
@@ -382,8 +382,8 @@ every rule-bearing file: a version bump says the author thought something
 changed, the hash says whether anything did.
 
 Records written before 0.0.13 carry `schema_version` and no `task_version`.
-`pe.validate` reads them as their run's recorded version and notes it in
-`validation.task_version_source`, and `pe.summarize` counts them once per run —
+`harness.validate` reads them as their run's recorded version and notes it in
+`validation.task_version_source`, and `harness.summarize` counts them once per run —
 **not** once per paper, which is what the first draft did, taking the corpus
 issue count from 146 to 532 and making the column where real problems appear
 unreadable again.
@@ -397,13 +397,13 @@ did not. Fields added since have their own files:
 `tests/test_suppressed_candidates.py` covers the `suppressed_candidates` addition, and its
 first job is
 to prove the determination logic is unaffected. It also guards the closed `rule`
-set against drift between `prompt.md` and `pe.validate` — v0.0.7's precedence bug
+set against drift between `prompt.md` and `harness.validate` — v0.0.7's precedence bug
 was one rule stated in three places and changed in two. `prompt.md` also has a toggle table at the
 bottom for the recurring boundary calls (reporter-only genetic edits,
 observational disease states, spot-based spatial assays, degraded-text
 handling).
 
-When re-scoring an existing run under a new prompt version, use `pe.compare`.
+When re-scoring an existing run under a new prompt version, use `harness.compare`.
 It classifies each changed paper by *which determination input moved*, so
 "unexplained" means a genuine logic bug rather than a matter of opinion.
 
@@ -419,7 +419,7 @@ layout is `{manifest.json, r1/, r2/}` rather than a `validated/` of its own.
 pointed at the parent names both options rather than guessing. All three review
 tools used to report **zero papers and exit 0** on that directory, which is a
 PASS over an empty set;
-`pe.compare --baseline2` reports "changed BEYOND the noise floor" and labels the
+`harness.compare --baseline2` reports "changed BEYOND the noise floor" and labels the
 rest `WITHIN-NOISE`. It refuses a version mismatch between the two baseline runs
 and exits 2, because comparing versions there reports a real effect as variance —
 the inversion the flag exists to prevent, and a mistake its author made on first

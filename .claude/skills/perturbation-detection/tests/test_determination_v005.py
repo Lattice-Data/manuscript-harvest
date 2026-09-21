@@ -18,8 +18,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pe.paper_text import split_assembled, verify_quote_sourced  # noqa: E402
-from pe.validate import validate_result  # noqa: E402
+from harness.paper_text import split_assembled, verify_quote_sourced  # noqa: E402
+from harness.validate import validate_result  # noqa: E402
 # The determination itself lives in the pack. This file is the assertion that
 # prompt.md's Stage A, Stage B and truth table have not moved since v0.0.5, so it
 # reads them from where they are stated rather than from the harness that applies
@@ -270,7 +270,7 @@ def _v005_result(**over):
     The determination fields are the ones this file exercises; the envelope
     tracks the live schema (0.0.7) so these end-to-end cases keep validating a
     record shape the pipeline actually accepts, rather than drifting into
-    testing a version `pe.validate` now rejects. The literal is the one thing
+    testing a version `harness.validate` now rejects. The literal is the one thing
     here that has to be edited on a version bump; `tests/test_task_version.py`
     is what notices if it is not.
     """

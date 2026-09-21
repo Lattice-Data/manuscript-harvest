@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Version-to-version comparison for prompt.md's validation loop step 1.
 
-    python -m pe.compare --baseline <dir> [--out output/<a>_vs_<b>.txt]
+    python -m harness.compare --baseline <dir> [--out output/<a>_vs_<b>.txt]
 
 The prompt is explicit that this diff is NOT expected to be empty, and that it
 should be *classified* rather than merely counted:
@@ -46,8 +46,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pe.runroot import output_default, output_name, work_default  # noqa: E402
-from pe.runstate import RunError, load_manifest, resolve_run_dir  # noqa: E402
+from harness.runroot import output_default, output_name, work_default  # noqa: E402
+from harness.runstate import RunError, load_manifest, resolve_run_dir  # noqa: E402
 
 # The change classes, their labels, and the predicates that decide which one
 # accounts for a movement are the pack's: `task/change.yaml` and
@@ -272,5 +272,5 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except RunError as exc:
-        print(f"pe.compare: {exc}", file=sys.stderr)
+        print(f"harness.compare: {exc}", file=sys.stderr)
         raise SystemExit(2) from None

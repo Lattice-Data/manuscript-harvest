@@ -6,14 +6,14 @@ Six modules read one, and before this module each read `manifest.json` with a ba
 twelve-line traceback at five duplicated sites.
 
 **The rule that matters is the other one.** A reader that loads nothing must not
-report. `pe.compare` pointed at a two-run baseline directory used to print
+report. `harness.compare` pointed at a two-run baseline directory used to print
 
     baseline v? -> v comparison over 0 paper(s)
     ...
       every change is accounted for by a known v0.0.5 mechanism.
 
 and exit 0 -- a PASS on an empty set, which is how a prompt version gets accepted
-having compared nothing. `pe.audit` printed six screens of zero and `pe.summarize`
+having compared nothing. `harness.audit` printed six screens of zero and `harness.summarize`
 wrote a CSV of blank rows, both exit 0. The directory was the one SKILL.md names.
 
 That is the repo's own forbidden failure -- emptiness with no account of itself --
@@ -24,7 +24,7 @@ just has to say so.
 
 The layout also has a second shape this module knows about. The acceptance protocol
 preserves two runs of one prompt as `<baseline>/{manifest.json, r1/, r2/}`, and only
-`pe.compare --baseline2` ever knew that. A bare `--work <that dir>` finds no
+`harness.compare --baseline2` ever knew that. A bare `--work <that dir>` finds no
 `validated/` at all, which is where the silent zero came from. `resolve_run_dir`
 names the shape and says which subdirectory to pass rather than guessing: picking
 one silently is the same class of mistake as handing `--baseline2` a different
@@ -51,7 +51,7 @@ class RunError(Exception):
 def resolve_corpus(cli_value: str | None, config_value: str | None) -> Path:
     """The corpus tree to read papers from, or RunError saying how to name one.
 
-    Shared by pe.prepare and pe.validate so the two cannot disagree about which
+    Shared by harness.prepare and harness.validate so the two cannot disagree about which
     tree a run used -- they already could: validate defaulted to `./corpus`
     independently of prepare, so a config pointing elsewhere made them read
     different trees for the same run.
@@ -65,7 +65,7 @@ def resolve_corpus(cli_value: str | None, config_value: str | None) -> Path:
 
     The path must also EXIST. Without that check a typo produced a run over zero
     papers -- "0/392 prepared" and a zero exit, which is the vacuous-pass shape
-    the empty-set refusal in pe.prepare was added for.
+    the empty-set refusal in harness.prepare was added for.
     """
     if not (cli_value or config_value):
         raise RunError(
@@ -136,7 +136,7 @@ def load_manifest(work: Path) -> list[dict]:
             hint = (f" It does hold {'/'.join(runs)}, so this may be a two-run "
                     f"baseline -- try {work / runs[0]}.")
         elif work.is_dir():
-            hint = " The directory exists but has no manifest; run pe.prepare first."
+            hint = " The directory exists but has no manifest; run harness.prepare first."
         else:
             hint = " The directory does not exist -- check --work."
         raise RunError(f"no manifest at {path}.{hint}")
@@ -211,7 +211,7 @@ class Run:
         hint = (f" {self.work} holds {'/'.join(runs)} -- pass one of those "
                 f"subdirectories instead."
                 if runs else
-                f" Run pe.validate --work {self.work} first."
+                f" Run harness.validate --work {self.work} first."
                 if self.stage == "validated" else "")
         raise RunError(
             f"{tool}: no {self.stage} record could be read from {self.work} "
@@ -223,8 +223,8 @@ def load_validated(work: Path, *, prefer: str | None = None) -> Run:
     """Load `<work>/validated/<doi>.json` for every prepared manifest entry.
 
     A record that will not parse is recorded and skipped rather than aborting the
-    run: `pe.summarize` and `pe.audit` both used to die on a single corrupt file
-    and produce no output at all, while `pe.validate` had always degraded politely
+    run: `harness.summarize` and `harness.audit` both used to die on a single corrupt file
+    and produce no output at all, while `harness.validate` had always degraded politely
     on the equivalent bad raw file.
     """
     resolved = resolve_run_dir(work, prefer=prefer)
@@ -248,11 +248,11 @@ def entry_paths(entry: dict, work: Path) -> tuple[Path, Path]:
     The manifest stores these as strings, and older manifests were written with a
     relative --work, so they only resolved from the cwd that created them. Deriving
     from (work_dir, doi) instead makes a manifest portable, and matches what
-    pe/run_headless.sh has always done -- the two disagreeing is what let
-    pe.pending report 37 completed papers as missing while run_headless correctly
+    harness/run_headless.sh has always done -- the two disagreeing is what let
+    harness.pending report 37 completed papers as missing while run_headless correctly
     skipped them.
 
-    It lived in `pe.paper_text` beside the source assembly, which knows nothing
+    It lived in `harness.paper_text` beside the source assembly, which knows nothing
     about run directories. This module already owns what a run directory is, so
     the two pieces of that knowledge are now in one place.
     """

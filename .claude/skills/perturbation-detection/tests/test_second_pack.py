@@ -11,25 +11,25 @@ The second pack answered "which tissue did the sequenced material come from, and
 does the paper state it explicitly?" over ten real papers. It shares nothing with
 perturbation detection except the mechanism.
 
-  LEAK 1  `pe/validate.py` read `secondary_arrays[0]["path"]` unconditionally, so
+  LEAK 1  `harness/validate.py` read `secondary_arrays[0]["path"]` unconditionally, so
           a pack declaring no considered-and-rejected array died at IMPORT with
           `IndexError: list index out of range`. A secondary array is one task's
           answer to keeping its exclusions visible; indexing [0] made it a
           requirement of the shape.
-  LEAK 2  `pe/run_headless.sh` computed its queue in a command substitution, so
+  LEAK 2  `harness/run_headless.sh` computed its queue in a command substitution, so
           leak 1's traceback left `$DOIS` empty -- and an empty queue reads as
           "nothing pending". A broken pack printed "nothing to do ... every paper
           already has a result" and exited 0. The vacuous-pass shape again, in
-          the one script `pe/runstate.py` does not cover.
-  LEAK 3  `pe/compare.py` printed three lines of prose naming `SUPP-EVIDENCE`, a
+          the one script `harness/runstate.py` does not cover.
+  LEAK 3  `harness/compare.py` printed three lines of prose naming `SUPP-EVIDENCE`, a
           change class only the perturbation pack declares, so the second pack's
           report told its reader to look for a class absent from its own table.
-  LEAK 4  `pe/compare.py` hardcoded the class name `"WITHIN-NOISE"`. The harness
+  LEAK 4  `harness/compare.py` hardcoded the class name `"WITHIN-NOISE"`. The harness
           assigns that class itself, so it owns the concept -- but the label is
           rendered from the pack's table, so a pack omitting the key had papers
           counted into a class that was never printed.
   LEAK 5  `test_seam.py`'s statement of the interface was a hand-written list,
-          and it was missing FIVE names `pe/` genuinely imports: `CC_TEXT`,
+          and it was missing FIVE names `harness/` genuinely imports: `CC_TEXT`,
           `PRIMARY_FIELD_GLOSS`, `FOOTER`, and the two added above. A
           hand-maintained list of what the interface IS, is precisely the
           duplication this split was about. It is derived from the harness's own
@@ -37,7 +37,7 @@ perturbation detection except the mechanism.
 
 Leaks 3 and 4 are one shape, and `test_no_pack_class_is_hardcoded_in_the_harness`
 is the generalisation: a class name or check code from ANY pack's tables must not
-appear as a string literal in `pe/`.
+appear as a string literal in `harness/`.
 
 The pack itself is archived at `examples/second-pack/`, with its 10-paper result
 and its leak list. The guards below deliberately do NOT use it: they build a
@@ -60,7 +60,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pe.pack import tables  # noqa: E402
+from harness.pack import tables  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 yaml = pytest.importorskip("yaml")
@@ -94,7 +94,7 @@ def test_no_pack_class_is_hardcoded_in_the_harness():
     vocabulary = _pack_class_vocabulary()
     assert vocabulary, "the pack declares no classes or codes -- parser broken"
     offenders: dict[str, set[str]] = {}
-    for path in sorted((ROOT / "pe").glob("*.py")):
+    for path in sorted((ROOT / "harness").glob("*.py")):
         for token in tokenize.generate_tokens(io.StringIO(path.read_text()).readline):
             if token.type != tokenize.STRING:
                 continue
@@ -152,14 +152,14 @@ def test_no_key_in_the_harness_contract_is_read_by_nothing():
     cannot. v0.0.14 wired them up and proved it byte-for-byte anyway. Two of
     those keys turned out to be the harness-contract severity after all, not the
     pack's own business: `reason_rules.none_value` and `required_when` are read
-    by `pe/validate.py`, so a pack changing either was silently ignored.
+    by `harness/validate.py`, so a pack changing either was silently ignored.
 
     `test_no_key_in_a_pack_TABLE_is_read_by_nothing` below now covers all four,
     with an allow-list that has to state a reason per key.
     """
     source = "\n".join(
         p.read_text() for p in
-        sorted((ROOT / "pe").glob("*.py")) + sorted((ROOT / "task").glob("*.py")))
+        sorted((ROOT / "harness").glob("*.py")) + sorted((ROOT / "task").glob("*.py")))
     contract = yaml.safe_load((ROOT / "task" / "task.yaml").read_text()) or {}
 
     #: Read via the parent mapping rather than by name, or written for a human.
@@ -171,7 +171,7 @@ def test_no_key_in_the_harness_contract_is_read_by_nothing():
                   if k not in UNREAD
                   and f'"{k}"' not in source and f"'{k}'" not in source)
     assert not dead, (
-        f"task.yaml declares {dead} and nothing in pe/ or task/ reads them. Wire "
+        f"task.yaml declares {dead} and nothing in harness/ or task/ reads them. Wire "
         f"the key up, delete it, or add it to UNREAD with a reason. "
         f"`spec.read_back_marker` sat dead for a whole version, and a pack that "
         f"changed it was silently ignored.")
@@ -267,10 +267,10 @@ none
 
 
 def _copy_harness(base: Path) -> None:
-    """Copy `pe/` verbatim -- files only, so `__pycache__` is not read as one."""
-    target = base / "pe"
+    """Copy `harness/` verbatim -- files only, so `__pycache__` is not read as one."""
+    target = base / "harness"
     target.mkdir(parents=True, exist_ok=True)
-    for module in sorted((ROOT / "pe").iterdir()):
+    for module in sorted((ROOT / "harness").iterdir()):
         if module.is_file():
             (target / module.name).write_bytes(module.read_bytes())
 
@@ -341,11 +341,11 @@ def _minimal_pack(base: Path) -> None:
         "match": {"min_shared_words": 2, "standalone_word_length": 8,
                   "stopwords": ["the"]},
     }, sort_keys=False))
-    # No `task/__init__.py`: the loader is `pe/pack.py`, which arrives with the
+    # No `task/__init__.py`: the loader is `harness/pack.py`, which arrives with the
     # harness. Copying it per pack is what this move removed.
     # The four rule modules, minimal.
     (base / "task" / "rules.py").write_text('''
-from pe.pack import tables
+from harness.pack import tables
 _REC = tables()["record"]
 _PATH = _REC["item_array"]["path"]
 
@@ -395,7 +395,7 @@ def progress_line(doi, record):
 CC_TEXT = {}
 ''')
     (base / "task" / "report.py").write_text('''
-from pe.pack import tables
+from harness.pack import tables
 COLUMNS = list(tables()["report"]["columns"])
 TIERS = [(9, "everything")]
 
@@ -417,7 +417,7 @@ def counters(rows, results):
     return ["", f"{len(rows)} row(s)"]
 ''')
     (base / "task" / "screens.py").write_text('''
-from pe.pack import tables
+from harness.pack import tables
 SCREENS = {s["id"]: s for s in tables()["report"]["screens"]}
 
 
@@ -428,7 +428,7 @@ def render(loaded, text_for):
     return [], {"A": 0}
 ''')
     (base / "task" / "change.py").write_text('''
-from pe.pack import tables
+from harness.pack import tables
 _T = tables()
 ORDER = list(_T["change"]["order"])
 CLASS_LABELS = dict(_T["change"]["classes"])
@@ -460,7 +460,7 @@ def render_unchanged(doi, new, entry):
 
 def test_a_pack_with_no_secondary_array_imports(tmp_path):
     """LEAK 1, reproduced. This is an import-time failure, so it is checked in a
-    subprocess with the minimal pack on the path -- `pe.validate` reads its
+    subprocess with the minimal pack on the path -- `harness.validate` reads its
     tables at import and cannot be re-imported against a different pack
     in-process."""
     base = tmp_path / "skill"
@@ -470,7 +470,7 @@ def test_a_pack_with_no_secondary_array_imports(tmp_path):
 
     probe = subprocess.run(
         [sys.executable, "-c",
-         "import pe.validate as v, pe.summarize, pe.audit, pe.compare, pe.pending; "
+         "import harness.validate as v, harness.summarize, harness.audit, harness.compare, harness.pending; "
          "print(v.SECONDARY_PATH)"],
         cwd=base, capture_output=True, text=True)
     assert probe.returncode == 0, (
@@ -487,7 +487,7 @@ def test_a_pack_with_no_secondary_array_validates_a_record(tmp_path):
 
     script = (
         "import json\n"
-        "from pe.validate import validate_result\n"
+        "from harness.validate import validate_result\n"
         "out = validate_result({'task_version': '0.0.1', 'answer': 'yes',\n"
         "                       'processing_status': 'ok', 'items': []},\n"
         "                      {'main': 'text'}, 0.85, version='0.0.1')\n"
@@ -512,7 +512,7 @@ def test_run_headless_refuses_when_the_pending_list_cannot_be_computed(tmp_path)
     So a pack that cannot be imported reported a completed run and exited 0."""
     base = tmp_path / "skill"
     _copy_harness(base)
-    (base / "pe" / "run_headless.sh").chmod(0o755)
+    (base / "harness" / "run_headless.sh").chmod(0o755)
     # No task/ at all: the import cannot succeed.
     work = base / "work"
     (work / "raw").mkdir(parents=True)
@@ -520,7 +520,7 @@ def test_run_headless_refuses_when_the_pending_list_cannot_be_computed(tmp_path)
     (work / "manifest.json").write_text(json.dumps(
         [{"doi": "x", "source_ids": ["main"]}]))
 
-    probe = subprocess.run(["bash", "pe/run_headless.sh", str(work), "1"],
+    probe = subprocess.run(["bash", "harness/run_headless.sh", str(work), "1"],
                            cwd=base, capture_output=True, text=True,
                            env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path),
                                 "PERTURBATION_SKIP_PREFLIGHT": "1"})
@@ -541,7 +541,7 @@ def test_no_key_in_a_pack_table_is_read_by_nothing(table):
     lower severity because a pack talking to its own rule modules fails loudly.
 
     Two of them were not that at all. `reason_rules.none_value` and
-    `required_when` are read by `pe/validate.py` -- pack-to-HARNESS keys, across
+    `required_when` are read by `harness/validate.py` -- pack-to-HARNESS keys, across
     the shipping boundary, where a mismatch is exactly as silent as
     `read_back_marker`'s was. The severity argument was wrong on the facts, which
     is the argument for testing rather than triaging.
@@ -552,7 +552,7 @@ def test_no_key_in_a_pack_table_is_read_by_nothing(table):
     """
     source = "\n".join(
         p.read_text() for p in
-        sorted((ROOT / "pe").glob("*.py")) + sorted((ROOT / "task").glob("*.py")))
+        sorted((ROOT / "harness").glob("*.py")) + sorted((ROOT / "task").glob("*.py")))
     doc = yaml.safe_load((ROOT / "task" / f"{table}.yaml").read_text()) or {}
 
     parents: dict[str, set[str]] = {}
@@ -564,7 +564,7 @@ def test_no_key_in_a_pack_table_is_read_by_nothing(table):
         and key not in TABLE_KEYS_FOR_A_HUMAN
         and not (ancestors & CONTENT_PARENTS))
     assert not dead, (
-        f"task/{table}.yaml declares {dead} and nothing in pe/ or task/ reads "
+        f"task/{table}.yaml declares {dead} and nothing in harness/ or task/ reads "
         f"them. Wire the key up, delete it, or add it to TABLE_KEYS_FOR_A_HUMAN "
         f"with a reason. A key nobody reads looks like it works and does not: "
         f"`cap.reason` sat beside `reason_rules.cap_reason` holding the same "

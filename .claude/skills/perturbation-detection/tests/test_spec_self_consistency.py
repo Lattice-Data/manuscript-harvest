@@ -34,7 +34,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pe.pack import load as load_pack, tables  # noqa: E402
+from harness.pack import load as load_pack, tables  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -294,7 +294,7 @@ def test_the_batch_spec_records_no_field_the_harness_never_writes(spec):
 
     Step 9 described `{"run": {...}, "result": {...}}` with `run_id`,
     `assembled_text_sha256`, `input_tokens` and `error_code`. Every record is
-    flat with a `validation` block, and those four names appear nowhere in `pe/`,
+    flat with a `validation` block, and those four names appear nowhere in `harness/`,
     `task/` or `tests/`. A spec of the record shape is what the next pack author
     builds against, so an aspirational one is worse than none.
     """
@@ -302,7 +302,7 @@ def test_the_batch_spec_records_no_field_the_harness_never_writes(spec):
     blocks = re.findall(r"```json(.*?)```", spec_body, re.DOTALL)
     assert blocks, "no JSON examples in the batch spec; parser found nothing"
     source = "\n".join(p.read_text() for p in
-                       sorted((ROOT / "pe").glob("*.py")) + sorted((ROOT / "task").glob("*.py")))
+                       sorted((ROOT / "harness").glob("*.py")) + sorted((ROOT / "task").glob("*.py")))
     declared = {k for block in blocks for k in re.findall(r'"([a-z_][a-z0-9_]*)":', block)}
     ghosts = sorted(k for k in declared
                     if f'"{k}"' not in source and f"'{k}'" not in source)
@@ -317,7 +317,7 @@ def test_the_batch_spec_records_no_field_the_harness_never_writes(spec):
     derived = {f'{rec["primary_field"]}_final'}
     ghosts = [g for g in ghosts if g not in manifest_owned and g not in derived]
     assert not ghosts, (
-        f"the batch spec presents {ghosts} as record fields and nothing in pe/ or "
+        f"the batch spec presents {ghosts} as record fields and nothing in harness/ or "
         f"task/ writes them. Describe what the harness does, or build it.")
 
 

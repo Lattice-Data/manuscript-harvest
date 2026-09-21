@@ -167,7 +167,7 @@ reproduce the curator's rulings. The corpus can be curated on.
 ## Operational note: a guard keyed on too narrow a signature
 
 The run was interrupted at 249/392 by a usage limit and resumed cleanly via
-`pe.pending`, with no corruption -- all 143 interrupted papers produced no raw
+`harness.pending`, with no corruption -- all 143 interrupted papers produced no raw
 file at all rather than a partial one.
 
 But `run_headless.sh`'s `.auth-failed` sentinel never fired, and this is exactly

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Stage 1: build one self-contained prompt file per paper.
 
-    python -m pe.prepare [--set validation_set.txt] [--work work/]
+    python -m harness.prepare [--set validation_set.txt] [--work work/]
 
 Writes work/prompts/<doi>.txt (ready to hand to a Claude subagent verbatim)
 and work/manifest.json. No LLM calls.
@@ -22,7 +22,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from pe.paper_text import (  # noqa: E402
+from harness.paper_text import (  # noqa: E402
     EXCLUDE_SECTIONS, INCLUDE_KINDS, assemble_paper_text, build_sources,
     read_blocks_jsonl, section_chars,
 )
@@ -32,9 +32,9 @@ try:
 except ImportError:  # config is optional; defaults live in paper_text.py
     yaml = None
 
-from pe.runroot import work_default  # noqa: E402
-from pe.pack import PackError, load as load_pack, spec_version_line  # noqa: E402
-from pe.runstate import RunError, resolve_corpus  # noqa: E402
+from harness.runroot import work_default  # noqa: E402
+from harness.pack import PackError, load as load_pack, spec_version_line  # noqa: E402
+from harness.runstate import RunError, resolve_corpus  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -57,7 +57,7 @@ def build_template(pack) -> str:
     **This is the pack/harness interface, and it used to be five bare string
     literals across two modules with nothing declaring them.** Three heading
     anchors here, three placeholder names here, and a read-back marker in
-    `pe.validate` -- so a replacement spec that renamed a heading failed with an
+    `harness.validate` -- so a replacement spec that renamed a heading failed with an
     unmessaged `ValueError` from a `str.index`, and the only way to learn the
     contract was to read the slicing code. They now come from
     `task.yaml: spec.anchors` / `spec.placeholders`, and every violation names
@@ -123,7 +123,7 @@ def sources_within_budget(blocks, exclude, include, include_supplementary, budge
     Returns (sources, stats, truncation) where truncation records which rung was
     used. `text_completeness` is the model's call per prompt.md Step 0, but a
     harness-applied truncation is a fact the model cannot see, so it is recorded
-    here and enforced by pe.validate.
+    here and enforced by harness.validate.
     """
     last = None
     for rung, (extra_sections, largest_supp_only) in enumerate(_TRUNCATION_LADDER):
@@ -234,7 +234,7 @@ def assembly_note(sources, stats, truncation, exclude_sections, include_kinds,
 def main() -> int:
     parser = argparse.ArgumentParser()
     # Required rather than defaulted. The old default, `validation_set.txt`, has
-    # never existed in this skill, so `python -m pe.prepare` with no arguments
+    # never existed in this skill, so `python -m harness.prepare` with no arguments
     # failed with a FileNotFoundError naming a file nobody could have created on
     # purpose. SKILL.md's `--set papers.txt` names one that does not ship either;
     # the sets that do are papers-6/30/50/50b/all.txt.
@@ -267,7 +267,7 @@ def main() -> int:
 
     pack = load_pack()
     template = build_template(pack)
-    # Stamped into the manifest so pe.validate can report the version the
+    # Stamped into the manifest so harness.validate can report the version the
     # EXTRACTION ran under. Reading the spec at validate time instead means any
     # re-validation after a version bump silently relabels old results as new.
     stamp = pack.stamp()
@@ -283,7 +283,7 @@ def main() -> int:
             f"the spec is the drift that 0.0.13 removed.")
     # Resolved to absolute: the manifest records raw_file/prompt_file as strings,
     # and a relative --work made those readable only from the cwd that created
-    # them. Running pe.validate/pe.pending from anywhere else then reported every
+    # them. Running harness.validate/harness.pending from anywhere else then reported every
     # paper as missing.
     work = Path(args.work).resolve()
     (work / "prompts").mkdir(parents=True, exist_ok=True)
@@ -441,5 +441,5 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except (PackError, RunError) as exc:
-        print(f"pe.prepare: {exc}", file=sys.stderr)
+        print(f"harness.prepare: {exc}", file=sys.stderr)
         raise SystemExit(2) from None

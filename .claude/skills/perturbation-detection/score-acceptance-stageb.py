@@ -1,6 +1,6 @@
 """Score the Stage B entry-condition acceptance runs (v0.0.25).
 
-**Lives at the skill root, NOT in `pe/`** -- `tests/test_seam.py` asserts the
+**Lives at the skill root, NOT in `harness/`** -- `tests/test_seam.py` asserts the
 harness names no task word in code, and this file is hardcoded DOIs and
 `perturbation_present`. Same placement and same reason as
 `score-acceptance-v0023.py`.
@@ -22,7 +22,7 @@ The rest guard the ways this change could go wrong rather than right:
 
   2  the cap still holds where the HARNESS can prove truncation (rung 3). Those
      two papers must stay capped whatever the model reports -- if telling the
-     model about the truncation talks it out of reporting one, `pe.validate`'s
+     model about the truncation talks it out of reporting one, `harness.validate`'s
      override is the backstop and must be seen to fire.
   3  no non-negative is ever capped. Exercised by one paper here rather than by
      the four degraded-text positives a longer draft carried: that property is a
@@ -59,7 +59,7 @@ UNQUOTABLE_KINDS = {"no_methods_content"}
 # "yes", and -- when capped -- that the record says why.
 CAPPED = {
     # rung 3: the harness truncated these itself, so the cap does not depend on
-    # the model's opinion at all. `pe.validate` forces "truncated" when the model
+    # the model's opinion at all. `harness.validate` forces "truncated" when the model
     # says "full" on a harness-truncated text; these two are where that fires.
     "10.1126_sciimmunol.adz8650": "unclear",
     "10.3390_genes15030298": "unclear",
@@ -214,7 +214,7 @@ def main() -> int:
                 cap_on_positive.append((pid, v.get("stage_a")))
                 verdict.append("CAP-ON-NONNEGATIVE")
         # Where the harness itself truncated, the cap must not depend on the
-        # model's opinion: `pe.validate` overrides "full" to "truncated".
+        # model's opinion: `harness.validate` overrides "full" to "truncated".
         if exp == "unclear" and group == "capped":
             for i, v in enumerate((v1, v2), 1):
                 if not v.get("stage_b_capped"):
