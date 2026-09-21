@@ -20,6 +20,7 @@ on a dead session closes as soon as the tier has named the refusal.
 import argparse
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
@@ -608,6 +609,11 @@ def cmd_adopt(args) -> int:
         print(f"{directory}: no manifest.json", file=sys.stderr)
         return 1
 
+    if not args.path and not args.set_complete:
+        print("nothing to do: name a path to adopt, or pass --set-complete",
+              file=sys.stderr)
+        return 1
+
     adopted, refused = [], []
     for relative_path in args.path:
         try:
@@ -621,18 +627,47 @@ def cmd_adopt(args) -> int:
         print(f"  {verb} {entry['path']}: {store.human_bytes(entry['bytes'])}, "
               f"index={entry['index']}, label={entry['label']}")
 
-    if adopted and args.apply:
-        # `finalize_status` re-derives `status` from the supplement *set*'s verdict,
-        # which this does not touch -- see `adopt_supplement`. Called anyway so the
-        # record is never left inconsistent with its own fields.
+    settled = False
+    if args.set_complete:
+        if not args.note:
+            # An unexplained human override is the thing this record exists to
+            # prevent. The note is where "18 of 18 from academic.oup.com, PMC hosts
+            # none" lives, and without it the status is an assertion with no
+            # evidence behind it -- which is what the old one already was.
+            print("--set-complete needs --note saying how the set was confirmed; "
+                  "nothing was written", file=sys.stderr)
+            return 1
+        previous = record.get("supplementary_status")
+        if args.apply:
+            record["supplementary_status"] = store.SUPPL_BY_HAND
+            record["supplementary_confirmed"] = {
+                "at": datetime.now(timezone.utc).isoformat(),
+                "note": args.note,
+                "replaced": previous,
+            }
+        settled = True
+        print(f"  {'set' if args.apply else 'would set'} supplementary_status: "
+              f"{previous!r} -> {store.SUPPL_BY_HAND!r}")
+
+    if (adopted or settled) and args.apply:
+        # `finalize_status` re-derives the top-level `status` from the supplement
+        # set's verdict, so it has to run after `--set-complete` has written one.
         store.write_manifest(directory, store.finalize_status(record))
-        print(f"{len(adopted)} file(s) now have a manifest entry. "
-              f"supplementary_status is unchanged at "
-              f"{record.get('supplementary_status')!r}: that is the verdict about "
-              f"the set, and a recovered file does not settle a set still missing "
-              f"another. Re-extract to pick the text up", file=sys.stderr)
-    elif adopted:
-        print("re-run with --apply to write the entries", file=sys.stderr)
+        if settled:
+            print(f"{len(adopted)} file(s) adopted and the set marked "
+                  f"{store.SUPPL_BY_HAND!r}; the article is now "
+                  f"{record['status']!r}. Re-extract to pick the text up",
+                  file=sys.stderr)
+        else:
+            print(f"{len(adopted)} file(s) now have a manifest entry. "
+                  f"supplementary_status is unchanged at "
+                  f"{record.get('supplementary_status')!r}: that is the verdict "
+                  f"about the set, and a recovered file does not settle a set still "
+                  f"missing another. Pass --set-complete --note '...' if a human has "
+                  f"confirmed otherwise. Re-extract to pick the text up",
+                  file=sys.stderr)
+    elif adopted or settled:
+        print("re-run with --apply to write the changes", file=sys.stderr)
     return 1 if refused else 0
 
 
@@ -764,12 +799,27 @@ def build_parser() -> argparse.ArgumentParser:
              "never got (drop-orphans in the keeping direction)",
     )
     adopt_parser.add_argument("slug", help="one corpus directory name")
-    adopt_parser.add_argument("path", nargs="+",
+    # `nargs="*"`, so `--set-complete` can stand alone: a set may be confirmed
+    # complete by a human without any file needing adoption -- the files can
+    # already be referenced from an earlier fetch and only the verdict be wrong.
+    adopt_parser.add_argument("path", nargs="*",
                               help="paths relative to the article directory, e.g. "
                                    "supplementary/07_NIHMS1595611-supplement-TableS8.txt")
     adopt_parser.add_argument("--corpus-dir", default=None)
     adopt_parser.add_argument("--apply", action="store_true",
                               help="write the entries (default: report only)")
+    adopt_parser.add_argument(
+        "--set-complete", action="store_true",
+        help="record that a human has confirmed the supplement set is complete, "
+             "as supplementary_status=fetched_by_hand. Needs --note. For the case "
+             "no tier can reach: 10.1164/rccm.202207-1384oc has no supplements in "
+             "PMC and a Cloudflare interstitial at the publisher, so its verdict "
+             "stays 'every supplement was lost' however many arrive by hand",
+    )
+    adopt_parser.add_argument(
+        "--note", default=None,
+        help="how the set was confirmed; recorded in supplementary_confirmed",
+    )
     adopt_parser.set_defaults(func=cmd_adopt)
 
     login_parser = subparsers.add_parser(

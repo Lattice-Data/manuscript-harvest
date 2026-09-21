@@ -21,8 +21,11 @@ import json
 import pytest
 import yaml
 
+from manuscript_harvest import article_state
 from manuscript_harvest.fetch import cli, store
+from manuscript_harvest.fetch.identifiers import doi_slug
 from manuscript_harvest.fetch.fetcher import build_http
+from tests.fakes import DOI, make_article, make_pdf, make_xlsx
 
 
 def _config_file(tmp_path, **fetch_overrides):
@@ -700,3 +703,99 @@ def test_no_notice_when_there_are_no_duplicates(tmp_path, monkeypatch, capsys):
                         lambda doi, *a, **k: _record(doi, proxy_tried=False, expired=False))
     cli.cmd_batch(args)
     assert "collapsed" not in capsys.readouterr().err
+
+
+# -- adopt, and the one status a human may write -----------------------------
+
+
+PDF = make_pdf(text=f"Single-cell atlas. doi:{DOI}. Methods. Islets dissociated. " * 6)
+TABLE_A = make_xlsx({"S1": [["gene", "log2fc"], ["TP53", 1.4]]})
+
+
+def _adopt(tmp_path, corpus, slug, *args):
+    config = _config_file(tmp_path, corpus_dir=str(corpus))
+    parsed = cli.build_parser().parse_args(
+        ["--config", str(config), "adopt", slug, *args])
+    return parsed.func(parsed)
+
+
+def _hand_fetched(corpus, status="none_retrieved"):
+    """An article whose supplements are on disk under a verdict that denies it."""
+    directory = make_article(corpus / doi_slug(DOI), fulltext=PDF,
+                             supplements=[("t.xlsx", TABLE_A)])
+    record = store.read_manifest(directory)
+    record["supplementary_status"] = status
+    store.write_manifest(directory, record)
+    return directory
+
+
+def test_set_complete_is_refused_without_a_note(tmp_path, capsys):
+    """An unexplained human override is what the record exists to prevent: the
+    status it replaces was already an assertion with no evidence behind it."""
+    corpus = tmp_path / "corpus"
+    directory = _hand_fetched(corpus)
+
+    code = _adopt(tmp_path, corpus, doi_slug(DOI), "--apply", "--set-complete")
+
+    assert code == 1
+    assert "needs --note" in capsys.readouterr().err
+    assert store.read_manifest(directory)["supplementary_status"] == "none_retrieved"
+
+
+def test_a_hand_confirmed_set_settles_the_article_and_records_who_said_so(tmp_path):
+    """`10.1164/rccm.202207-1384oc` is the case: PMC hosts none of its supplements
+    and the publisher is behind Cloudflare, so all 18 arrived by hand and no tier
+    can ever say otherwise."""
+    corpus = tmp_path / "corpus"
+    directory = _hand_fetched(corpus)
+
+    code = _adopt(tmp_path, corpus, doi_slug(DOI), "--apply",
+                  "--set-complete", "--note", "18 of 18 by hand from OUP")
+
+    assert code == 0
+    after = store.read_manifest(directory)
+    assert after["supplementary_status"] == store.SUPPL_BY_HAND
+    assert after["status"] == "complete"
+    assert after["supplementary_confirmed"]["note"] == "18 of 18 by hand from OUP"
+    assert after["supplementary_confirmed"]["replaced"] == "none_retrieved"
+
+
+def test_a_hand_confirmed_set_is_not_called_plainly_fetched(tmp_path):
+    """Its own word, because recording it as `fetched` would claim a tier
+    retrieved them while the article's `attempts` say every tier failed."""
+    corpus = tmp_path / "corpus"
+    directory = _hand_fetched(corpus, status="fetched_unverified")
+
+    _adopt(tmp_path, corpus, doi_slug(DOI), "--apply",
+           "--set-complete", "--note", "by hand")
+
+    after = store.read_manifest(directory)
+    assert after["supplementary_status"] != "fetched"
+    assert store.SUPPL_BY_HAND in store.SUPPL_SETTLED
+    described = article_state.describe(
+        after["status"], after["supplementary_status"], "complete")
+    supplements = described["clauses"][1]
+    assert supplements["text"] == "supplements confirmed complete by hand"
+    assert supplements["level"] == "ok"
+    # Three clauses, and the summary must still read as three: a comma inside the
+    # middle one would make it four.
+    assert described["summary"].count(", ") == 2
+
+
+def test_set_complete_writes_nothing_without_apply(tmp_path):
+    corpus = tmp_path / "corpus"
+    directory = _hand_fetched(corpus)
+
+    _adopt(tmp_path, corpus, doi_slug(DOI), "--set-complete", "--note", "x")
+
+    assert store.read_manifest(directory)["supplementary_status"] == "none_retrieved"
+
+
+def test_adopt_with_no_path_and_no_flag_does_nothing(tmp_path, capsys):
+    corpus = tmp_path / "corpus"
+    make_article(corpus / doi_slug(DOI), fulltext=PDF)
+
+    code = _adopt(tmp_path, corpus, doi_slug(DOI), "--apply")
+
+    assert code == 1
+    assert "nothing to do" in capsys.readouterr().err
