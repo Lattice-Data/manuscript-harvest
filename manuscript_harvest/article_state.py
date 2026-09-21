@@ -35,6 +35,15 @@ than it looks (`caution`), or is this settled (`ok`).
 # `store.SUPPL_SETTLED` with one deliberate exception, below.
 _SUPPLEMENTS = {
     "fetched": ("supplements complete", "ok"),
+    # Settled and deliberately not phrased as plainly complete. A tier that
+    # enumerated the publisher's own list and got every file is stronger evidence
+    # than a person saying so, and the clause says which one this is rather than
+    # flattening them -- the same distinction `fetched_unverified` draws one line
+    # down, for the same reason.
+    # No comma inside the clause: `summary` joins the three with ", ", so
+    # "supplements complete, confirmed by hand" read as four clauses rather
+    # than three -- which is the exact ambiguity this module exists to remove.
+    "fetched_by_hand": ("supplements confirmed complete by hand", "ok"),
     # Settled -- `manifest_is_complete` will not re-fetch it -- but the claim is
     # weaker than `fetched`: every file *we identified* arrived, and nothing
     # bounds the set. 237 of 392 articles in the development corpus sit here, so

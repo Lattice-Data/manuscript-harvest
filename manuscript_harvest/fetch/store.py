@@ -288,7 +288,24 @@ def new_record(ids) -> dict:
 #: missing, nothing failed, and a re-run applies the identical rule to the identical
 #: names -- so an unsettled verdict would re-list and re-refuse the 138 articles in
 #: this corpus that hold such a file, on every batch, forever.
-SUPPL_SETTLED = {"none_listed", "fetched", "fetched_unverified", "none_text_bearing"}
+#: `fetched_by_hand` is the newest, and it is a *human's* verdict rather than a
+#: tier's -- which is exactly why it is its own word and not `fetched`. No tier in
+#: this package can reach `10.1164/rccm.202207-1384oc`'s supplements: PMC hosts
+#: none of them and the publisher is behind a Cloudflare interstitial, so all 18
+#: arrived by hand. Recording that as `fetched` would claim a tier retrieved them
+#: and put the article's own `attempts` -- which say every tier failed -- in
+#: contradiction with its status. Settled, because a re-run would fail identically
+#: and an unsettled verdict re-fetches it forever; distinguishable, because "a
+#: person asserts this set is complete" is weaker evidence than a tier that
+#: enumerated a publisher's own list, and a reader is entitled to see which they
+#: have. `supplementary_confirmed` carries who said so and why.
+SUPPL_SETTLED = {"none_listed", "fetched", "fetched_unverified", "none_text_bearing",
+                 "fetched_by_hand"}
+
+#: The one value a human may write into `supplementary_status`, and the only one
+#: `fetch adopt --set-complete` will write. Named so nothing else can quietly grow
+#: the set of statuses a person is allowed to assert.
+SUPPL_BY_HAND = "fetched_by_hand"
 
 #: `fulltext.status` values that mean the PDF is on disk and usable.
 #: `scanned_pdf_suspected` is in here because the file *is* the article -- it needs
