@@ -1410,7 +1410,8 @@ def tesseract_version() -> str:
     return first[0].split()[-1] if first and first[0].split() else "unknown"
 
 
-def _render_with_ocr(data: bytes, limits: Limits, tessdata: str) -> bytes:
+def _render_with_ocr(data: bytes, limits: Limits, tessdata: str,
+                     max_pages: Optional[int] = None) -> bytes:
     """Render every page, OCR the image, return a PDF that has a real text layer.
 
     The point of returning a *PDF* rather than strings is that the result goes back
@@ -1434,7 +1435,13 @@ def _render_with_ocr(data: bytes, limits: Limits, tessdata: str) -> bytes:
     source = fitz.open(stream=data, filetype="pdf")
     out = fitz.open()
     try:
-        for page in source:
+        for index, page in enumerate(source):
+            # `max_pages` renders a *prefix* rather than refusing the document.
+            # Front matter is where a supplement puts what this corpus is read for:
+            # `10.1164/rccm.202207-1384oc`'s data supplement is 337 pages and its
+            # "Online Methods / Human Lung Tissue Samples" is on page 2.
+            if max_pages is not None and index >= max_pages:
+                break
             pixmap = page.get_pixmap(dpi=limits.ocr_dpi)
             layer = fitz.open(stream=pixmap.pdfocr_tobytes(
                 compress=True, language=OCR_LANGUAGE, tessdata=tessdata),
@@ -1466,22 +1473,29 @@ def _ocr_pass(data: bytes, source_file: str, limits: Limits, blocks: List[Block]
     status, the original blocks, which are the handful of characters a scanned page
     does yield -- and puts the cause in `reason`, where the review queue shows it.
 
-    Not applied to `garbled_text_encoding`, which returns before this is reached and
-    is arguably the better candidate: those two files render perfectly and only
-    their text layer is broken, which is precisely what OCR is for. Left alone
-    because the measurement behind this pass is the 70 scanned files, and a status
-    that means "the fonts do not say what their glyphs are" should not start
-    sometimes meaning "and we OCR'd it anyway" without its own measurement.
+    **Now applied to `garbled_text_encoding` as well, and the history is the
+    argument.** Those files render perfectly and only their text layer is broken,
+    which is precisely what OCR is for. It was refused twice: first because the
+    measurement behind this pass was the 70 scanned files, then -- once measured on
+    the two garbled files that existed -- because it bought nothing on either.
+    10.1038/s41586-022-05670-5's MOESM3 was 55 pages, over `max_ocr_pages`, so this
+    pass declined it whole; 10.1038/s41588-024-01702-0's MOESM2 is 3 pages and OCRs
+    to 7,200 characters of Nature Reporting Summary tickbox -- `[] xX`, `Oo x`,
+    `[__]| BX]` and boilerplate about editorial policy.
 
-    That measurement has since been taken, on both files, and it says keep the
-    refusal. 10.1038/s41586-022-05670-5's MOESM3 is 55 pages, over `max_ocr_pages`,
-    so this pass would decline it anyway and nothing changes. 10.1038/
-    s41588-024-01702-0's MOESM2 is 3 pages and does OCR, to 7,200 characters -- and
-    the document is a Nature Reporting Summary, a checkbox form, which comes back as
-    `[] xX`, `Oo x`, `[__]| BX]` and boilerplate about editorial policy. So routing
-    `garbled_text_encoding` here would buy nothing on one file and 7,200 characters
-    of OCR'd tickbox on the other. Revisit if a garbled file turns up that is prose,
-    under the page cap, and load-bearing.
+    That refusal named its own condition for revisiting: "a garbled file that is
+    prose, under the page cap, and load-bearing". One turned up two of three ways.
+    10.1164/rccm.202207-1384oc's data supplement is the Online Methods for a paper
+    whose supplements no tier in this package can even fetch -- 337 pages, so *over*
+    the cap, and prose from page 2: "Online Methods / Human Lung Tissue Samples /
+    Fresh lung tissue samples were obtained from...".
+
+    What changed to make the third condition irrelevant is that the cap no longer
+    refuses a document, it bounds one: a file over `max_ocr_pages` is read to that
+    many pages and `ocr.truncated` says so. So the 55-page file yields 76,778
+    characters where it yielded none, and the 337-page file 51,301. The tickbox
+    summary still comes back as tickboxes, which is the honest cost of the change
+    and is why `ok_via_ocr` is not `ok`.
     """
     pages = meta.get("pages") or 0
     if not pages:
@@ -1495,14 +1509,18 @@ def _ocr_pass(data: bytes, source_file: str, limits: Limits, blocks: List[Block]
     if not tessdata:
         meta["reason"] = why_not
         return blocks, SCANNED, meta
-    if pages > limits.max_ocr_pages:
-        meta["reason"] = (f"{pages} pages is over the {limits.max_ocr_pages}-page OCR "
-                          f"cap (`max_ocr_pages`); a scan this long is a document to "
-                          f"read by hand rather than a supplementary table")
-        return blocks, SCANNED, meta
+    # Over the cap the first `max_ocr_pages` are read rather than none of them.
+    # The cap's own comment called a long scan "a document to read by hand rather
+    # than a supplementary table", and that is the argument for not OCR'ing 337
+    # pages -- not an argument for reading zero. Measured at 0.65 s a page, so a
+    # 25-page prefix costs 16 s against a document that was previously refused
+    # whole.
+    ocr_pages = min(pages, limits.max_ocr_pages)
+    truncated = ocr_pages < pages
 
     try:
-        rendered = _render_with_ocr(data, limits, tessdata)
+        rendered = _render_with_ocr(data, limits, tessdata,
+                                    max_pages=ocr_pages if truncated else None)
     except Exception as e:
         # One file's OCR must not cost the run, the same rule the page loop above
         # follows. A tesseract that is present and broken is a real shape: a
@@ -1525,8 +1543,18 @@ def _ocr_pass(data: bytes, source_file: str, limits: Limits, blocks: List[Block]
     # wins; the original parse's findings about the file on disk are kept under it.
     merged = {**meta, **ocr_meta}
     merged.pop("reason", None)
-    merged["ocr"] = {"dpi": limits.ocr_dpi, "language": OCR_LANGUAGE, "pages": pages,
+    merged["ocr"] = {"dpi": limits.ocr_dpi, "language": OCR_LANGUAGE,
+                     "pages": ocr_pages, "pages_total": pages,
                      "chars": ocr_meta.get("chars", 0)}
+    if truncated:
+        # Said out loud for the reason the archive prefixes are: text read from the
+        # first 25 of 337 pages is indistinguishable from a whole document once it
+        # is blocks in a file, and a reader who assumed the latter would be wrong
+        # about what the supplement does not say.
+        merged["ocr"]["truncated"] = True
+        merged["reason"] = (f"read by OCR from the first {ocr_pages} of {pages} pages "
+                            f"(`max_ocr_pages`); what the rest of the document says "
+                            f"is not in here")
     return ocr_blocks, OK_VIA_OCR, merged
 
 
@@ -1851,6 +1879,39 @@ def blocks_from_pdf(
             f"character map of their own, so what the page draws cannot be read as text")
         meta["garbled_sample"] = (blocks[0].text[:200] if blocks else "")
         meta["chars"] = 0
+        # These files render perfectly and only their text layer is broken, which
+        # is precisely what OCR is for -- and `_ocr_pass`'s own docstring set the
+        # condition for revisiting its refusal: "a garbled file that is prose,
+        # under the page cap, and load-bearing". One turned up.
+        # `10.1164/rccm.202207-1384oc`'s data supplement is the Online Methods for
+        # a paper whose supplements no tier could even fetch, and OCR reads it:
+        # 9,532 characters off five pages, starting "Online Data Supplement / A
+        # Unique Cellular Organization of Human Distal Airways".
+        #
+        # The blocks are deliberately NOT passed on. For a scanned page they are
+        # the handful of real characters it yielded; here they are MuPDF's
+        # fallback for codes it could not map, and keeping them as the fallback
+        # value of a declined OCR is how 192 paragraphs of `TheVe VWXdLeV` got
+        # into a corpus in the first place.
+        if ocr:
+            # Held before the call, because `_ocr_pass` writes its own cause into
+            # the *same* dict -- so reading `meta["reason"]` afterwards gets the OCR
+            # message twice and the glyph diagnosis not at all.
+            glyph_reason = meta["reason"]
+            ocr_blocks, status, ocr_meta = _ocr_pass(data, source_file, limits, [], meta)
+            if status == OK_VIA_OCR:
+                return ocr_blocks, status, ocr_meta
+            # OCR declined, so the file is still garbled and the glyph count is
+            # still the diagnosis. It stays the *primary* one and the OCR cause is
+            # appended rather than replacing it: `_ocr_pass` answers things like
+            # "tesseract is not on PATH", which is true and says nothing about why
+            # this document cannot be read. A reader who saw only that would go
+            # install tesseract and get the same file back.
+            declined = ocr_meta.get("reason")
+            ocr_meta["reason"] = glyph_reason + (
+                f"; OCR could not recover it either: {declined}"
+                if declined and declined != glyph_reason else "")
+            return [], GARBLED, ocr_meta
         return [], GARBLED, meta
 
     if body_chars < limits.min_pdf_text_chars:

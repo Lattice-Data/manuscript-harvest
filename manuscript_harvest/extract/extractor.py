@@ -31,7 +31,7 @@ from typing import Dict, List, Optional, Tuple
 from ..fetch import store
 from ..fetch.validate import IDENTITY_FAILURES
 from ..text_bearing import AUDIO_VIDEO_EXTENSIONS, IMAGE_EXTENSIONS
-from . import __version__, archive, docxfile, htmlfile, jats, pdf, rtf, spreadsheet
+from . import __version__, archive, docfile, docxfile, htmlfile, jats, pdf, rtf, spreadsheet
 from . import review, source_fingerprint
 from .blocks import (
     MAIN_TEXT,
@@ -149,7 +149,15 @@ _BLOCKING_CAVEATS = {SUPPLEMENTS_MISSING, MAIN_TEXT_THIN, LANDING_PAGE_ONLY,
 
 SPREADSHEET_EXTENSIONS = {".xlsx", ".xlsm"}
 LEGACY_SPREADSHEET_EXTENSIONS = {".xls"}
-DELIMITED_EXTENSIONS = {".csv", ".tsv"}
+#: `.gmt` is here because it is one: Gene Matrix Transposed is tab-separated, one
+#: gene set per line, `name <TAB> description <TAB> gene...`. Measured on
+#: `10.1016/j.ccell.2021.09.008`'s `Data S1.gmt` (1.1 MB), which begins
+#: `ASC_SMITH_CELL2018\tASC_SMITH_CELL2018\tILF3\tUSP31\t...`. It had been
+#: skipped on extension and the archive holding it reported `no_text` -- said of a
+#: file that is nothing but text. The rows are gene symbols rather than prose, so
+#: this buys a table card and a set name, not a methods section; the reason to do
+#: it is that the old answer was false, not that the content is rich.
+DELIMITED_EXTENSIONS = {".csv", ".tsv", ".gmt"}
 PLAIN_TEXT_EXTENSIONS = {".txt", ".md"}
 XML_EXTENSIONS = {".xml", ".nxml"}
 HTML_EXTENSIONS = {".html", ".htm"}
@@ -178,7 +186,7 @@ STREAM_COMPRESSED_EXTENSIONS = {".gz", ".bz2", ".xz"}
 OPAQUE_ARCHIVE_EXTENSIONS = {".7z", ".rar"}
 COMPRESSED_EXTENSIONS = (TAR_EXTENSIONS | STREAM_COMPRESSED_EXTENSIONS
                          | OPAQUE_ARCHIVE_EXTENSIONS)
-LEGACY_DOC_EXTENSIONS = {".doc", ".odt", ".ods", ".ppt", ".pptx", ".key", ".pages"}
+LEGACY_DOC_EXTENSIONS = {".odt", ".ods", ".ppt", ".pptx", ".key", ".pages"}
 #: `.rtf` left this set on 2026-09-20: see `rtf.py`. The measurement below
 #: still describes what was found, and the `.doc` half of its conclusion
 #: still holds -- one 23.3 MB file, and reading it means Word-97 piece tables
@@ -215,7 +223,7 @@ TEXT_BEARING_EXTENSIONS = (
 KNOWN_EXTENSIONS = (
     TEXT_BEARING_EXTENSIONS | IMAGE_EXTENSIONS | AUDIO_VIDEO_EXTENSIONS
     | DATA_EXTENSIONS | COMPRESSED_EXTENSIONS | LEGACY_DOC_EXTENSIONS
-    | {".zip", ".rtf"}
+    | {".zip", ".rtf", ".doc"}
 )
 
 #: Extensions whose parsers decode the bytes as text, and so cannot survive being
@@ -561,6 +569,18 @@ def extract_bytes(
                 text.encode("utf-8"), relative_path, limits, role, overrides)
             meta.update(text_meta)
             return result(status, blocks, "rtf", meta, note=meta.get("reason"))
+        if extension == ".doc":
+            # Out of `LEGACY_DOC_EXTENSIONS` for the same reason `.rtf` left it,
+            # though the argument was stronger here: this one really is a binary
+            # container. See `docfile.py` for why the stdlib was enough and why a
+            # `strings` pass is not the same thing.
+            text, status, meta = docfile.text_from_doc(data)
+            if status != OK:
+                return result(status, [], "doc", meta, note=meta.get("reason"))
+            blocks, status, text_meta = _plain_text_blocks(
+                text.encode("utf-8"), relative_path, limits, role, overrides)
+            meta.update(text_meta)
+            return result(status, blocks, "doc", meta, note=meta.get("reason"))
         if extension in LEGACY_DOC_EXTENSIONS:
             return result(UNSUPPORTED, note=f"{extension} is not parsed by this stage")
 
@@ -647,7 +667,7 @@ def _nested_archive_extensions(limits: Limits, depth: int) -> set:
 
 def _extract_archive(data: bytes, relative_path: str, limits: Limits, role: str,
                      label: Optional[str], caption: Optional[str], depth: int,
-                     overrides=None, kind: str = "zip") -> FileResult:
+                     overrides=None, kind: str = "zip", path=None) -> FileResult:
     """A zip or a tar: read the members worth reading, extract each in turn.
 
     `kind` picks the reader and nothing else. Both return the same
@@ -655,8 +675,16 @@ def _extract_archive(data: bytes, relative_path: str, limits: Limits, role: str,
     which are the part a curator reads -- are decided once for either container.
     """
     wanted = set(TEXT_BEARING_EXTENSIONS) | _nested_archive_extensions(limits, depth)
-    members, meta = _ARCHIVE_READERS[kind](
-        data, limits, wanted, prefix_readable=PREFIX_READABLE_EXTENSIONS)
+    if path is not None:
+        # The container was over `max_file_mb` and never read into memory; its
+        # directory is read from disk instead. Everything below is unchanged, which
+        # is the point of routing here rather than writing a second archive path.
+        members, meta = archive.read_members_at(
+            path, limits, wanted, prefix_readable=PREFIX_READABLE_EXTENSIONS)
+        meta["container_read_from_disk"] = True
+    else:
+        members, meta = _ARCHIVE_READERS[kind](
+            data, limits, wanted, prefix_readable=PREFIX_READABLE_EXTENSIONS)
 
     blocks: List[Block] = []
     statuses: List[str] = []
@@ -885,6 +913,15 @@ def _explain_silence(outcome: FileResult) -> FileResult:
     return outcome
 
 
+def _is_zip(target) -> bool:
+    """Four bytes off the front, so an over-cap file is never read to find out."""
+    try:
+        with open(target, "rb") as handle:
+            return handle.read(4) == b"PK\x03\x04"
+    except OSError:
+        return False
+
+
 def extract_path(path, relative_path: str, limits: Limits, role: str = SUPPLEMENT,
                  label: Optional[str] = None, caption: Optional[str] = None,
                  content_type: str = "", overrides=None) -> FileResult:
@@ -895,6 +932,16 @@ def extract_path(path, relative_path: str, limits: Limits, role: str = SUPPLEMEN
                                                              "but not on disk")
     size = target.stat().st_size
     if size > limits.max_file_mb * 1024 * 1024:
+        # A zip is the one container whose size says nothing about what reading it
+        # costs: the directory is at the end and `zipfile` seeks to it, so members
+        # are listed and sized without the file being read. Restricted to a `.zip`
+        # name on purpose -- `.xlsx` and `.docx` are zips too, and walking one as an
+        # archive would hand the raw `xl/worksheets/*.xml` to the XML parser instead
+        # of to the workbook parser that knows what a sheet is.
+        if Path(relative_path).suffix.lower() == ".zip" and _is_zip(target):
+            return _extract_archive(b"", relative_path, limits, role, label, caption,
+                                    depth=0, overrides=overrides, kind="zip",
+                                    path=target)
         return FileResult(relative_path, role, TOO_LARGE, label=label, caption=caption,
                           note=f"{size} bytes is over the {limits.max_file_mb} MB cap")
     try:
