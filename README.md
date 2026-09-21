@@ -362,11 +362,13 @@ the other 390 untouched.
 
 ### Fetching only what text can come out of
 
-Half of every supplement set is files no text can be extracted from. Measured over
-this corpus: of **5116 stored supplementary entries, 2428 (47%) are image, audio or
-video**. 138 articles hold at least one, and inside those articles 71% of the
-supplement slots are non-text. Each one costs a request, a manifest entry and an
-extraction record whose only content is the word `image_no_text`.
+Half of every supplement set is files no text can be extracted from. The measurement
+that put this key in: of **5116 stored supplementary entries, 2428 (47%) were image,
+audio or video**. 138 articles held at least one, and inside those articles 71% of
+the supplement slots were non-text. Each one costs a request, a manifest entry and an
+extraction record whose only content is the word `image_no_text`. The key and the
+`drop-media` sweep have since run, so the corpus now holds **zero** such entries —
+the percentages above are the case for the policy, not the state of the corpus.
 
 So `fetch.text_bearing_only` is on by default and the fetch stage takes only what
 something downstream can read:
@@ -414,7 +416,8 @@ reports by default and deletes only with `--apply`:
     manuscript-fetch drop-media            # report only
     manuscript-fetch drop-media --apply    # delete them, and record the removals
 
-It reclaims ~2.9 GB and 2428 entries here. `fulltext.pdf`, `fulltext.nxml`,
+It reclaimed ~2.9 GB and 2428 entries when it first ran here, and reclaims nothing
+now — there is none left to take. `fulltext.pdf`, `fulltext.nxml`,
 `landing.html` and `manifest.json` are never touched, `supplementary_status` is left
 alone — the text-bearing set is unchanged — and each removed entry keeps its name,
 size and sha256 beside a marker naming the policy. **It keeps no `path`**, which is
@@ -430,9 +433,10 @@ that file keeps its `path`, so the next pass offers it again.
 A supplement is stored as `supplementary/<NN>_<name>`, with `NN` its retrieval order.
 A re-fetch that comes back with a different-sized or differently-ordered set
 renumbers the files, writes the new names, and — before this existed — left the old
-ones on disk with nothing referring to them. **Measured here: 202 files, 1.37 GB,
-across 29 of 393 articles**, growing by 50 files in a single 38-article `--force`
-batch. Nothing could see them: `drop-media` walks manifest *entries*, and
+ones on disk with nothing referring to them. **What that cost, when it was measured:
+202 files, 1.37 GB, across 29 of the 393 articles the corpus then held**, growing by
+50 files in a single 38-article `--force` batch. Nothing could see them:
+`drop-media` walks manifest *entries*, and
 `manifest_is_complete` asks only whether a named file is present, so no command
 asked the question the other way round while `usage` counted the bytes against the
 budget.
@@ -457,29 +461,64 @@ existed. For what earlier runs left behind:
     manuscript-fetch drop-orphans --apply --include-unique   # and the rest
 
 **`--apply` alone is lossless, and that split is the point.** Each file is classified
-by content, not by name: 136 of the 202 are byte-identical to a file the manifest
-still references, 3 more are archives whose every member is (`science.abo1984`'s
-orphaned 31.7 MB zip holds 264 members, all of them already stored under names PMC
-flattened beyond recognition), and **63 files / 868 MB are bytes stored nowhere
-else** — content a manifest lost track of rather than a duplicate.
-`10.1126/science.aat1699` is why they need a second flag: it references no
-supplements at all and sits on `expected_but_missing`, while 326.9 MB of its
-supplementary PDFs and tables are on disk from an older successful fetch. Those are
-reported per article as `kept` so the decision is made once, with the evidence, by a
-human.
+by content, not by name. When the command landed, 136 of 202 orphans were
+byte-identical to a file the manifest still references and 3 more were archives whose
+every member is (`science.abo1984`'s orphaned 31.7 MB zip holds 264 members, all of
+them already stored under names PMC flattened beyond recognition); those are gone
+now, and what the corpus currently holds is the other kind — **11 articles, 41 files,
+535.0 MB, all of it bytes stored under no other name.** Content a manifest lost track
+of rather than a duplicate, so a plain `--apply` reports `0 file(s) to remove` and
+`--include-unique` is the only flag that would touch them.
+`10.1126/science.aat1699` is why that second flag exists at all: it referenced no
+supplements while 326.9 MB of its supplementary PDFs and tables sat on disk from an
+older successful fetch. Every one is reported per article as `kept`, so the decision
+is made once, with the evidence, by a human.
 
 No manifest is rewritten by a deletion — these files have no entries, so the record
 is already correct without them, which is the mirror image of `drop-media`'s
-write-per-file. The one write it can make is `--adopt-landing`: 26 articles hold a
-`landing.html` that no entry names, because a re-fetch before the `_still_on_disk`
-fallback existed dropped the key while leaving the file. They are kept either way —
-the page is a proxy error, a Cloudflare challenge or a TDM-policy page, which is the
-evidence for *why* a tier failed and the only reason the browser tier saves it — and
-that flag gives them the entry they never got.
+write-per-file. The one write *this* command makes is `--adopt-landing`: 26 articles
+hold a `landing.html` that no entry names, because a re-fetch before the
+`_still_on_disk` fallback existed dropped the key while leaving the file. They are
+kept either way — the page is a proxy error, a Cloudflare challenge or a TDM-policy
+page, which is the evidence for *why* a tier failed and the only reason the browser
+tier saves it — and that flag gives them the entry they never got.
+
+**`adopt` is `drop-orphans` in the keeping direction**, and it exists because the
+report above had only one exit. Every safety property of `drop-orphans` is about not
+deleting a file whose bytes are stored nowhere else — and the only thing a human
+could then *do* with those `kept` lines was delete them anyway, so 0.584 GB across
+12 articles sat in a state no command could resolve toward keeping it.
+
+    manuscript-fetch adopt <slug> supplementary/07_…-TableS8.txt           # report
+    manuscript-fetch adopt <slug> supplementary/07_…-TableS8.txt --apply   # write
+    manuscript-fetch adopt <slug> --set-complete --note "18 of 18 by hand" --apply
+
+**Paths are named, never swept, and that asymmetry with `--adopt-landing` is
+deliberate.** `landing.html` can be a corpus-wide flag because it is one filename
+with one meaning. A supplement is not: `10.1038/s41588-025-02454-1` holds three
+unreferenced Nature PDFs of which one is a byte-for-byte re-issue of a PMC file
+already referenced and two are documents the PMC set never had, and no rule over
+filenames tells those apart. Adopting the wrong one puts a duplicate in `totals` and
+a second copy of the same text in front of extraction, so the caller names the files
+and owns the judgement. It refuses a path already in the manifest, one that is not a
+file, and one with no `<NN>_` prefix — the index would have to be invented.
+
+`--set-complete` is the other half, and it takes `--note` or it writes nothing. It
+records `supplementary_status=fetched_by_hand` for the case no tier can reach:
+`10.1164/rccm.202207-1384oc` has no supplements in PMC and a Cloudflare interstitial
+at the publisher, so its verdict stays *every supplement was lost* however many files
+arrive by hand. The note is where "18 of 18 from academic.oup.com, PMC hosts none"
+lives; without it the new status is an assertion with no evidence behind it, which is
+what the old one already was. It takes no paths, because a set can be confirmed
+complete without any file needing adoption — the files may already be referenced and
+only the verdict be wrong.
 
 ### Disk usage
 
-Articles average **~40 MB**, so a few hundred papers is tens of gigabytes.
+A median article is **~35 MB** and the mean is **68 MB**, so a few hundred papers is
+tens of gigabytes — this corpus is 392 articles in 26.5 GB. Quote the median when
+sizing a disk and the mean when sizing a budget: the gap between them is one
+2.3 GB article and a long tail behind it.
 
     manuscript-fetch usage --by-size     # what is taking the space
     manuscript-fetch prune --dry-run     # what a budget sweep would evict
@@ -491,12 +530,20 @@ the record of what existed stays, and the article is marked `evicted` rather tha
 incomplete so the next batch does not re-download what the budget just freed. The
 newest article is never evicted. Re-fetch with `--force`.
 
-`prune` and `drop-media` are opposite commands and neither replaces the other.
-Measured over the whole 26.90 GB corpus, **70% of the bytes are text-bearing files
-and 19% are archives**, against 8% audio/video and 2.8% images — so there is no
-useful "drop the media" saving against a *budget*: staying inside one means giving up
-whole articles, which is what `prune` does. `drop-media` gives up files from every
-article instead, and its saving is a tenth of the bytes but half of the entries.
+`prune` and `drop-media` are opposite commands and neither replaces the other. The
+measurement that settled it was taken when the media was still here: 70% of the bytes
+were text-bearing files and 19% archives, against 8% audio/video and 2.8% images —
+so there was no useful "drop the media" saving against a *budget*, because staying
+inside one means giving up whole articles, which is what `prune` does. It gives up
+files from every article instead, and its saving was a tenth of the bytes but half of
+the entries.
+
+**That sweep has since run, and the numbers now show its result rather than its
+case.** Across 5,322 supplementary entries in 26.5 GB there are **zero** image and
+audio/video entries left: 5,201 text-bearing entries hold 74% of the bytes and 121
+archives hold the other 26%. `text_bearing_only` keeps it that way by not fetching
+them in the first place, so `drop-media` is now a repair for corpora fetched before
+that key existed rather than a routine step.
 
 ### Exit codes
 
@@ -669,14 +716,14 @@ of the stage as the blocks are: a thin extraction has to be legible.
 | `image_no_text` | a figure image; no extractable text (a vision pass would be needed) |
 | `media_no_text` | audio or video |
 | `data_file_skipped` | binary or columnar data (`.h5ad`, `.bam`, …), not prose |
-| `ok_via_ocr` | the pages are scans and OCR read them: weaker evidence than a text layer |
+| `ok_via_ocr` | the text layer was absent or broken and OCR read the pages: weaker evidence than a text layer |
 | `no_text_scanned_pdf` | the pages are scans and OCR did not run or found nothing legible |
 | `no_text` | readable and genuinely empty, or everything inside was capped out |
-| `unsupported_format` | no parser (`.doc`, `.rtf`, `.pptx`, `.7z`, `.rar`) |
+| `unsupported_format` | no parser (`.pptx`, `.ppt`, `.odt`, `.ods`, `.key`, `.pages`, `.7z`, `.rar`) |
 | `too_large` | over `max_file_mb`, or a member over `max_member_mb`; recorded, not read |
 | `missing` | in the manifest but not on disk |
 | `unreadable` | corrupt, or a parser named its own failure |
-| `garbled_text_encoding` | draws correctly and cannot be read: its fonts never say what their glyphs mean |
+| `garbled_text_encoding` | draws correctly and its fonts never say what their glyphs mean, and OCR could not recover it either |
 | `parser_error` | a parser raised; the file is named and the run continues |
 
 The article is `complete` when the main text is usable and every file that should
@@ -694,13 +741,27 @@ vocabulary — things true about an extraction without being a per-file failure:
 | `supplements_expected_but_missing` | yes | the fetch stage says files were listed and not retrieved |
 | `main_text_thin` | yes | shorter than `min_main_text_chars`: front matter, not an article |
 | `landing_page_only` | yes | the main text is a saved publisher landing page |
+| `main_text_is_not_the_requested_article` | yes | the fetch stage says the stored full text is some other article |
 | `supplement_set_unverified` | no | supplements were fetched; no tier could confirm the set is complete |
+| `supplement_read_as_prefix` | no | a card was built from the head of a file too big to read whole, so it describes a sample and not the table |
 | `manifest_entry_without_a_path` | no | a supplementary entry has no file on disk to read |
 
 `supplement_set_unverified` deliberately does not block: it is the common outcome
-for any page-scraping route, so it is a caveat, not a defect. Before these existed
-the extractor never read the fetch stage's own verdict, so an article whose manifest
-said `expected_but_missing` extracted as `complete` with an empty supplement list.
+for any page-scraping route, so it is a caveat, not a defect — 240 of 392 articles
+carry it. Before these existed the extractor never read the fetch stage's own
+verdict, so an article whose manifest said `expected_but_missing` extracted as
+`complete` with an empty supplement list.
+
+`supplement_read_as_prefix` does not block either, and is the subtlest of the seven:
+the card is real and useful, but a curator reading row counts off it would be wrong
+and nothing else in the record would have said so. It fires on 4 articles here. It
+was also the caveat that proved the vocabulary needed a test with teeth — it was
+appended on every truncated read and *missing from `CAVEATS`*, so `readiness`
+rendered the bare token where a sentence belongs. The test that should have caught it
+only checked the caveats one fixture happened to produce, which is a test that passes
+on nothing; `test_every_caveat_the_module_can_append_has_a_description` now walks
+`extractor.py` for `caveats.append(...)` and fails on any name the vocabulary cannot
+describe.
 
 **There is deliberately no caveat for a `drop-media` removal**, and none of the above
 fires on one. `manifest_entry_without_a_path` means "this manifest is malformed", and
@@ -739,16 +800,33 @@ be fitted to one font's glyph order and would also be unable to tell a real `T` 
 a `q`: both reach the text as `T`, and only the glyph id separates them. The repair
 adds entries for codes the publisher's CMap leaves out and none that it covers, and
 declines outright on any font where the two maps disagree — the evidence that a code
-really is a glyph id there. Measured over the 972 PDFs in this corpus: 183 have a
-font with a gap in its CMap, and exactly one of them comes out with different text —
-the Science supplement. The other 182 gaps are for glyphs their documents never draw.
+really is a glyph id there. When this landed, 183 of the 972 PDFs then on disk had a
+font with a gap in its CMap and exactly one came out with different text — the
+Science supplement; every other gap was for glyphs its document never draws. The
+corpus has been re-fetched since and no longer indexes that file (its publisher set
+was replaced by the PMC author manuscript, and the three publisher files are orphans
+`adopt` could take back). What the extraction records now show, over the **814 PDFs
+the stage actually reads**, is the repair's reach rather than its yield: **164 had a
+CMap gap filled from the font's own character map, 107 had a glyph order inferred**
+— the stronger claim, asserted only where the declared widths agree — **and 12 had a
+symbol font's Greek corrected**. Each is recorded under its own name in
+`extraction.json`, so a passage that reads as English because of an assertion can be
+told from one that reads as English because the file said so.
 
-**Where it cannot be repaired, it is reported.** 10.1038/s41588-024-01702-0's
-reporting summary has 6,869 glyphs and no character behind any of them: CID-keyed
-CFF subsets, identity ordering, no ToUnicode, no character map, glyph names of the
-form `cid00042`. Nothing in that file says what its glyphs mean, so reading it would
-be a guess. It gets the status, its blocks are dropped rather than written out as
-prose, and the article goes `partial`.
+**Where it cannot be repaired, it is reported — and then OCR'd.**
+10.1038/s41588-024-01702-0's reporting summary has 6,869 glyphs and no character
+behind any of them: CID-keyed CFF subsets, identity ordering, no ToUnicode, no
+character map, glyph names of the form `cid00042`. Nothing in that file says what
+its glyphs mean, so reading its text layer would be a guess. MuPDF's blocks are
+dropped for exactly that reason — they are its fallback for codes it could not map,
+which is the `TheVe VWXdLeV` above — and the page images go to OCR instead, because
+a file whose *only* defect is its text layer is what OCR is for. This one comes back
+`ok_via_ocr` with 7,200 characters off three pages and the article reads `complete`,
+but the glyph count stays on the record in `glyphs_unnamed`, and the content is worth
+knowing about: it is Nature Reporting Summary tickboxes, so what OCR recovered is
+`=) °= c nature portfolio` and boilerplate about editorial policy rather than
+methods. The status says the evidence is weaker than a text layer; it does not
+promise the text was worth having.
 
 The rule asks the *document*, through the count of glyphs MuPDF could not name, and
 not the prose. "This text has no English function words in it" flags 26 files in
@@ -846,6 +924,7 @@ commented-out `fetch.max_response_mb` backstop is for.
 ## Select: blocks → the evidence one question needs
 
     manuscript-select readiness                  # can a "not found" be believed?
+    manuscript-select supplements                # declared vs fetched vs read
     manuscript-select candidates <doi>           # what a regex finds, with no role
     manuscript-select pack <doi> --sections methods,data_availability
     manuscript-select sheet --out labels.html    # a page to hand-label
@@ -853,7 +932,7 @@ commented-out `fetch.max_response_mb` backstop is for.
     manuscript-select verify answers.json --article <doi>
     manuscript-select eval answers/ --truth truth/accessions --baseline
 
-Offline like the extract stage. Four jobs, and the reason they are here rather than
+Offline like the extract stage. Five jobs, and the reason they are here rather than
 downstream is that every one of them can be tested without a model.
 
 **`readiness` — what emptiness is allowed to mean.** Ask "which datasets did this
@@ -865,6 +944,34 @@ have missed anything in. Five states — `ready`, `ready_with_caveats`,
 negative answer is worth recording, and 27 of the 37 development-corpus directories
 reach them. `ready_with_caveats` carries a `gaps` list, so the answer states its own
 bound instead of implying there wasn't one.
+
+**`supplements` — the strongest word the fetch stage has does not mean what it
+sounds like.** `supplementary_status: fetched` means one tier's own index bounded the
+set *that tier* enumerated. `10.1016/j.cell.2020.11.028` reads `fetched` — rendered
+as "supplements complete" — with 3 of the 14 items its own JATS declares actually on
+disk, and nothing in the pipeline compared the two, so a paper scored from a third of
+its supplementary material was indistinguishable from a complete one. This command
+makes the comparison and writes `extracted/supplement_items.json` beside each
+extraction. It keeps two questions apart on purpose, because conflating them
+misreports the cause:
+
+    DECLARED -> FETCHED   did the file arrive?      a fetcher gap
+    FETCHED  -> READ      did text come out of it?  an extraction gap
+
+Over the corpus: 2,303 declared items, 2,015 fetched, 1,995 read, and **41 declared
+text-bearing items across 17 articles that never arrived**. A single "missing"
+verdict would send someone to re-run the fetcher for a problem it does not have. It
+is a writer rather than a report — it says what it wrote and which articles have
+something outstanding, and the per-item detail lives in the sidecar.
+
+**What it cannot see, stated plainly.** The declared set comes from the publisher's
+own JATS `<supplementary-material>` elements, so a paper whose *prose* references an
+item the publisher never declared passes unnoticed: `10.1016/j.cell.2020.08.013`
+mentions Figures S1–S7 fifty-four times, its JATS declares five supplements, none of
+them is a figure, and this reports it fetch-complete. And **124 of 392 papers have no
+JATS at all** — they read `declaration unavailable`, never `complete`, because an
+unmeasurable paper that looks like a clean one is the failure the module exists to
+prevent.
 
 **`pack` — filter, rank, budget.** The subtle part is that **a section preference is
 never a filter**. Corpus-wide 599 of 4,009 main-text paragraphs carry `section: null`,
@@ -987,16 +1094,15 @@ cell whose clauses each name their own stage:
     fetch complete, supplements fetched but set unconfirmed, extraction complete
     fetch incomplete, some supplements failed, extraction incomplete
 
-Over the 63-paper development corpus's current 392 articles that is seven distinct
-lines, and `manuscript-extract status` prints them as a tally:
+Over this corpus's 392 articles that is six distinct lines, and
+`manuscript-extract status` prints them as a tally:
 
-      218  fetch complete, supplements fetched but set unconfirmed, extraction complete
-      127  fetch complete, supplements complete, extraction complete
-       19  fetch complete, supplements fetched but set unconfirmed, extraction incomplete
+      235  fetch complete, supplements fetched but set unconfirmed, extraction complete
+      131  fetch complete, supplements complete, extraction complete
        11  fetch complete, no supplements exist, extraction complete
-       11  fetch complete, supplements complete, extraction incomplete
-        5  fetch incomplete, some supplements failed, extraction incomplete
-        1  fetch incomplete, every supplement was lost, extraction incomplete
+        7  fetch complete, supplements complete, extraction incomplete
+        5  fetch complete, supplements fetched but set unconfirmed, extraction incomplete
+        3  fetch complete, supplements confirmed complete by hand, extraction complete
 
 Three rules, in `manuscript_harvest/article_state.py`:
 
@@ -1010,13 +1116,20 @@ and every cell keeps the raw tokens as its tooltip.
 
 **`fetched_unverified` does not read as complete.** It is settled — nothing will
 re-fetch it — but it means "every file we identified arrived", not "the deposit was
-enumerated", and 237 of 392 articles sit there. Flattening it would claim a
-completeness the record cannot back over 60% of the corpus, so it reads as
+enumerated", and 240 of 392 articles sit there. Flattening it would claim a
+completeness the record cannot back over 61% of the corpus, so it reads as
 *supplements fetched but set unconfirmed* and colours amber rather than green.
 
+**`fetched_by_hand` is the one verdict a tier cannot write**, and it reads as
+complete because a human asserted it with a note saying how. Three articles here,
+each one a set no tier could reach — see `adopt --set-complete` above.
+
 The tally is also the fastest way to see which command an article needs. `extraction
-incomplete` is a re-extract; `fetch incomplete` is not — those six lost supplementary
-files at fetch time, and only a fetch with a live proxy session recovers them.
+incomplete` is a re-extract; `fetch incomplete` is not, because only a fetch with a
+live proxy session recovers a supplement lost at fetch time. **There is currently no
+`fetch incomplete` line at all** — the six articles that carried one have since been
+settled — so every remaining gap in this corpus is an extraction gap, and the twelve
+`extraction incomplete` articles are the whole of the backlog.
 
 ### What it is, and what it is not
 
@@ -1091,6 +1204,14 @@ corpus browser either; "recently added" is the newest dozen. Adding one would me
 serving files rather than linking to them, since browsers refuse `file://`
 navigation from an `http://` page.
 
+**`adopt` is not a button, and that one is about the command rather than the panel.**
+The four destructive commands are here because each takes a whole corpus or a slug
+and the preview says what it would do. `adopt` takes *named paths* and asks the
+caller to have decided which of three unreferenced PDFs is a duplicate — a
+judgement the report cannot make, which is why the command refuses to sweep. A
+button whose argument is "the right files, chosen by reading the bytes" is a worse
+interface than a shell, so `COMMANDS` in `ui/jobs.py` deliberately stops at nine.
+
 ## Skills
 
 `.claude/skills/` holds packaged answers to the question the three stages
@@ -1125,13 +1246,16 @@ passing on having run nothing.
 
 ### `perturbation-detection`
 
-Classifies extracted papers as **perturbed / not perturbed / unclear**, for
-single-cell biocuration. The rule that makes it non-trivial: a paper counts only if
-a perturbed sample was *itself* profiled by a single-cell or single-nucleus
-sequencing assay. A perturbation somewhere in the paper plus a qualifying assay
-somewhere in the paper is not enough — papers routinely perturb cells for a bulk
-RNA-seq, qPCR, Western or flow readout while the single-cell dataset comes from
-separate untreated material.
+Classifies extracted papers as **perturbed / not perturbed / unclear /
+not applicable**, for single-cell biocuration — four labels, not three:
+`not_applicable` means the paper reports no study of its own, which is a different
+statement from "no perturbation found" and must not be counted as one. The rule that
+makes it non-trivial: a paper counts only if a perturbed sample was *itself* profiled
+by a single-cell or single-nucleus sequencing assay. A perturbation somewhere in the
+paper plus a qualifying assay somewhere in the paper is not enough — papers routinely
+perturb cells for a bulk RNA-seq, qPCR, Western or flow readout while the
+single-cell dataset comes from separate untreated material. Over this corpus at
+v0.0.25 that is **123 yes, 261 no, 7 unclear and 1 not applicable**.
 
     cd .claude/skills/perturbation-detection
     python -m pe.prepare  --set papers-30.txt --corpus ../../../corpus
@@ -1160,16 +1284,31 @@ The design choice worth copying into any similar skill: **the harness does not t
 the model's own answer.** Every quote is verified against the specific source it
 claims, unlocatable quotes are dropped, a perturbation left with no verified quote is
 dropped whole, and only then is the paper-level call recomputed. Both values are
-kept, so the gap between them measures fabricated evidence directly. Over the
-full 392-paper corpus it is **1 of 392**, with **2,471 of 2,471 quotes verified,
-0 unverifiable and 0 misattributed**.
+kept, so the gap between them measures fabricated evidence directly. Over the full
+392-paper corpus at v0.0.25: **2,657 of 2,657 quotes verified, 0 unverifiable and
+0 misattributed**, 539 perturbations kept and **0 dropped for want of evidence**, so
+the fabrication meter reads **0 of 392**.
+
+**Seven determinations were still overruled, and they are a different mechanism —
+keeping them apart is the point.** All seven are the degraded-text cap below, not
+evidence pruning: the model said `no`, the harness could not account for the text it
+was shown, and the paper was capped at `unclear`. Reporting a single "harness
+disagreed" count would merge a claim about the *model's honesty* with a claim about
+the *text's completeness*, and only the first is what quote verification measures.
 
 A result that clean has two readings — the model is honest, or the checker cannot
-fail — so there is now a negative control that separates them at corpus scale:
+fail — so there is a negative control that separates them at corpus scale:
 `test_the_verifier_can_actually_fail` corrupts a quote in real records from a
 real run and asserts the flags fire, at the real threshold against the real
 multi-source assembly. It skips when no run directory is present, so CI is
 unaffected.
+
+**It has also fired for real, which is better evidence than the control.** Across
+every run ever recorded — 19,254 quotes over 42 run directories — the verifier has
+returned 1 unfindable quote and 5 attributed to the wrong source. The unfindable one
+is `10.1016/j.cell.2021.11.031` in `work-accept-v0020-r1`. Six failures in 19,254 is
+a number worth more than six zeros would be: it is the difference between a checker
+known to pass and a checker known to be able to fail.
 
 This mirrors the `## Design` principle above: emptiness you cannot account for is
 worthless, so a paper whose text is truncated or missing its Methods can never be
@@ -1199,8 +1338,9 @@ The skill is split so the judgment can be swapped without touching the machinery
                         verify every quote, prune, recompute, tabulate, diff
     TEXT       manuscript_harvest   this package
 
-`pe/` is 1,697 lines that name the task **nowhere in code**, and
-`tests/test_seam.py` holds that line by tokenising every module and rejecting a
+`pe/` is 3,535 lines that name the task **nowhere in code**, and the skill's own
+`tests/test_seam.py` — under `.claude/skills/perturbation-detection/`, not this
+repo's `tests/` — holds that line by tokenising every module and rejecting a
 task word in any identifier, string or key. It was not always so: `pe/` was
 1,038 task lines against 1,185 generic ones, interleaved inside four files.
 Moving them out changed nothing measurable — all 392 records re-validated with
@@ -1210,9 +1350,9 @@ refactor.
 
 **The seam has been tested by swapping.** A second pack answering "which tissue
 did the sequenced material come from?" runs on this corpus through a
-byte-identical `pe/`, for 1,022 lines of pack against 1,697 of harness it does not
-touch. The first attempt did not run at all, and the five fixes it forced are the
-reason the claim is worth anything.
+byte-identical `pe/`, for 867 lines of pack against 3,535 of harness it does not
+touch — where the perturbation pack it replaces is 2,972. The first attempt did not
+run at all, and the five fixes it forced are the reason the claim is worth anything.
 
 The pack also carries **one version**. `prompt_version` and `schema_version`
 collapsed into `task_version`, declared once in `task/task.yaml` and spliced into
@@ -1264,9 +1404,14 @@ with one present reads about a point higher than the badge.
 | `tests/test_browser_tier.py` | the browser tier offline — proxy rewriting, settling, challenges, caps |
 | `tests/test_open_access_tiers.py` | the four open-access tiers end to end: which status each outcome earns |
 | `tests/test_fetch_cli.py` | the fetch CLI: missing-login warning, proxy breaker, exit codes, `usage`/`prune`/`check` |
-| `tests/test_extract_units.py` | sections, table cards, and each parser: JATS, PDF, xlsx, xls, docx, HTML, zip, tar, gzip |
+| `tests/test_extract_units.py` | sections, table cards, and each parser: JATS, PDF, xlsx, xls, docx, RTF, `.doc`, HTML, zip, tar, gzip |
 | `tests/test_extract_article.py` | source choice, per-file statuses, the extraction record, the CLI |
 | `tests/test_extract_corpus.py` | the real files that taught the extractor its rules — skipped without `corpus/` |
+| `tests/test_text_bearing.py` | which filenames text can come out of, for both the fetch refusal and `drop-media` |
+| `tests/test_orphans.py` | files no manifest entry points at: what `drop-orphans` may delete, and what `adopt` may keep |
+| `tests/test_supplements.py` | the declared-vs-fetched-vs-read ledger, one test per way its first version misreported |
+| `tests/test_revalidate.py` | correcting a corpus fetched before anything asked which paper it was: it must name the two and not touch the 390 |
+| `tests/test_article_state.py` | the one sentence three statuses become: every `_supplement_status` value has a clause, and an unknown one still reads |
 | `tests/test_review.py` | the review layer: what is asked, in what order, and when an answer expires |
 | `tests/test_section_audit.py` | the section audit: alignment, scoring, and what must *not* count as an error |
 | `tests/test_manual_fetch_units.py` | the comparison rules: publisher filename conventions, archives, versions |
@@ -1349,12 +1494,13 @@ itself twice on its first run, producing the low-value-heading rule and the
 
 Deliberate non-goals first — scope commitments, not gaps:
 
-- **No vision pass**, and OCR only for pages that carry no text layer at all.
-  Since `fetch.text_bearing_only` a figure image is not even fetched — 47% of the
-  supplementary entries in this corpus were files no text can be extracted from — and
-  the ones already stored are removed by `drop-media`, which keeps their names, sizes
-  and hashes. Set the key to `false` to keep fetching them. OCR is not the exception
-  to that: it reads the 70 *PDFs* that are scans, needs `tesseract` installed, and
+- **No vision pass**, and OCR only for pages whose text layer is absent or proven
+  broken. Since `fetch.text_bearing_only` a figure image is not even fetched — 47% of
+  the supplementary entries in this corpus were files no text can be extracted from —
+  and the ones already stored are removed by `drop-media`, which keeps their names,
+  sizes and hashes. Set the key to `false` to keep fetching them. OCR is not the
+  exception to that: it reads *PDFs* — 71 files here, 68 of them scans and three
+  whose fonts do not say what their glyphs mean — needs `tesseract` installed, and
   marks what it produces `ok_via_ocr` rather than `ok`. Nothing here looks at a
   figure and describes it.
 - **No table structure recovered from PDFs.** `page.find_tables()` exists, but a
@@ -1381,24 +1527,48 @@ Deliberate non-goals first — scope commitments, not gaps:
 
 Gaps and dead ends, each with the detail at the code that handles it:
 
-- **No parser for `.doc`, `.rtf` or `.pptx`, and that is a decision rather than a
-  gap.** Three `.rtf` totalling 1.7 MB and one 23.3 MB `.doc` in this corpus, and
-  reading them means an external converter per format — `unrtf` for one, `antiword`
-  or `catdoc` for the other — so two system dependencies for four files. Compare the
-  two calls made next to it: `xlrd` stopped being optional when the `.xls` count came
-  out at 56 files and 129 MB, and the tar and gzip readers cost nothing but standard
-  library for six files and 107 MB. Four files behind two system dependencies is
-  neither, and `unsupported_format` already queues the file for a human who can open
-  it in any word processor. `.7z` and `.rar` are refused for the same reason with a
-  smaller number: zero files.
+- **`.rtf` and `.doc` are read now; `.pptx` and six other office formats still
+  refuse, and that part is a decision rather than a gap.** All four files used to be
+  `unsupported_format` on one argument — reading them means an external converter, so
+  two system dependencies for four files — and that argument turned out to be true of
+  one format and false of the other. RTF is not a binary container: it is 7-bit ASCII
+  control words and brace groups, so `unrtf` is a convenience rather than a
+  requirement and the corpus's three files (1.7 MB) parse with the stdlib
+  (`rtf.py`). `.doc` really is an OLE2 container, and it was still done with the
+  stdlib because the alternative is a sixth hard dependency for one 23.3 MB file
+  (`docfile.py`) — and because a `strings` pass is *not* the same thing: Word keeps
+  field codes in the text stream, so scanning this exact file yields
+  `ADDIN EN.CITE <EndNote>...` between 25 of its 134 runs and loses paragraph order.
+  Reading the piece table fixes both. What neither does is tables-as-tables: a `.rtf`
+  row arrives as delimited text, not a `TableCard`. The six left in
+  `LEGACY_DOC_EXTENSIONS` — `.pptx`, `.ppt`, `.odt`, `.ods`, `.key`, `.pages` — keep
+  the refusal at zero files each, and `unsupported_format` still queues one for a
+  human who can open it in any word processor. `.7z` and `.rar` are refused the same
+  way, on the same count.
 - Archives other than zip **are** read now — `.tar`, `.tgz` and single-file
   `.gz`/`.bz2`/`.xz`, on content rather than on the suffix, because the one `.tgz`
   here is an uncompressed tar and three of the five `.gz` files are one CSV each.
-- **`garbled_text_encoding` is not OCR'd, and it is the better candidate.** Those
-  two files render perfectly and only their text layer is broken, which is exactly
-  what OCR is for — but the measurement behind the OCR pass is the 70 scanned files,
-  and a status meaning "the fonts do not say what their glyphs are" should not start
-  sometimes meaning "and we OCR'd it anyway" without its own measurement
+- **`.gmt` is read as the delimited file it is**, alongside `.csv` and `.tsv`. Gene
+  Matrix Transposed is tab-separated, one gene set per line. It had been skipped on
+  extension, and the archive holding `10.1016/j.ccell.2021.09.008`'s 1.1 MB
+  `Data S1.gmt` therefore reported `no_text` — said of a file that is nothing but
+  text. The rows are gene symbols rather than prose, so this buys a table card and a
+  set name, not a methods section; the reason to do it is that the old answer was
+  false, not that the content is rich.
+- **`garbled_text_encoding` is OCR'd now, and what is left is the page cap.** Those
+  files render perfectly and only their text layer is broken, which is exactly what
+  OCR is for; the pass was refused twice before it earned the extension, and the
+  second refusal named its own condition for revisiting — "a garbled file that is
+  prose, under the page cap, and load-bearing". One turned up two of three ways:
+  `10.1164/rccm.202207-1384oc`'s data supplement is the Online Methods for a paper
+  whose supplements no tier in this package can fetch. No file in this corpus is
+  `garbled_text_encoding` any more, and the three that were are `ok_via_ocr`. But two
+  of those three are *over* `extract.max_ocr_pages` (25), so they carry the first 25
+  pages of 55 and of 337 and say so in their `reason` — a truncation the review queue
+  can see rather than a clean read. The blocks MuPDF produced are deliberately
+  discarded when OCR succeeds: for a scanned page they are the few real characters
+  it yielded, but here they are its fallback for codes it could not map, which is
+  how 192 paragraphs of `TheVe VWXdLeV` got into a corpus in the first place
   (`pdf._ocr_pass`).
 - **Table structure is still not recovered from PDFs**, OCR'd or not. A scanned
   supplementary table yields its cell text as paragraphs — searchable, not a card.
@@ -1419,10 +1589,21 @@ Gaps and dead ends, each with the detail at the code that handles it:
   input including its own example IDs (`pmc_supplements.py`).
 - Publisher supplement URL construction is implemented only for Springer/Nature;
   others fall back to the browser tier.
-- Files over `fetch.max_file_mb` are recorded, not fetched. Independently, the
-  browser transport cannot return anything near ~512 MB because Playwright marshals
-  bodies as strings — raising the cap will not help, and the failure says to fetch
-  by hand.
+- Files over `fetch.max_file_mb` are recorded, not fetched — that cap is a number
+  someone chose. Independently there is a wall nobody chose: Playwright's Node driver
+  marshals a response body as a **base64 string**, so it dies at V8's `0x1fffffe8`
+  string cap, which is 536,870,888 base64 characters and therefore only about **384
+  MB of actual file**. This file used to call that ~512 MB, and the arithmetic is not
+  pedantry — it is why a 423 MB supplement failed a `max_file_mb: 500` cap it was
+  nowhere near. Raising the cap still cannot help. **It no longer means fetching by
+  hand, though:** `_download_streamed` writes bodies past `_TRANSPORT_SAFE_BYTES`
+  (300 MB, leaving headroom for a Content-Length that understates the body) straight
+  to disk over `requests`, carrying the browser's cookies, and `_download_one` routes
+  there on the Content-Length pre-flight rather than reaching the wall at all. What
+  still fails is the case the pre-flight cannot see: a server that sends no
+  Content-Length, so the size is unknown until the binding dies. That one is a retry,
+  and the failure names the route rather than resignation
+  (`proxy_browser._transport_failure`).
 - `hasSuppl` is trusted for indexed journal articles but **not** for preprints or
   articles Europe PMC does not hold, both of which report `N` over files that exist
   (`fetcher.suppl_flag_is_authoritative`).

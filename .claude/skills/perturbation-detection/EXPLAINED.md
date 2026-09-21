@@ -199,10 +199,11 @@ ground truth at all.
 **Measured:**
 
 ```
-  this full-corpus run      2,471 quotes checked · 0 unfindable · 0 misattributed
-  every run ever recorded   4,597 quotes checked · 0 unfindable · 4 misattributed
-  perturbations dropped for lack of evidence:  0
-  verdicts the harness had to overrule:        1 of 392
+  this full-corpus run      2,657 quotes checked · 0 unfindable · 0 misattributed
+  every run ever recorded  19,254 quotes checked · 1 unfindable · 5 misattributed
+  perturbations kept / dropped for lack of evidence:  539 / 0
+  verdicts overruled for fabricated evidence:         0 of 392
+  verdicts overruled by the degraded-text cap:        7 of 392
 ```
 
 That is a *result*, not a formality — and the check is the only reason we get to
@@ -331,7 +332,7 @@ Four rings, cheapest and hardest first.
  │    the verdict is code, not a model.                                 │
  ├──────────────────────────────────────────────────────────────────────┤
  │ ② EVERY QUOTE IS RE-FOUND                                           │
- │    4,597 checked, 0 unfindable. Continuous, no ground truth needed.  │
+ │    19,254 checked, 1 unfindable across every run ever recorded.      │
  ├──────────────────────────────────────────────────────────────────────┤
  │ ③ A HUMAN CURATOR RULES, AND THE RULING IS FILED                    │
  │    5 papers read end to end. The curator REVERSED 2 of them.         │
@@ -510,7 +511,7 @@ Three layers. Only the top one is about perturbations.
  │  PLUMBING           assemble sources · splice the prompt ·    │  KEEP
  │                     one call per paper · verify every quote · │
  │                     prune · recompute · tabulate · diff       │
- │                     (1,697 lines that name this task NOWHERE  │
+ │                     (3,535 lines that name this task NOWHERE  │
  │                      in code — a test holds that line)        │
  ├───────────────────────────────────────────────────────────────┤
  │  TEXT               DOI → article + attachments → labelled    │  KEEP
@@ -538,8 +539,9 @@ version diff came out byte-identical.
 
 **And it has since been swapped.** A second pack — "which tissue did the
 sequenced material come from, and does the paper state it explicitly?" — runs on
-this corpus through a byte-identical `pe/`. It cost 155 lines of spec, 279 of
-tables and 588 of rule modules, against 1,697 lines of harness it did not touch.
+this corpus through a byte-identical `pe/`. It cost 27 lines of spec, 247 of
+tables and 593 of rule modules -- 867 against 3,535 lines of harness it did not
+touch, where the perturbation pack it stands in for is 2,972.
 Getting there took five fixes, because the first attempt did not run at all: the
 harness assumed every pack has a considered-and-rejected array, printed prose
 naming a change class only this pack declares, and — worst — turned a pack that
@@ -658,9 +660,12 @@ for it.
     of the blind evaluation were reviewed by the developer.
     Corpus-scale accuracy is UNMEASURED.
 
- ✘  "0 fabricated quotes in 4,597" is a real result, but it is not proof the
-    reading is correct — only that the sentences it cited are genuine and in
-    the file it named.
+ ✘  "1 unfindable quote in 19,254" is a real result, and the one is worth more
+    than the 19,253: it is the negative control firing on a real run
+    (work-accept-v0020-r1, 10.1016/j.cell.2021.11.031), so the checker is known
+    to be capable of failing rather than only known to have passed. It still is
+    not proof the reading is correct — only that the sentences it cited are
+    genuine and in the file it named.
 
  ✘  The system disagrees with itself on ~1 paper in 17. That is measured and
     reported, not fixed.

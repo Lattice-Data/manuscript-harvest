@@ -7,8 +7,10 @@ emptiness it cannot account for: a figure image has no text, a scanned PDF needs
 OCR, and a bot-check landing page is not an article.
 """
 
+import ast
 import json
 import sys
+from pathlib import Path
 from unittest import mock
 
 import pytest
@@ -228,6 +230,35 @@ def test_every_caveat_is_in_the_closed_vocabulary(tmp_path):
     directory = _article(tmp_path, landing=LANDING_INTERSTITIAL)
     for name in extract_article(directory, limits=L)["caveats"]:
         assert name in extractor.CAVEATS
+
+
+def test_every_caveat_the_module_can_append_has_a_description():
+    """The test above only reaches the caveats one fixture happens to produce.
+
+    That is a test which passes on nothing for every other caveat, and one got
+    through it: `supplement_read_as_prefix` is appended on any truncated read and
+    was absent from `CAVEATS` for four real corpus articles, so `readiness` showed
+    the bare token where a sentence belongs (`CAVEATS.get(caveat, caveat)`).
+
+    So ask the *module* rather than a fixture: every name handed to
+    `caveats.append(...)` anywhere in `extractor.py` has to resolve to a key in the
+    vocabulary. A new caveat now fails here on the commit that adds it.
+    """
+    source = Path(extractor.__file__).read_text(encoding="utf-8")
+    appended = {
+        node.args[0].id
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "append"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "caveats"
+        and node.args and isinstance(node.args[0], ast.Name)
+    }
+    assert appended, "found no caveats.append(NAME) calls -- the scan has gone stale"
+    missing = {name for name in appended
+               if getattr(extractor, name) not in extractor.CAVEATS}
+    assert not missing, f"appended but undescribed in CAVEATS: {sorted(missing)}"
 
 
 def test_bot_check_landing_page_gives_a_failed_article(tmp_path):

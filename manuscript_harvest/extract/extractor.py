@@ -118,6 +118,9 @@ CAVEATS = {
         "the fetch stage says supplementary material was listed and not retrieved",
     SUPPLEMENTS_UNVERIFIED:
         "supplements were fetched but no tier could confirm the set is complete",
+    SUPPLEMENT_READ_AS_PREFIX:
+        "a table card was built from the head of a file too big to read whole, "
+        "so it describes a sample and not the table",
     MAIN_TEXT_THIN:
         "the main text is shorter than min_main_text_chars: front matter, not an article",
     LANDING_PAGE_ONLY:
@@ -557,7 +560,8 @@ def extract_bytes(
             # Split out of `LEGACY_DOC_EXTENSIONS` because that set's argument --
             # reading these means a system converter -- is true of `.doc` and was
             # never true of RTF, which is ASCII control words and brace groups.
-            # See `rtf.py`. The other seven extensions keep the refusal.
+            # See `rtf.py`. `.doc` left the set next, for the reason in
+            # `docfile.py`, so the six office formats below keep the refusal.
             text, status, meta = rtf.text_from_rtf(data)
             if status != OK:
                 return result(status, [], "rtf", meta, note=meta.get("reason"))
