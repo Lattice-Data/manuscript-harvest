@@ -28,7 +28,7 @@ explains how to run it.
                                  labelled text with provenance
 ```
 
-`pe/` is 1,697 lines that name this task **nowhere in code**, and
+`pe/` is 3,535 lines that name this task **nowhere in code**, and
 `tests/test_seam.py` holds that line by tokenising every module and rejecting a
 task word in any identifier, string or key. Swap `task/` and the same machinery
 answers a different question — which has been done: a second pack answering

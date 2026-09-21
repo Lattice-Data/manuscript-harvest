@@ -114,8 +114,9 @@ jobs:
   # What does NOT follow from that boundary is leaving them ungated. The README
   # used to name the trade-off outright: "a skill's own tests do not run in this
   # repo's CI, so a skill can rot while the badge stays green." The
-  # perturbation-detection skill is 2,900 lines with 115 tests of its own, and
-  # it is the artifact this repo is tagged for. So it gets its own job rather
+  # perturbation-detection skill is 6,507 lines of harness and pack with 332
+  # tests of its own, and it is the artifact this repo is tagged for -- it was
+  # 2,900 and 115 when this job was written. So it gets its own job rather
   # than being folded into the one above, which keeps the two boundaries
   # separate: the package's coverage gate stays a statement about the package,
   # and a skill failure is legible as a skill failure.

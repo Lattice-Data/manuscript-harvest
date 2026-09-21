@@ -362,11 +362,13 @@ the other 390 untouched.
 
 ### Fetching only what text can come out of
 
-Half of every supplement set is files no text can be extracted from. Measured over
-this corpus: of **5116 stored supplementary entries, 2428 (47%) are image, audio or
-video**. 138 articles hold at least one, and inside those articles 71% of the
-supplement slots are non-text. Each one costs a request, a manifest entry and an
-extraction record whose only content is the word `image_no_text`.
+Half of every supplement set is files no text can be extracted from. The measurement
+that put this key in: of **5116 stored supplementary entries, 2428 (47%) were image,
+audio or video**. 138 articles held at least one, and inside those articles 71% of
+the supplement slots were non-text. Each one costs a request, a manifest entry and an
+extraction record whose only content is the word `image_no_text`. The key and the
+`drop-media` sweep have since run, so the corpus now holds **zero** such entries —
+the percentages above are the case for the policy, not the state of the corpus.
 
 So `fetch.text_bearing_only` is on by default and the fetch stage takes only what
 something downstream can read:
@@ -414,7 +416,8 @@ reports by default and deletes only with `--apply`:
     manuscript-fetch drop-media            # report only
     manuscript-fetch drop-media --apply    # delete them, and record the removals
 
-It reclaims ~2.9 GB and 2428 entries here. `fulltext.pdf`, `fulltext.nxml`,
+It reclaimed ~2.9 GB and 2428 entries when it first ran here, and reclaims nothing
+now — there is none left to take. `fulltext.pdf`, `fulltext.nxml`,
 `landing.html` and `manifest.json` are never touched, `supplementary_status` is left
 alone — the text-bearing set is unchanged — and each removed entry keeps its name,
 size and sha256 beside a marker naming the policy. **It keeps no `path`**, which is
@@ -430,9 +433,10 @@ that file keeps its `path`, so the next pass offers it again.
 A supplement is stored as `supplementary/<NN>_<name>`, with `NN` its retrieval order.
 A re-fetch that comes back with a different-sized or differently-ordered set
 renumbers the files, writes the new names, and — before this existed — left the old
-ones on disk with nothing referring to them. **Measured here: 202 files, 1.37 GB,
-across 29 of 393 articles**, growing by 50 files in a single 38-article `--force`
-batch. Nothing could see them: `drop-media` walks manifest *entries*, and
+ones on disk with nothing referring to them. **What that cost, when it was measured:
+202 files, 1.37 GB, across 29 of the 393 articles the corpus then held**, growing by
+50 files in a single 38-article `--force` batch. Nothing could see them:
+`drop-media` walks manifest *entries*, and
 `manifest_is_complete` asks only whether a named file is present, so no command
 asked the question the other way round while `usage` counted the bytes against the
 budget.
@@ -511,7 +515,10 @@ only the verdict be wrong.
 
 ### Disk usage
 
-Articles average **~40 MB**, so a few hundred papers is tens of gigabytes.
+A median article is **~35 MB** and the mean is **68 MB**, so a few hundred papers is
+tens of gigabytes — this corpus is 392 articles in 26.5 GB. Quote the median when
+sizing a disk and the mean when sizing a budget: the gap between them is one
+2.3 GB article and a long tail behind it.
 
     manuscript-fetch usage --by-size     # what is taking the space
     manuscript-fetch prune --dry-run     # what a budget sweep would evict
@@ -523,12 +530,20 @@ the record of what existed stays, and the article is marked `evicted` rather tha
 incomplete so the next batch does not re-download what the budget just freed. The
 newest article is never evicted. Re-fetch with `--force`.
 
-`prune` and `drop-media` are opposite commands and neither replaces the other.
-Measured over the whole 26.90 GB corpus, **70% of the bytes are text-bearing files
-and 19% are archives**, against 8% audio/video and 2.8% images — so there is no
-useful "drop the media" saving against a *budget*: staying inside one means giving up
-whole articles, which is what `prune` does. `drop-media` gives up files from every
-article instead, and its saving is a tenth of the bytes but half of the entries.
+`prune` and `drop-media` are opposite commands and neither replaces the other. The
+measurement that settled it was taken when the media was still here: 70% of the bytes
+were text-bearing files and 19% archives, against 8% audio/video and 2.8% images —
+so there was no useful "drop the media" saving against a *budget*, because staying
+inside one means giving up whole articles, which is what `prune` does. It gives up
+files from every article instead, and its saving was a tenth of the bytes but half of
+the entries.
+
+**That sweep has since run, and the numbers now show its result rather than its
+case.** Across 5,322 supplementary entries in 26.5 GB there are **zero** image and
+audio/video entries left: 5,201 text-bearing entries hold 74% of the bytes and 121
+archives hold the other 26%. `text_bearing_only` keeps it that way by not fetching
+them in the first place, so `drop-media` is now a repair for corpora fetched before
+that key existed rather than a routine step.
 
 ### Exit codes
 
@@ -785,9 +800,18 @@ be fitted to one font's glyph order and would also be unable to tell a real `T` 
 a `q`: both reach the text as `T`, and only the glyph id separates them. The repair
 adds entries for codes the publisher's CMap leaves out and none that it covers, and
 declines outright on any font where the two maps disagree — the evidence that a code
-really is a glyph id there. Measured over the 972 PDFs in this corpus: 183 have a
-font with a gap in its CMap, and exactly one of them comes out with different text —
-the Science supplement. The other 182 gaps are for glyphs their documents never draw.
+really is a glyph id there. When this landed, 183 of the 972 PDFs then on disk had a
+font with a gap in its CMap and exactly one came out with different text — the
+Science supplement; every other gap was for glyphs its document never draws. The
+corpus has been re-fetched since and no longer indexes that file (its publisher set
+was replaced by the PMC author manuscript, and the three publisher files are orphans
+`adopt` could take back). What the extraction records now show, over the **814 PDFs
+the stage actually reads**, is the repair's reach rather than its yield: **164 had a
+CMap gap filled from the font's own character map, 107 had a glyph order inferred**
+— the stronger claim, asserted only where the declared widths agree — **and 12 had a
+symbol font's Greek corrected**. Each is recorded under its own name in
+`extraction.json`, so a passage that reads as English because of an assertion can be
+told from one that reads as English because the file said so.
 
 **Where it cannot be repaired, it is reported — and then OCR'd.**
 10.1038/s41588-024-01702-0's reporting summary has 6,869 glyphs and no character
@@ -1070,16 +1094,15 @@ cell whose clauses each name their own stage:
     fetch complete, supplements fetched but set unconfirmed, extraction complete
     fetch incomplete, some supplements failed, extraction incomplete
 
-Over the 63-paper development corpus's current 392 articles that is seven distinct
-lines, and `manuscript-extract status` prints them as a tally:
+Over this corpus's 392 articles that is six distinct lines, and
+`manuscript-extract status` prints them as a tally:
 
-      218  fetch complete, supplements fetched but set unconfirmed, extraction complete
-      127  fetch complete, supplements complete, extraction complete
-       19  fetch complete, supplements fetched but set unconfirmed, extraction incomplete
+      235  fetch complete, supplements fetched but set unconfirmed, extraction complete
+      131  fetch complete, supplements complete, extraction complete
        11  fetch complete, no supplements exist, extraction complete
-       11  fetch complete, supplements complete, extraction incomplete
-        5  fetch incomplete, some supplements failed, extraction incomplete
-        1  fetch incomplete, every supplement was lost, extraction incomplete
+        7  fetch complete, supplements complete, extraction incomplete
+        5  fetch complete, supplements fetched but set unconfirmed, extraction incomplete
+        3  fetch complete, supplements confirmed complete by hand, extraction complete
 
 Three rules, in `manuscript_harvest/article_state.py`:
 
@@ -1093,13 +1116,20 @@ and every cell keeps the raw tokens as its tooltip.
 
 **`fetched_unverified` does not read as complete.** It is settled — nothing will
 re-fetch it — but it means "every file we identified arrived", not "the deposit was
-enumerated", and 237 of 392 articles sit there. Flattening it would claim a
-completeness the record cannot back over 60% of the corpus, so it reads as
+enumerated", and 240 of 392 articles sit there. Flattening it would claim a
+completeness the record cannot back over 61% of the corpus, so it reads as
 *supplements fetched but set unconfirmed* and colours amber rather than green.
 
+**`fetched_by_hand` is the one verdict a tier cannot write**, and it reads as
+complete because a human asserted it with a note saying how. Three articles here,
+each one a set no tier could reach — see `adopt --set-complete` above.
+
 The tally is also the fastest way to see which command an article needs. `extraction
-incomplete` is a re-extract; `fetch incomplete` is not — those six lost supplementary
-files at fetch time, and only a fetch with a live proxy session recovers them.
+incomplete` is a re-extract; `fetch incomplete` is not, because only a fetch with a
+live proxy session recovers a supplement lost at fetch time. **There is currently no
+`fetch incomplete` line at all** — the six articles that carried one have since been
+settled — so every remaining gap in this corpus is an extraction gap, and the twelve
+`extraction incomplete` articles are the whole of the backlog.
 
 ### What it is, and what it is not
 
@@ -1216,13 +1246,16 @@ passing on having run nothing.
 
 ### `perturbation-detection`
 
-Classifies extracted papers as **perturbed / not perturbed / unclear**, for
-single-cell biocuration. The rule that makes it non-trivial: a paper counts only if
-a perturbed sample was *itself* profiled by a single-cell or single-nucleus
-sequencing assay. A perturbation somewhere in the paper plus a qualifying assay
-somewhere in the paper is not enough — papers routinely perturb cells for a bulk
-RNA-seq, qPCR, Western or flow readout while the single-cell dataset comes from
-separate untreated material.
+Classifies extracted papers as **perturbed / not perturbed / unclear /
+not applicable**, for single-cell biocuration — four labels, not three:
+`not_applicable` means the paper reports no study of its own, which is a different
+statement from "no perturbation found" and must not be counted as one. The rule that
+makes it non-trivial: a paper counts only if a perturbed sample was *itself* profiled
+by a single-cell or single-nucleus sequencing assay. A perturbation somewhere in the
+paper plus a qualifying assay somewhere in the paper is not enough — papers routinely
+perturb cells for a bulk RNA-seq, qPCR, Western or flow readout while the
+single-cell dataset comes from separate untreated material. Over this corpus at
+v0.0.25 that is **123 yes, 261 no, 7 unclear and 1 not applicable**.
 
     cd .claude/skills/perturbation-detection
     python -m pe.prepare  --set papers-30.txt --corpus ../../../corpus
@@ -1251,16 +1284,31 @@ The design choice worth copying into any similar skill: **the harness does not t
 the model's own answer.** Every quote is verified against the specific source it
 claims, unlocatable quotes are dropped, a perturbation left with no verified quote is
 dropped whole, and only then is the paper-level call recomputed. Both values are
-kept, so the gap between them measures fabricated evidence directly. Over the
-full 392-paper corpus it is **1 of 392**, with **2,471 of 2,471 quotes verified,
-0 unverifiable and 0 misattributed**.
+kept, so the gap between them measures fabricated evidence directly. Over the full
+392-paper corpus at v0.0.25: **2,657 of 2,657 quotes verified, 0 unverifiable and
+0 misattributed**, 539 perturbations kept and **0 dropped for want of evidence**, so
+the fabrication meter reads **0 of 392**.
+
+**Seven determinations were still overruled, and they are a different mechanism —
+keeping them apart is the point.** All seven are the degraded-text cap below, not
+evidence pruning: the model said `no`, the harness could not account for the text it
+was shown, and the paper was capped at `unclear`. Reporting a single "harness
+disagreed" count would merge a claim about the *model's honesty* with a claim about
+the *text's completeness*, and only the first is what quote verification measures.
 
 A result that clean has two readings — the model is honest, or the checker cannot
-fail — so there is now a negative control that separates them at corpus scale:
+fail — so there is a negative control that separates them at corpus scale:
 `test_the_verifier_can_actually_fail` corrupts a quote in real records from a
 real run and asserts the flags fire, at the real threshold against the real
 multi-source assembly. It skips when no run directory is present, so CI is
 unaffected.
+
+**It has also fired for real, which is better evidence than the control.** Across
+every run ever recorded — 19,254 quotes over 42 run directories — the verifier has
+returned 1 unfindable quote and 5 attributed to the wrong source. The unfindable one
+is `10.1016/j.cell.2021.11.031` in `work-accept-v0020-r1`. Six failures in 19,254 is
+a number worth more than six zeros would be: it is the difference between a checker
+known to pass and a checker known to be able to fail.
 
 This mirrors the `## Design` principle above: emptiness you cannot account for is
 worthless, so a paper whose text is truncated or missing its Methods can never be
@@ -1290,7 +1338,7 @@ The skill is split so the judgment can be swapped without touching the machinery
                         verify every quote, prune, recompute, tabulate, diff
     TEXT       manuscript_harvest   this package
 
-`pe/` is 1,697 lines that name the task **nowhere in code**, and the skill's own
+`pe/` is 3,535 lines that name the task **nowhere in code**, and the skill's own
 `tests/test_seam.py` — under `.claude/skills/perturbation-detection/`, not this
 repo's `tests/` — holds that line by tokenising every module and rejecting a
 task word in any identifier, string or key. It was not always so: `pe/` was
@@ -1302,9 +1350,9 @@ refactor.
 
 **The seam has been tested by swapping.** A second pack answering "which tissue
 did the sequenced material come from?" runs on this corpus through a
-byte-identical `pe/`, for 1,022 lines of pack against 1,697 of harness it does not
-touch. The first attempt did not run at all, and the five fixes it forced are the
-reason the claim is worth anything.
+byte-identical `pe/`, for 867 lines of pack against 3,535 of harness it does not
+touch — where the perturbation pack it replaces is 2,972. The first attempt did not
+run at all, and the five fixes it forced are the reason the claim is worth anything.
 
 The pack also carries **one version**. `prompt_version` and `schema_version`
 collapsed into `task_version`, declared once in `task/task.yaml` and spliced into
