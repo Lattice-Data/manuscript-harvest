@@ -4,7 +4,7 @@ What every file is for, what the system guarantees, and what it does not.
 
 Written 2026-09-21 against task version 0.0.25 and a 392-paper corpus, then
 revised as the layout, the ledger check and the acceptance runner were built.
-Every count below was re-derived from the tree on 2026-09-22, at `447923e`.
+Every count below was re-derived from the tree on 2026-09-22.
 
 **Everything described here is on disk.** Nothing in this file is only proposed.
 
@@ -28,7 +28,7 @@ answer to "why doesn't this look organised":
 | `task/` | 9 | 2,992 | the decision procedure |
 | `harness/` | 17 | 4,910 | reusable machinery, question-blind |
 | `tests/` | 17 | 6,476 | the guards |
-| `history/` | 38 | 4,535 | development record |
+| `history/` | 38 | 4,615 | development record |
 | `examples/` | 13 | 1,486 | proof the machinery is reusable |
 
 The rules and criteria are a handful of files. Before the reorganisation, 33
@@ -230,13 +230,14 @@ references: `papers-glyphfix-17`, `papers-glyphfix-51`, `papers-movers-v0021`.
 decision, not oversight — see below. There is a line before which the evidence
 cannot be re-run, and it is 0.0.25.
 
-**4. Two runs of the same input do not always agree, and v0.0.25 has not been
-measured.** On byte-identical prompts at v0.0.24, the model's report on the text
-agreed with itself on 20 of 24 papers, and Stage A flipped on one,
-`10.1038/s41586-021-03852-1`, which `ACCEPTANCE-v0.0.24.md` records as open, not
-explained. That is ruling 23's paper, so the ledger check cannot see it.
-v0.0.25's own two-run test stopped at 4 of 24 papers in run 2, and its document
-has no results section, so its blocking criterion has never been scored.
+**4. Two runs of the same input do not always agree, and v0.0.25's change to
+stop that fails its own gate.** v0.0.25 keyed the Stage B cap on a verified
+quote so that it would reproduce. Scored on 2026-09-22 from runs already on
+disk, the cap agrees on 22 of 24 papers against a predicted 24, and both flips
+are the model not reporting, in one run, a defect it reported in the other.
+Results in `ACCEPTANCE-v0.0.25.md`. Stage A agreed on all 24, including
+`10.1038/s41586-021-03852-1`, which flipped at v0.0.24 — ruling 23's paper, so
+the ledger check cannot see it.
 
 ---
 
