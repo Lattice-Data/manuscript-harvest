@@ -262,7 +262,8 @@ def main() -> int:
     # property is independently held by `task.rules.stage_b`.
     #
     # The bar is >= 1 deliberately. Run 1 of v0.0.25, re-validated after the fix,
-    # had 5 defect-driven caps out of 13 verified defects across 10 papers; a
+    # had 4 caps decided by a quote-verified defect, out of 13 verified defects
+    # across 10 papers; a
     # higher threshold would be a number chosen rather than measured, and could
     # fail a set that is legitimately clean.
     criteria = (
