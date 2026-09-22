@@ -24,11 +24,11 @@ answer to "why doesn't this look organised":
 
 | Group | Files | Lines | What it is |
 |---|---|---|---|
-| `criteria/` | 2 | 1,512 | **the product** — what counts, and what is correct |
-| `task/` | 9 | 2,972 | the decision procedure |
-| `harness/` | 15 | 4,144 | reusable machinery, question-blind |
-| `tests/` | 15 | 5,718 | the guards |
-| `history/` | 37 | 4,449 | development record |
+| `criteria/` | 2 | 1,539 | **the product** — what counts, and what is correct |
+| `task/` | 9 | 2,992 | the decision procedure |
+| `harness/` | 17 | 4,910 | reusable machinery, question-blind |
+| `tests/` | 17 | 6,476 | the guards |
+| `history/` | 38 | 4,535 | development record |
 | `examples/` | 13 | 1,486 | proof the machinery is reusable |
 
 The rules and criteria are a handful of files. Before the reorganisation, 33
@@ -92,9 +92,14 @@ different question. **The folder name and these filenames are hardcoded** in
 
 ### `harness/` — the machinery
 
-15 files, 4,144 lines. The reusable, question-blind half. `tests/test_seam.py`
+17 files, 4,910 lines. The reusable, question-blind half. `tests/test_seam.py`
 enforces that by reading every module and rejecting a task word in any
 identifier, string or key.
+
+Two of them are the standardisation work and are worth naming:
+`harness/ground_truth.py` grades the ledger, and `harness/acceptance.py` scores
+a version against the expectations it declared. Both are question-blind — they
+read what to check out of the pack rather than knowing this task.
 
 **It was called `pe/` until 2026-09-21, and nothing in the repository said what
 that meant.** No `__init__.py`, no package docstring, no expansion anywhere. It
@@ -113,7 +118,7 @@ Not the product. Nothing here decides anything.
 | What | Count | Note |
 |---|---|---|
 | `history/CHANGELOG.md` | 1 | Lifted out of `prompt.md`, where nothing read it. |
-| `history/acceptance/` | 14 | 12 acceptance documents and 2 scorers. |
+| `history/acceptance/` | 15 | 12 documents, 2 old scorers, and `TEMPLATE.yaml`. |
 | `history/sets/` | 19 | Paper lists. **Three are referenced by nothing.** |
 | `history/notes/` | 3 | The rescore, the 30-paper eval, the Stage B design record. |
 
@@ -122,12 +127,16 @@ colleagues, not part of the product.
 
 ### The guards
 
-15 test files. The four that hold the structure rather than testing behaviour:
+17 test files, 407 tests. The six that hold the structure rather than testing
+behaviour:
 
 - `test_seam.py` — the machinery may not name the task.
 - `test_task_version.py` — the version is declared once and cannot be restated.
 - `test_prompt_pack_agree.py` — values written in both the prompt and the pack must match.
 - `test_spec_self_consistency.py` — the prompt must not say two different things about one case.
+- `test_ground_truth.py` — every binding ruling still holds, and no reversal is
+  unsealed. The second half needs no corpus, so it is the gate CI can see.
+- `test_acceptance.py` — the runner's guards, and that `TEMPLATE.yaml` loads.
 
 ---
 
@@ -209,14 +218,14 @@ reversal, and it is unsealed.
 
 ## What is not guaranteed
 
-**1. Acceptance evidence is rebuilt from scratch each version.** Each new script
-is a fresh chance at the mistake that already happened: the 0.0.25 gate read a
-key the checker never returned, rejected all fourteen defect claims, and would
-have certified a pass over a mechanism that never ran.
+**1. One fact, many copies.** The 0.0.12 story is told in five files.
 
-**2. One fact, many copies.** The 0.0.12 story is told in five files.
+**2. Dead weight.** Three paper lists in `history/sets/` that nothing
+references: `papers-glyphfix-17`, `papers-glyphfix-51`, `papers-movers-v0021`.
 
-**3. Dead weight.** Three paper lists referenced by nothing.
+**3. The twelve historic acceptance documents are still prose only.** By
+decision, not oversight — see below. There is a line before which the evidence
+cannot be re-run, and it is 0.0.25.
 
 ---
 
@@ -285,7 +294,7 @@ is the scalar one, and `blocking: true` is deliberately left alone.
 **No back-filling.** The twelve documents for 0.0.11-0.0.25 stay as the written
 record, and the two hand-written scorers beside them still run.
 
-### What should not be done### What should not be done
+### What should not be done
 
 **Do not turn the decision rules into data.** `task/decide.yaml` argues against it
 and the argument holds: a rule table needs a vocabulary of conditions, that
