@@ -209,41 +209,47 @@ reversal, and it is unsealed.
 
 ## What is not guaranteed
 
-**1. Nothing checks the ground truth.** No test, script or automated check reads
-`criteria/rulings.md`. A criteria change can contradict a four-version-old ruling
-and nothing notices. Twenty-one papers of curator judgement sit outside the loop.
-
-**2. Acceptance evidence is rebuilt from scratch each version.** Each new script
+**1. Acceptance evidence is rebuilt from scratch each version.** Each new script
 is a fresh chance at the mistake that already happened: the 0.0.25 gate read a
 key the checker never returned, rejected all fourteen defect claims, and would
 have certified a pass over a mechanism that never ran.
 
-**3. One fact, many copies.** The 0.0.12 story is told in five files.
+**2. One fact, many copies.** The 0.0.12 story is told in five files.
 
-**4. Dead weight.** Three paper lists referenced by nothing.
+**3. Dead weight.** Three paper lists referenced by nothing.
 
 ---
 
-## What is still proposed
+## The ground truth is executable — built 2026-09-22
 
-### Make the ground truth executable
+    python -m harness.ground_truth --corpus ../../../corpus
 
-Give each ruling a small machine-readable header beside its prose — paper,
-verdict, kind, date, supersedes, sealed-by. The reasoning stays prose and stays
-the important part. One checker scores results against the **binding** entries,
-reports out-of-scope and partial ones separately with their reason, and **fails
-on any unsealed reversal** rather than picking a side.
+`criteria/rulings.md` now opens with a seven-column table — number, paper,
+verdict, kind, date, supersedes, sealed — and the prose below it is unchanged.
+`harness/ground_truth.py` reads it, grades the `binding` rows against the stored
+results, and reports the rest with the reason they are not graded. No model
+calls: **21 papers in seconds, where a re-score is 392 papers of model time.**
+That is the point — it makes the heavyweight comparison machinery needed *less*
+often, not more.
 
-Run it in the automated checks, blocking on binding entries only.
+Current state: **19 binding rulings, 19 agree.** Two out-of-scope and two
+not-adopted are reported and not graded.
 
-**Why this matters more than anything about versions.** A criteria change is
-expensive to validate — a full re-score is 392 papers of model time — which is
-why every change grew its own bespoke acceptance set. The ground truth is **21
-papers**. Executable, that is a fast regression check that catches most breakage
-in minutes, and it makes the heavyweight comparison machinery needed *less*
-often.
+It exits non-zero on four things, and each has a test that makes it fire:
 
-### One acceptance format, from now on
+- a `binding` ruling the classifier disagrees with;
+- a `binding` paper missing from the corpus — an ungraded row is not a pass;
+- an **unsealed change**, where a later entry supersedes one with a different
+  verdict. Never resolved by date; a human writes the approval into `sealed`;
+- **two live paper-level rulings on one paper**, which is how forgetting
+  `supersedes` defeats the check above. This one was found by attacking the
+  module after it was written and passing, not by a test failing.
+
+The ledger is deliberately **not** in `pack_sha256`. It is evidence about the
+rules, not a rule: hashing it would mark all 392 stored records as produced
+under different rules every time a paper is ruled on.
+
+### Still proposed: one acceptance format, from now on
 
 One runner plus a small expectations file per version. **No back-filling** — the
 twelve existing documents stay in `history/acceptance/` as the written record. A

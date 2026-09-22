@@ -356,7 +356,32 @@ python -m harness.compare --baseline <old_run_dir>   # version-to-version diff
 
 ## Changing the criteria
 
-**Read `criteria/rulings.md` first.** It records every determination the curator
+**Run the ledger check, then read `criteria/rulings.md`.**
+
+    python -m harness.ground_truth --corpus ../../../corpus
+
+It scores the stored results against every `binding` ruling and exits non-zero
+on a disagreement, on a binding paper missing from the corpus, or on an unsealed
+change. No model calls -- 21 papers, seconds, where a full re-score is 392. Run
+it before and after a criteria edit; it is the cheapest evidence you did not
+break a ruling from four versions ago.
+
+**Not every verdict is an expectation.** The ledger's `kind` column says what
+each one has authority over: `binding` is graded, `out-of-scope` rests on
+something outside the paper and is *expected* to differ, `partial` settles a
+sub-question, `not-adopted` was declined. Two rulings are out of scope because
+they turn on the species of the deposit and on collection membership -- neither
+is in the paper, and grading them would push the criteria toward guessing at
+exactly the two things this project decided it must not guess. If a ruling
+disagrees and you are tempted to change the criteria until it passes, check its
+kind first.
+
+**A changed ruling is never resolved by date.** Where a later entry supersedes
+an earlier one with a different verdict, the check reports the pair and fails
+until a human writes an approval into the `sealed` cell. That is a decision
+about which reading of a paper is right, and it is not the program's to make.
+
+It records every determination the curator
 made by reading the paper, with the reasoning. Check whether a ruling already
 constrains the criterion you are about to edit, and use those papers as the first
 acceptance-set candidates. Where a ruling and `prompt.md` disagree, that is a bug

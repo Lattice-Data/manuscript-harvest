@@ -110,3 +110,23 @@ spec:
   # the model was shown. Stated here so the writer and the reader cannot
   # disagree about it.
   read_back_marker: "\nPAPER_TEXT:"
+
+# The hand-ruled ledger this pack is graded against, and how to read a verdict
+# out of a stored result. Read by `harness.ground_truth`; see criteria/rulings.md
+# for what each column means.
+#
+# NOT one of the four tables and NOT inside `pack_sha256`, on purpose. The tables
+# are rules the model is judged by; a ledger is evidence *about* those rules.
+# Hashing it would mark every stored record as produced under different rules
+# each time a paper is ruled on, which is the opposite of what the hash is for.
+#
+# `kinds` is a closed set because the whole point is that a verdict is not
+# automatically an expectation: two of these rulings rest on facts outside the
+# paper, and grading them would push the criteria toward guessing at exactly the
+# two things this project decided it must not guess.
+ground_truth:
+  path: criteria/rulings.md
+  result_file: perturbations.json
+  verdict_field: perturbation_present_final
+  verdicts: ["yes", "no", "unclear", "not_applicable"]
+  kinds: ["binding", "out-of-scope", "partial", "not-adopted"]

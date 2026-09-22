@@ -151,6 +151,27 @@ class TaskPack:
     def question(self) -> str:
         return str(self._config.get("question") or "").strip()
 
+    @property
+    def ground_truth(self) -> dict:
+        """Where the hand-ruled ledger is, and how to read a verdict out of a
+        result. Empty when a pack declares none -- a pack with no ground truth is
+        legitimate, and `harness.ground_truth` says so rather than grading zero
+        rows and passing.
+
+        Deliberately NOT one of the four tables: those are rules the model is
+        judged against and live inside `pack_sha256`, and a ledger is evidence
+        *about* the rules. Hashing it would mark all 392 stored records as
+        produced under different rules every time a paper is ruled on.
+        """
+        spec = self._config.get("ground_truth") or {}
+        if not spec:
+            return {}
+        missing = [k for k in ("path", "verdict_field", "result_file",
+                               "verdicts", "kinds") if not spec.get(k)]
+        if missing:
+            raise PackError(f"task.yaml ground_truth is missing {missing}")
+        return dict(spec)
+
     def sha256(self) -> str:
         return pack_sha256(self.root)
 

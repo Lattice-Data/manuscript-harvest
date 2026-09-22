@@ -21,34 +21,55 @@ tolerate.
 limit to human only. The paper could be mice, or zebrafish or killifish, or some
 other specie." So no rule may hard-code human.
 
-| # | paper | ruling | date |
-|---|---|---|---|
-| 1 | `10.1016/j.stem.2022.11.013` | no | 2026-08-28 |
-| 2 | `10.1038/s41467-025-65049-8` | no | 2026-08-28 |
-| 3 | `10.1038/s41467-025-67643-2` | no | 2026-08-31 |
-| 4 | `10.1038/s41586-022-05060-x` | no | 2026-08-31 |
-| 5 | `10.1126/science.aay3224` | no | 2026-08-31 |
-| 6 | `10.1126/science.aat1699` | no | 2026-09-03 |
-| 7 | `10.1016/j.ccell.2025.12.003` | no | 2026-09-03 |
-| 8 | `10.1016/j.cell.2021.11.031` | no | 2026-09-03 |
-| 9 | `10.1016/j.cell.2021.12.018` | **yes** | 2026-09-03 |
-| 10 | `10.1038/s41467-022-33184-1` | **yes** | 2026-09-03 |
-| 11 | `10.1038/s41467-021-21783-3` | no | 2026-09-03 |
-| 12 | `10.3389/fimmu.2023.1211505` | no | 2026-09-03 |
-| 13 | `10.1016/j.isci.2022.104097` | no | 2026-09-03 |
-| 14 | `10.1038/s41467-021-21783-3` | **yes** | 2026-09-06 |
-| 15 | `10.1016/j.immuni.2020.03.019` | no | 2026-09-15 |
-| 16 | `10.1038/s41467-021-25125-1` | no — **not adopted**, see 16 below | 2026-09-15 |
-| 17 | `10.1016/j.molmet.2023.101746` | no | 2026-09-15 |
-| 18 | `10.1016/j.cell.2021.11.031` | no — re-confirms ruling 8 | 2026-09-15 |
-| 19 | `10.1016/j.coi.2022.102188` | **not_applicable** | 2026-09-15 |
-| 20 | `10.1016/j.cell.2021.07.023` | **yes** | 2026-09-15 |
-| 21 | `10.1016/j.healun.2026.02.1666` | no — curator leaned `yes?`, **not adopted** | 2026-09-15 |
-| 22 | `10.1016/j.ccell.2025.12.003` | no — re-confirms ruling 7 | 2026-09-15 |
-| 23 | `10.1038/s41586-021-03852-1` | no | 2026-09-15 |
-| 24 | `10.1038/s41467-024-55440-2` | no | 2026-09-15 |
-| 25 | `10.1182/bloodadvances.2023011445` | no | 2026-09-15 |
-| 26 | `10.1016/j.immuni.2022.09.002` | no | 2026-09-15 |
+### The ledger, and what each column means
+
+**This table is the machine-readable part of this file**, read by
+`harness.ground_truth`. The prose below it is the reasoning and stays the
+important half; the table exists so a criteria change cannot quietly contradict
+a ruling nobody re-read.
+
+- **verdict** — exactly one of `yes`, `no`, `unclear`, `not_applicable`. No
+  emphasis, no commentary: a note belongs in the prose. An earlier version of
+  this table carried both, and the first program to read it mistook
+  `not_applicable` for `no`, because one is a prefix of the other.
+- **kind** — what the verdict is authority over:
+  - `binding` — the classifier must produce this. A disagreement is a bug.
+  - `out-of-scope` — the ruling rests on something outside the paper, so the
+    classifier is *expected* to differ. Rulings 4 and 23; see their prose.
+  - `partial` — settles a sub-question, not the paper. Ruling 11.
+  - `not-adopted` — considered and declined. Rulings 16 and 21.
+- **supersedes** — the earlier entry on the same paper this one replaces.
+- **sealed** — required when an entry supersedes one with a *different* verdict.
+  Until a human seals it, the checker reports the pair and fails rather than
+  preferring the later date. Format: `YYYY-MM-DD name`.
+| # | paper | verdict | kind | date | supersedes | sealed |
+|---|---|---|---|---|---|---|
+| 1 | `10.1016/j.stem.2022.11.013` | no | binding | 2026-08-28 | - | - |
+| 2 | `10.1038/s41467-025-65049-8` | no | binding | 2026-08-28 | - | - |
+| 3 | `10.1038/s41467-025-67643-2` | no | binding | 2026-08-31 | - | - |
+| 4 | `10.1038/s41586-022-05060-x` | no | out-of-scope | 2026-08-31 | - | - |
+| 5 | `10.1126/science.aay3224` | no | binding | 2026-08-31 | - | - |
+| 6 | `10.1126/science.aat1699` | no | binding | 2026-09-03 | - | - |
+| 7 | `10.1016/j.ccell.2025.12.003` | no | binding | 2026-09-03 | - | - |
+| 8 | `10.1016/j.cell.2021.11.031` | no | binding | 2026-09-03 | - | - |
+| 9 | `10.1016/j.cell.2021.12.018` | yes | binding | 2026-09-03 | - | - |
+| 10 | `10.1038/s41467-022-33184-1` | yes | binding | 2026-09-03 | - | - |
+| 11 | `10.1038/s41467-021-21783-3` | no | partial | 2026-09-03 | - | - |
+| 12 | `10.3389/fimmu.2023.1211505` | no | binding | 2026-09-03 | - | - |
+| 13 | `10.1016/j.isci.2022.104097` | no | binding | 2026-09-03 | - | - |
+| 14 | `10.1038/s41467-021-21783-3` | yes | binding | 2026-09-06 | 11 | 2026-09-22 idan |
+| 15 | `10.1016/j.immuni.2020.03.019` | no | binding | 2026-09-15 | - | - |
+| 16 | `10.1038/s41467-021-25125-1` | no | not-adopted | 2026-09-15 | - | - |
+| 17 | `10.1016/j.molmet.2023.101746` | no | binding | 2026-09-15 | - | - |
+| 18 | `10.1016/j.cell.2021.11.031` | no | binding | 2026-09-15 | 8 | - |
+| 19 | `10.1016/j.coi.2022.102188` | not_applicable | binding | 2026-09-15 | - | - |
+| 20 | `10.1016/j.cell.2021.07.023` | yes | binding | 2026-09-15 | - | - |
+| 21 | `10.1016/j.healun.2026.02.1666` | no | not-adopted | 2026-09-15 | - | - |
+| 22 | `10.1016/j.ccell.2025.12.003` | no | binding | 2026-09-15 | 7 | - |
+| 23 | `10.1038/s41586-021-03852-1` | no | out-of-scope | 2026-09-15 | - | - |
+| 24 | `10.1038/s41467-024-55440-2` | no | binding | 2026-09-15 | - | - |
+| 25 | `10.1182/bloodadvances.2023011445` | no | binding | 2026-09-15 | - | - |
+| 26 | `10.1016/j.immuni.2022.09.002` | no | binding | 2026-09-15 | - | - |
 
 ---
 
@@ -609,7 +630,13 @@ runs and will need re-scoring under the re-keyed rule to confirm it.
 
 ## 14. `10.1038/s41467-021-21783-3` — a KO strain is a perturbation whatever made it
 
-**Ruling: `yes`.** 2026-09-06. Stated as a leaning rather than a verdict; recorded
+**Ruling: `yes`.** 2026-09-06. **Sealed 2026-09-22 (idan)** as the
+decisive answer for this paper, over entry 11's `no`. Entry 11 settled only
+whether timed mating is a perturbation and says so itself — "the paper-level call
+is therefore open" — so the two are not in conflict once 11 is read as the partial
+ruling it is. The seal is what `harness.ground_truth` requires before it will
+prefer one of two verdicts on one paper; without it the check reports the pair and
+fails rather than taking the later date. Stated as a leaning rather than a verdict; recorded
 as the decision because it resolves an unarbitrated precedence gap, and reversible
 on a word.
 
