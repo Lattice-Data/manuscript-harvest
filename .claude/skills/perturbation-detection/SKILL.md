@@ -376,6 +376,26 @@ exactly the two things this project decided it must not guess. If a ruling
 disagrees and you are tempted to change the criteria until it passes, check its
 kind first.
 
+**Write the acceptance spec before the run, not the write-up after it.**
+Copy `history/acceptance/TEMPLATE.yaml` to `history/acceptance/v0.0.N.yaml`,
+declare which papers must not move, which must and to what, and what the change
+must be seen to do at least once. Then:
+
+    python -m harness.acceptance history/acceptance/v0.0.N.yaml
+
+Two runs of byte-identical input are required, and the runner refuses a spec
+with one: this prompt disagrees with itself on a few percent of papers, so a
+single-run delta cannot tell an effect from that noise. Every criterion reports
+how many papers it examined, and a blocking criterion that examined **none**
+fails -- a gate that evaluates nothing is how a dead mechanism certifies itself.
+That is not hypothetical: at v0.0.25 the defect gate read a key the verifier
+never returned, dropped all fourteen claims, and would have agreed 24/24 over a
+gate that never ran.
+
+The twelve documents in `history/acceptance/` are the record of versions 0.0.11
+to 0.0.25 and are **not** being back-filled into this format. Two of them have
+a hand-written scorer beside them; those still run.
+
 **A changed ruling is never resolved by date.** Where a later entry supersedes
 an earlier one with a different verdict, the check reports the pair and fails
 until a human writes an approval into the `sealed` cell. That is a decision

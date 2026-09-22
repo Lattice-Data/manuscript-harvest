@@ -1,0 +1,86 @@
+# Acceptance expectations for one version. Copy to `v0.0.N.yaml`, fill in, run:
+#
+#     python -m harness.acceptance history/acceptance/v0.0.N.yaml
+#
+# The prose document beside it stays the record of WHY. This file is what a
+# program can check, and it is checked before the version ships rather than
+# described afterwards.
+#
+# `tests/test_acceptance.py` asserts this template loads, because a template
+# nobody can parse is discovered at the end of a two-run acceptance test.
+
+version: 0.0.N
+
+what_changed: >-
+  One or two lines. What moved, and what must not have.
+
+# TWO runs of byte-identical input, and the runner refuses a spec with one.
+# This prompt disagrees with itself on a few percent of papers, so a single-run
+# delta cannot tell an effect from that noise. Names are directories under the
+# run root (PERTURBATION_RUN_ROOT, or the pack's default).
+#
+# `baseline` is optional and is the PREVIOUS version's run. Without it
+# `no-unpredicted-movement` has nothing to compare against and reports
+# "0 examined" rather than passing.
+runs:
+  r1: work-accept-v00N-r1
+  r2: work-accept-v00N-r2
+  baseline: work-accept-v00M-r1
+
+# The value a paper's expectation is about. Dotted paths reach into the record,
+# e.g. `validation.stage_a`.
+field: perturbation_present_final
+
+# Every paper in the set, each with a role. There is no default: a paper with
+# no role is exactly the omission `no-unpredicted-movement` exists to catch.
+#
+#   anchor  must NOT move. `expect` is the value it has to keep.
+#   mover   must move. `was` and `expect` are both required, because "it moved"
+#           cannot be checked from one end.
+#   free    neither predicted nor pinned; swept by no-unpredicted-movement.
+papers:
+  10.1016/j.stem.2022.11.013:
+    role: anchor
+    expect: "no"
+    note: curator ruling 1 -- differentiation is a cell type
+  10.1038/s41467-022-33184-1:
+    role: mover
+    was: "no"
+    expect: "yes"
+    note: why this one is supposed to move
+  10.1126/science.aay3224:
+    role: free
+
+# Criteria are blocking unless they say otherwise. Each one reports how many
+# papers it actually examined, and a blocking criterion that examined none
+# FAILS -- a gate that evaluates nothing is how a dead mechanism certifies
+# itself.
+criteria:
+  - id: anchors-hold
+    kind: anchors
+    note: the papers this change must not touch
+
+  - id: movers-moved
+    kind: movers
+    note: the predictions this version is making
+
+  - id: nothing-else-moved
+    kind: no-unpredicted-movement
+    note: needs `baseline`; this is the attractor check
+
+  - id: stage-a-stable
+    kind: stable
+    field: validation.stage_a
+    note: >-
+      the criteria layer agreeing with itself across two runs of identical
+      input. Keep this separate from the determination, or Stage B's entry
+      condition gets blamed on the criteria.
+
+  # `exercised` is the guard against agreement over a mechanism that never ran.
+  # At v0.0.25 the defect gate read a key the verifier never returned, dropped
+  # all fourteen claims, and would have agreed 24/24 over a dead gate.
+  - id: the-new-thing-actually-fired
+    kind: exercised
+    predicate: validation.stage_b_capped
+    minimum: 1
+    note: what this version is FOR must happen at least once in the set

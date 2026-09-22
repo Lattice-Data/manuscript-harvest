@@ -249,14 +249,43 @@ The ledger is deliberately **not** in `pack_sha256`. It is evidence about the
 rules, not a rule: hashing it would mark all 392 stored records as produced
 under different rules every time a paper is ruled on.
 
-### Still proposed: one acceptance format, from now on
+## One acceptance format — built 2026-09-22
 
-One runner plus a small expectations file per version. **No back-filling** — the
-twelve existing documents stay in `history/acceptance/` as the written record. A
-version that declares an expectation the runner cannot evaluate fails, which is
-the defence against a gate that passes over nothing.
+    python -m harness.acceptance history/acceptance/v0.0.N.yaml
 
-### What should not be done
+`harness/acceptance.py` reads a per-version expectations file and scores the two
+runs it names. `history/acceptance/TEMPLATE.yaml` is the starting point, and a
+test asserts the template loads -- a template nobody can parse is discovered at
+the end of a two-run acceptance test.
+
+**The vocabulary was taken from the two scorers it replaces, not invented.**
+Between them they express exactly five things, and those are the five criterion
+kinds: `anchors` (must not move), `movers` (must, and to what),
+`no-unpredicted-movement` (against a baseline), `stable` (a field agreeing
+across two runs of identical input), and `exercised` (a mechanism actually
+fired). That is the two-real-cases bar `task/decide.yaml` sets before
+generalising, and it is why there is no sixth kind waiting for a use.
+
+Every guard in it was learned rather than designed, and each shipped in a real
+scorer at least once:
+
+- a paper with no result makes every failure list empty, so **pending refuses
+  to evaluate anything** rather than printing a wall of passes;
+- a criterion reports how many papers it **examined**, and a blocking one that
+  examined none FAILS;
+- `exercised` below its minimum reads NOT EXERCISED, because "the mechanism
+  misbehaved" and "the mechanism never ran" are different findings;
+- a gate that reports FAIL exits non-zero. One scorer did not.
+
+An adversarial pass after it was passing found one more: `expect: no` is the
+most natural thing to write and YAML 1.1 reads it as `False`, which then never
+equals the string in the record. `harness/pack.py` guards the list case; this
+is the scalar one, and `blocking: true` is deliberately left alone.
+
+**No back-filling.** The twelve documents for 0.0.11-0.0.25 stay as the written
+record, and the two hand-written scorers beside them still run.
+
+### What should not be done### What should not be done
 
 **Do not turn the decision rules into data.** `task/decide.yaml` argues against it
 and the argument holds: a rule table needs a vocabulary of conditions, that
