@@ -8,9 +8,9 @@ per-paper result files already on disk, and answers one question: does the
 current pack still produce the verdicts a human ruled by reading the paper?
 
 **Why this is a program and not a careful read.** The ledger held 26 rulings
-over 21 papers and nothing read it, so a criteria change could contradict a
+over 23 papers and nothing read it, so a criteria change could contradict a
 ruling from four versions earlier and nobody found out until someone re-read the
-file. 21 papers is also cheap where a full re-score is 392, which makes this the
+file. 23 papers is also cheap where a full re-score is 392, which makes this the
 fast regression check the heavyweight version-comparison tools are not.
 
 **A verdict is not automatically an expectation, and conflating the two is
