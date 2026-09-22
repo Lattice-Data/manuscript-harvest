@@ -3,10 +3,10 @@
 What every file is for, what the system guarantees, and what it does not.
 
 Written 2026-09-21 against task version 0.0.25 and a 392-paper corpus, then
-revised twice: once after review, once after the layout below was built.
+revised as the layout, the ledger check and the acceptance runner were built.
+Every count below was re-derived from the tree on 2026-09-22, at `447923e`.
 
-**The layout is now the layout on disk.** What is still only proposed is the
-executable ground truth and the single acceptance runner, at the end.
+**Everything described here is on disk.** Nothing in this file is only proposed.
 
 ---
 
@@ -19,7 +19,7 @@ is not a tidiness question here. It is the failure mode.
 
 ## The shape, and what was wrong with it
 
-Ninety-odd files, but not ninety files of rules. That distinction is the whole
+A hundred files, but not a hundred files of rules. That distinction is the whole
 answer to "why doesn't this look organised":
 
 | Group | Files | Lines | What it is |
@@ -35,7 +35,7 @@ The rules and criteria are a handful of files. Before the reorganisation, 33
 files of development history — every acceptance document, paper list and scorer —
 sat loose at the top level in the same folder, with nothing marking them as
 history. The rules were not scattered; they were buried in the scaffolding. Top
-level is now 13 entries.
+level is now 10 tracked entries, from 47.
 
 ## The four kinds of content
 
@@ -58,7 +58,7 @@ and the four cut across the files rather than lining up with them.
 | File | Lines | What it is |
 |---|---|---|
 | `criteria/prompt.md` | 709 | The criteria (steps 0–3), the output schema, the toggles, and the batch specification. |
-| `criteria/rulings.md` | 803 | Curator ground truth: 26 rulings over 21 papers, with the reasoning. |
+| `criteria/rulings.md` | 830 | Curator ground truth: 26 rulings over 23 papers, with the reasoning. |
 
 **Only part of `prompt.md` reaches the model.** `harness/prepare.py` cuts it by
 searching for heading text — the fenced block after `## Instruction prompt`, then
@@ -80,7 +80,7 @@ different question. **The folder name and these filenames are hardcoded** in
 
 | File | Lines | What it is |
 |---|---|---|
-| `task/task.yaml` | 112 | Pack identity. **The one place the version is written.** Anchors, output filenames. |
+| `task/task.yaml` | 132 | Pack identity. **The one place the version is written.** Anchors, output filenames. |
 | `task/record.yaml` | 309 | What a record must contain, and the validation rules. |
 | `task/decide.yaml` | 124 | Which fields the verdict depends on, the degraded-text cap, check wording. |
 | `task/report.yaml` | 322 | Triage tiers and reporting. |
@@ -148,8 +148,9 @@ behaviour:
 described as ground truth. But the curator answers a different question from the
 one the classifier is asked, and sometimes the two are *supposed* to differ.
 
-Scored naively, the corpus agrees with 19 of 21 papers. Both apparent failures
-are the system working correctly:
+Scored naively — each paper's latest ruling against the corpus, leaving out the
+two rulings the curator declined — the corpus agrees with 19 of 21 papers. Both
+apparent failures are the system working correctly:
 
 | Ruling | Paper | Curator | Classifier | Why they differ |
 |---|---|---|---|---|
@@ -169,7 +170,8 @@ collection. That ruling states it outright: *"a fact about the deposited dataset
 not about the paper, and no text-only classifier reaches it at any prompt
 version."*
 
-So entries come in four kinds, currently stored in one column with no marking:
+So entries come in four kinds. Until 2026-09-22 they sat in one column with no
+marking; the ledger's `kind` column now names them:
 
 1. **Binding** — the verdict the classifier must produce. Most entries.
 2. **Out of scope** — the curator used information the classifier cannot see, so
@@ -182,7 +184,8 @@ So entries come in four kinds, currently stored in one column with no marking:
 question actually put to the curator was only whether timed mating is a
 perturbation, then states: *"The paper-level call is therefore open."* Three days
 later ruling 14 on the same paper says `yes`. One paper, three answers in one
-file, and nothing on ruling 11 points forward to 14.
+file, and nothing on ruling 11 points forward to 14. The link now lives in the
+ledger, where 14's row supersedes 11.
 
 **The risk is worse than a wrong number.** An automatic check built without these
 distinctions gets two permanent failures, and the obvious way to clear them is to
@@ -198,7 +201,7 @@ A changed ruling becomes the decisive answer only by explicit manual approval,
 recorded in the ledger against both entries.
 
 Three papers carry two rulings. Two re-confirm; ruling 11 → 14 is the one
-reversal, and it is unsealed.
+reversal, and it was sealed on 2026-09-22.
 
 ---
 
@@ -227,6 +230,14 @@ references: `papers-glyphfix-17`, `papers-glyphfix-51`, `papers-movers-v0021`.
 decision, not oversight — see below. There is a line before which the evidence
 cannot be re-run, and it is 0.0.25.
 
+**4. Two runs of the same input do not always agree, and v0.0.25 has not been
+measured.** On byte-identical prompts at v0.0.24, the model's report on the text
+agreed with itself on 20 of 24 papers, and Stage A flipped on one,
+`10.1038/s41586-021-03852-1`, which `ACCEPTANCE-v0.0.24.md` records as open, not
+explained. That is ruling 23's paper, so the ledger check cannot see it.
+v0.0.25's own two-run test stopped at 4 of 24 papers in run 2, and its document
+has no results section, so its blocking criterion has never been scored.
+
 ---
 
 ## The ground truth is executable — built 2026-09-22
@@ -237,7 +248,7 @@ cannot be re-run, and it is 0.0.25.
 verdict, kind, date, supersedes, sealed — and the prose below it is unchanged.
 `harness/ground_truth.py` reads it, grades the `binding` rows against the stored
 results, and reports the rest with the reason they are not graded. No model
-calls: **21 papers in seconds, where a re-score is 392 papers of model time.**
+calls: **23 papers in seconds, where a re-score is 392 papers of model time.**
 That is the point — it makes the heavyweight comparison machinery needed *less*
 often, not more.
 
@@ -324,18 +335,20 @@ development scaffolding, not the product. It keeps working and it stays in
 ## The pack hash, and how it was cleared
 
 `pack_sha256` covers `criteria/prompt.md` and `task/*`, and it hashes paths as
-well as contents. The rename and the move both changed it — `e598d73e` before,
-`017cc03d` now — while changing no rule. The 392 stored records carried the old
-value, so a re-validation would have reported *"MIXED PACK HASHES at the same
-task_version — the rules changed without the version being bumped"*, which would
-have been false.
+well as contents. The rename and the move both changed it — `e598d73e` to
+`017cc03d` — while changing no rule. Declaring the ledger under `ground_truth:`
+in `task.yaml` moved it again, to `616c4c8b`, the next day. Each time the 392
+stored records carried the old value, so a re-validation would have reported
+*"MIXED PACK HASHES at the same task_version — the rules changed without the
+version being bumped"*, which would have been false.
 
-**Cleared on 2026-09-21 by re-validating, which costs no model time.**
-`harness.validate` re-reads the stored raw responses; there is no second run and
-no extraction. Both runs the corpus is made of had to be replayed, in order:
+**Cleared on 2026-09-21, and again on 2026-09-22, by re-validating, which costs
+no model time.** `harness.validate` re-reads the stored raw responses; there is
+no second run and no extraction. Both runs the corpus is made of had to be
+replayed, in order, from the skill directory:
 
-    harness.validate --work <run-root>/work-corpus-v0025-r1 --write-corpus
-    harness.validate --work <run-root>/work-glyphfix-17     --write-corpus
+    python -m harness.validate --work <run-root>/work-corpus-v0025-r1 --corpus ../../../corpus --write-corpus
+    python -m harness.validate --work <run-root>/work-glyphfix-17     --corpus ../../../corpus --write-corpus
 
 **The order is the trap.** The corpus is not one run's output. 375 records come
 from `work-corpus-v0025-r1` and 17 from `work-glyphfix-17`, which re-scored the
@@ -345,8 +358,9 @@ with no error message, in a directory git does not track.
 
 **Result: 0 of 392 determinations moved**, and Stage A, the Stage B cap and the
 model's own answer are unchanged on every paper. 123 yes, 261 no, 7 unclear, 1
-not applicable, before and after. The corpus and the pack now agree on
-`017cc03d`.
+not applicable, before and after. Checked across both clearings together, against
+`<run-root>/corpus-perturbations-backup-pre-hash-revalidate` (taken at
+`e598d73e`). The corpus and the pack now agree on `616c4c8b`.
 
 That zero is the evidence the whole reorganisation was inert. It is a stronger
 statement than the byte-identical prompt on its own, because it exercises the

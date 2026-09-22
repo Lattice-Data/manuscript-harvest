@@ -362,7 +362,7 @@ python -m harness.compare --baseline <old_run_dir>   # version-to-version diff
 
 It scores the stored results against every `binding` ruling and exits non-zero
 on a disagreement, on a binding paper missing from the corpus, or on an unsealed
-change. No model calls -- 21 papers, seconds, where a full re-score is 392. Run
+change. No model calls -- 23 papers, seconds, where a full re-score is 392. Run
 it before and after a criteria edit; it is the cheapest evidence you did not
 break a ruling from four versions ago.
 
