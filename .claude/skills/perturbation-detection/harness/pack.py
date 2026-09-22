@@ -1,0 +1,290 @@
+"""Reading a task pack: what it declares, and whether it declares enough.
+
+**This is plumbing, and it used to live in the judgment layer.** It was
+`task/__init__.py` -- 232 lines of loader, hashing and shape-validation sitting
+in the directory whose whole job is to hold the answer to one question. A second
+pack found it the hard way: it had to copy the file verbatim, so every pack would
+carry an identical copy of machinery none of them owns.
+
+So `task/` now has no `__init__.py` at all. It is a namespace package, like `harness/`
+already was, and it contains nothing but the spec, the four tables and the four
+rule modules. Nothing in it is generic.
+
+The dependency runs pack -> harness, which is the right direction and worth
+stating because it looks backwards at first glance. The harness must never
+import a task's vocabulary; a task importing the harness's loader is the ordinary
+plugin shape, and `tests/test_seam.py` enforces exactly that asymmetry.
+
+**What is NOT here, deliberately.** `pack_sha256` covers the rules -- the spec and
+`task/*` -- and not this file, for the same reason it does not cover
+`harness/validate.py`: a change to how tables are READ is a change to the harness, and
+the harness is not what one run differs from another by. Moving this file out of
+the pack therefore changes every pack's hash exactly once, which is honest -- the
+set of rule-bearing files really did change.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import re
+from pathlib import Path
+
+try:
+    import yaml
+except ImportError:  # pragma: no cover - yaml is a package requirement
+    yaml = None
+
+#: The skill root: the directory holding prompt.md, harness/ and task/. Unchanged by
+#: the move -- this file went from `task/__init__.py` to `harness/pack.py`, and
+#: `parent.parent` is the same directory from either.
+ROOT = Path(__file__).resolve().parent.parent
+
+def read_back_marker(root: Path | None = None) -> str:
+    """The line `harness.validate` searches for, backwards, to recover the paper text.
+
+    Read from the pack, cached, because it is needed once per paper. `harness.prepare`
+    writes the marker and `harness.validate` reads it back, so the two must agree
+    about it -- which is exactly why it is declared once, in `task.yaml`, rather
+    than written as a literal at each end.
+    """
+    return load(root).read_back_marker
+
+
+def spec_version_line(spec_md: Path) -> str:
+    """Whatever the spec's `Version:` line says. Named for what it returns.
+
+    It was `harness.paper_text.prompt_version`, and that name is now a lie: since
+    0.0.13 the spec carries `{{TASK_VERSION}}` there, so this returns the
+    PLACEHOLDER, not a version. Its only caller is `harness.prepare`, which uses it to
+    assert the substitution has something to substitute -- a spec that hardcoded
+    a version instead would be the drift 0.0.13 removed, and `harness.prepare` says so
+    when it finds one.
+
+    The version a run is graded against is `TaskPack.version`, from task.yaml.
+    Reading the spec is this module's job, which is why the function lives here
+    rather than beside the source assembly it had drifted into.
+    """
+    match = re.search(r"^Version:\s*(\S+)", spec_md.read_text(), re.MULTILINE)
+    return match.group(1) if match else "unknown"
+
+
+#: Files whose contents define the answer, and therefore the pack hash.
+#:
+#: `config.yaml` is deliberately NOT here. It carries `corpus_dir`, a path
+#: specific to whoever is running, so hashing it would make two identical runs
+#: on two machines look like different rules -- the exact confusion the hash
+#: exists to remove.
+#:
+#: Neither is this module, which is why `task/*.py` reads as "the rule modules"
+#: rather than "everything in task/": the loader moved out of the pack precisely
+#: because it is not a rule.
+PACK_GLOBS = ("criteria/prompt.md", "task/*.yaml", "task/*.py")
+
+
+class PackError(Exception):
+    """The pack is missing, unreadable, or does not declare what it must."""
+
+
+def pack_files(root: Path | None = None) -> list[Path]:
+    """Every rule-bearing file, in a stable order.
+
+    Sorted by path relative to the root rather than absolute, so the hash does
+    not depend on where the skill is checked out.
+    """
+    base = root or ROOT
+    found: set[Path] = set()
+    for pattern in PACK_GLOBS:
+        found.update(p for p in base.glob(pattern)
+                     if p.is_file() and "__pycache__" not in p.parts)
+    return sorted(found, key=lambda p: str(p.relative_to(base)))
+
+
+def pack_sha256(root: Path | None = None) -> str:
+    """A hash over the rules themselves.
+
+    Paths are hashed alongside contents, so moving a rule between files changes
+    the hash even when the bytes are conserved -- a file split is a change to
+    the rules a reader has to find.
+    """
+    base = root or ROOT
+    digest = hashlib.sha256()
+    for path in pack_files(base):
+        digest.update(str(path.relative_to(base)).encode())
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+class TaskPack:
+    """Loaded `task.yaml`, plus the hash of everything it points at."""
+
+    def __init__(self, config: dict, root: Path) -> None:
+        self.root = root
+        self._config = config
+        for field in ("name", "version", "spec"):
+            if not config.get(field):
+                raise PackError(f"task.yaml declares no {field!r}")
+        self.name = str(config["name"])
+        self.version = str(config["version"])
+        spec = config["spec"]
+        self.spec_path = root / str(spec.get("path") or "criteria/prompt.md")
+        self.anchors = dict(spec.get("anchors") or {})
+        self.placeholders = dict(spec.get("placeholders") or {})
+        self.read_back_marker = str(spec.get("read_back_marker") or "\nPAPER_TEXT:")
+        missing = [k for k in ("instruction", "schema_start", "schema_end")
+                   if not self.anchors.get(k)]
+        if missing:
+            raise PackError(f"task.yaml spec.anchors is missing {missing}")
+        # `assembly` is required, not optional. It carries what the text pipeline
+        # removed before the model saw anything, and a pack that omits it asks the
+        # model to judge the completeness of a text whose cuts nobody declared --
+        # which is the failure it was added for. Optional would mean silently
+        # absent, and a key nobody reads looks like it works and does not.
+        missing = [k for k in ("paper_id", "paper_text", "source_ids",
+                               "task_version", "assembly")
+                   if not self.placeholders.get(k)]
+        if missing:
+            raise PackError(f"task.yaml spec.placeholders is missing {missing}")
+
+    @property
+    def question(self) -> str:
+        return str(self._config.get("question") or "").strip()
+
+    @property
+    def ground_truth(self) -> dict:
+        """Where the hand-ruled ledger is, and how to read a verdict out of a
+        result. Empty when a pack declares none -- a pack with no ground truth is
+        legitimate, and `harness.ground_truth` says so rather than grading zero
+        rows and passing.
+
+        Deliberately NOT one of the four tables: those are rules the model is
+        judged against and live inside `pack_sha256`, and a ledger is evidence
+        *about* the rules. Hashing it would mark all 392 stored records as
+        produced under different rules every time a paper is ruled on.
+        """
+        spec = self._config.get("ground_truth") or {}
+        if not spec:
+            return {}
+        missing = [k for k in ("path", "verdict_field", "result_file",
+                               "verdicts", "kinds") if not spec.get(k)]
+        if missing:
+            raise PackError(f"task.yaml ground_truth is missing {missing}")
+        return dict(spec)
+
+    def sha256(self) -> str:
+        return pack_sha256(self.root)
+
+    def stamp(self) -> dict:
+        """What every manifest entry and every record records about the rules.
+
+        Both values, because they answer different questions. `task_version` is
+        what the harness grades against and is comparable across runs;
+        `pack_sha256` says whether the rules were byte-identical, which a version
+        number only asserts.
+        """
+        return {"task": self.name, "task_version": self.version,
+                "pack_sha256": self.sha256()}
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"<TaskPack {self.name} {self.version} {self.sha256()[:12]}>"
+
+
+#: The four lookup tables, by the name they are referred to throughout.
+TABLE_FILES = {
+    "record": "record.yaml",   # what counts
+    "decide": "decide.yaml",   # how to decide
+    "report": "report.yaml",   # what to read first
+    "change": "change.yaml",   # what counts as a change
+}
+
+_TABLES: dict[str, dict] | None = None
+
+
+def _reject_yaml_booleans(path: Path, node, trail: str = "") -> None:
+    """Refuse a boolean where a VALUE belongs -- that is, inside a list.
+
+    YAML 1.1 reads `yes` and `no` as True and False, so a label set written
+    `[yes, no, unclear]` loads as `[True, False, 'unclear']`. Nothing crashes:
+    every tri-state comparison in the harness just silently stops matching,
+    because a determination gets compared against `True` and never equals the
+    string the model emitted. The answers quietly change. Found by writing
+    exactly that bug into record.yaml.
+
+    Scoped to list ELEMENTS rather than every value, because a scalar flag like
+    `drop_when_no_verified_quote: true` is a real boolean and rejecting it would
+    make the guard something a pack author has to work around. A list in these
+    tables is always a set of values -- labels, enum members, field names,
+    stopwords, regexes -- and none of those is ever a boolean.
+    """
+    if isinstance(node, dict):
+        for key, value in node.items():
+            _reject_yaml_booleans(path, value, f"{trail}.{key}" if trail else str(key))
+    elif isinstance(node, list):
+        for i, value in enumerate(node):
+            where = f"{trail}[{i}]"
+            if isinstance(value, bool):
+                raise PackError(
+                    f"{path.name}: {where} is the YAML boolean {value!r}, but a list "
+                    f"in this table is a set of VALUES. Quote it -- \"yes\" / "
+                    f"\"no\" -- because YAML 1.1 reads the bare words as booleans, "
+                    f"and a label that arrives as True never matches the string a "
+                    f"record carries.")
+            _reject_yaml_booleans(path, value, where)
+
+
+def tables(root: Path | None = None, *, reload: bool = False) -> dict[str, dict]:
+    """The four tables, read once and cached.
+
+    Cached because `rules.py` reads them at import to define its constants, and
+    because every module in `harness/` would otherwise re-parse four files per paper.
+    `reload=True` exists for the tests that write a pack into a tmp_path.
+
+    A missing table is an error, not an empty default. A pack that half-loads is
+    a run applying rules nobody can name, and the one thing this pipeline may not
+    do is proceed while unable to say what it is applying.
+    """
+    global _TABLES
+    if _TABLES is not None and not reload and root in (None, ROOT):
+        return _TABLES
+    base = root or ROOT
+    if yaml is None:
+        raise PackError("pyyaml is required to read the task pack")
+    loaded: dict[str, dict] = {}
+    for name, filename in TABLE_FILES.items():
+        path = base / "task" / filename
+        if not path.is_file():
+            raise PackError(f"the pack has no {filename} (table {name!r}) at {path}")
+        try:
+            data = yaml.safe_load(path.read_text()) or {}
+        except yaml.YAMLError as exc:
+            raise PackError(f"{path} is not readable YAML: {exc}") from exc
+        if not isinstance(data, dict):
+            raise PackError(f"{path} is not a mapping")
+        _reject_yaml_booleans(path, data)
+        loaded[name] = data
+    if root in (None, ROOT):
+        _TABLES = loaded
+    return loaded
+
+
+def load(root: Path | None = None) -> TaskPack:
+    """Read `task/task.yaml`. Raises PackError rather than returning a default.
+
+    No fallback on purpose. A pack that cannot be read is not a pack running
+    with defaults -- it is a run whose rules are unknown, and the one thing this
+    pipeline may not do is proceed while unable to say what it is applying.
+    """
+    base = root or ROOT
+    path = base / "task" / "task.yaml"
+    if yaml is None:
+        raise PackError("pyyaml is required to read the task pack")
+    if not path.is_file():
+        raise PackError(f"no task pack at {path}")
+    try:
+        config = yaml.safe_load(path.read_text()) or {}
+    except yaml.YAMLError as exc:
+        raise PackError(f"{path} is not readable YAML: {exc}") from exc
+    if not isinstance(config, dict):
+        raise PackError(f"{path} is not a mapping")
+    return TaskPack(config, base)

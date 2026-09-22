@@ -1,6 +1,6 @@
 """Guards for the usage backfill, one per way it produced a wrong number first.
 
-`pe.usage` rebuilds what a run cost from the transcripts `claude -p` already
+`harness.usage` rebuilds what a run cost from the transcripts `claude -p` already
 persisted. Every guard here is a defect that was real before it was a test:
 
   * summing per JSONL line instead of per `message.id` overstated one sampled
@@ -32,8 +32,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pe.pricing import CACHE_READ, CACHE_WRITE_1H, CACHE_WRITE_5M, RATES, canonical, cost  # noqa: E402
-from pe.usage import collect, from_envelopes, read_session, render  # noqa: E402
+from harness.pricing import CACHE_READ, CACHE_WRITE_1H, CACHE_WRITE_5M, RATES, canonical, cost  # noqa: E402
+from harness.usage import collect, from_envelopes, read_session, render  # noqa: E402
 
 
 # --------------------------------------------------------------- pricing

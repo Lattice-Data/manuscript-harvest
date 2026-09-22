@@ -21,9 +21,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pe.paper_text import split_assembled  # noqa: E402
+from harness.paper_text import split_assembled  # noqa: E402
 from task.report import triage_priority  # noqa: E402
-from pe.validate import validate_result  # noqa: E402
+from harness.validate import validate_result  # noqa: E402
 from task.rules import is_human, normalise_organism, stage_a  # noqa: E402
 
 TRI = ("yes", "no", "unclear")
@@ -250,11 +250,11 @@ def test_normalise_and_is_human():
 
 
 # --------------------------------------------------------------------------
-# pe.compare's noise floor (added alongside v0.0.12).
+# harness.compare's noise floor (added alongside v0.0.12).
 # --------------------------------------------------------------------------
 
 def test_noise_floor_finds_self_disagreement():
-    from pe.compare import noise_floor
+    from harness.compare import noise_floor
     def r(call, ver="0.0.12"):
         return {"perturbation_present": call, "validation": {"prompt_version": ver}}
     pairs = [("stable", r("yes"), r("yes")),
@@ -268,7 +268,7 @@ def test_noise_floor_finds_self_disagreement():
 def test_noise_floor_refuses_a_version_mismatch():
     """Handing the flag a different VERSION would report a real effect as
     variance -- the exact inversion the floor exists to prevent."""
-    from pe.compare import noise_floor
+    from harness.compare import noise_floor
     pairs = [("p", {"perturbation_present": "yes",
                     "validation": {"prompt_version": "0.0.11"}},
                    {"perturbation_present": "no",
@@ -279,6 +279,6 @@ def test_noise_floor_refuses_a_version_mismatch():
 
 
 def test_noise_floor_refuses_an_empty_overlap():
-    from pe.compare import noise_floor
+    from harness.compare import noise_floor
     unstable, err = noise_floor([])
     assert unstable == set() and err

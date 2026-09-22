@@ -1,17 +1,17 @@
 """A reader that loaded nothing must not report. The rest is how a run dir is read.
 
 Every one of these was reproducible against a real directory on this machine
-before `pe/runstate.py` existed. `~/.manuscript-harvest/perturbation/baseline-v0012-50b`
+before `harness/runstate.py` existed. `~/.manuscript-harvest/perturbation/baseline-v0012-50b`
 is the two-run baseline SKILL.md tells you to pass, and it holds `manifest.json`
 beside `r1/` and `r2/` rather than a `validated/` of its own. So:
 
-    pe.compare --baseline <that dir>
+    harness.compare --baseline <that dir>
       -> "baseline v? -> v comparison over 0 paper(s)"
          "every change is accounted for by a known v0.0.5 mechanism."   exit 0
 
 A PASS on the acceptance gate for a prompt version, having compared nothing.
-`pe.audit --work <that dir>` printed six screens of zero and `pe.summarize` wrote
-50 blank rows, both exit 0; `pe.audit --work <that dir>/r1` raised an uncaught
+`harness.audit --work <that dir>` printed six screens of zero and `harness.summarize` wrote
+50 blank rows, both exit 0; `harness.audit --work <that dir>/r1` raised an uncaught
 FileNotFoundError. The repo's stated design principle is that emptiness must
 account for itself, and this was the one place that mattered most.
 
@@ -27,7 +27,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pe.runstate import (  # noqa: E402
+from harness.runstate import (  # noqa: E402
     RunError, load_manifest, load_validated, manifest_dir, resolve_run_dir,
 )
 
@@ -65,7 +65,7 @@ def test_zero_loaded_papers_is_refused(tmp_path):
     run = load_validated(_run(tmp_path, validated=()))
     assert run.loaded == 0
     with pytest.raises(RunError) as exc:
-        run.require_papers("pe.audit")
+        run.require_papers("harness.audit")
     # The message has to say why refusing is the right answer, or the next
     # person just reaches for a --force flag.
     assert "empty set" in str(exc.value)
@@ -80,7 +80,7 @@ def test_a_partial_run_is_allowed_and_says_so(tmp_path):
     clean one are otherwise identical.
     """
     run = load_validated(_run(tmp_path, dois=("a", "b", "c"), validated=("a",)))
-    run.require_papers("pe.summarize")          # must NOT raise
+    run.require_papers("harness.summarize")          # must NOT raise
     assert run.loaded == 1 and run.expected == 3
     assert not run.complete
     assert "1/3" in run.coverage()
@@ -146,7 +146,7 @@ def test_a_run_subdir_finds_the_manifest_beside_it(tmp_path):
 
     Both runs were prepared from one assembly -- that is the entire basis for
     calling their disagreement a noise floor -- so there is one manifest, in the
-    parent. `pe.audit --work <baseline>/r1` used to die on this.
+    parent. `harness.audit --work <baseline>/r1` used to die on this.
     """
     work = _run(tmp_path, subdir="r1")
     assert manifest_dir(work / "r1") == work
@@ -178,7 +178,7 @@ def test_missing_manifest_names_the_fix_not_a_traceback(tmp_path):
     (tmp_path / "empty").mkdir()
     with pytest.raises(RunError) as exc:
         load_manifest(tmp_path / "empty")
-    assert "pe.prepare" in str(exc.value)
+    assert "harness.prepare" in str(exc.value)
 
 
 def test_unparseable_manifest_is_reported_as_such(tmp_path):
@@ -191,8 +191,8 @@ def test_unparseable_manifest_is_reported_as_such(tmp_path):
 
 
 def test_one_corrupt_validated_record_does_not_abort_the_rest(tmp_path):
-    """pe.summarize and pe.audit both used to die on a raw JSONDecodeError here,
-    producing no CSV and no review screen at all -- while pe.validate had always
+    """harness.summarize and harness.audit both used to die on a raw JSONDecodeError here,
+    producing no CSV and no review screen at all -- while harness.validate had always
     degraded politely on the equivalent bad raw file."""
     work = _run(tmp_path, dois=("a", "b"))
     (work / "validated" / "a.json").write_text("{ truncated")
@@ -200,4 +200,4 @@ def test_one_corrupt_validated_record_does_not_abort_the_rest(tmp_path):
     assert run.loaded == 1
     assert [doi for doi, _ in run.unreadable] == ["a"]
     assert "1 unreadable" in run.coverage()
-    run.require_papers("pe.summarize")          # b is still reportable
+    run.require_papers("harness.summarize")          # b is still reportable

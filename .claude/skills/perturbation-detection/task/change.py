@@ -1,6 +1,6 @@
 """TABLE 4's predicates: which mechanism can account for a paper moving.
 
-Moved out of `pe/compare.py`. The labels are `change.yaml`; the predicates that
+Moved out of `harness/compare.py`. The labels are `change.yaml`; the predicates that
 read a pair of records are here, because each one names fields only this task
 has -- `single_cell_paired`, `suppressed_candidates`, `stage_b_capped`.
 
@@ -9,7 +9,7 @@ what the decision reads. If the two ever disagree, the diff reports a change as
 UNEXPLAINED while the input that moved is sitting in plain sight -- so it is
 checked against decide.yaml at import rather than left to a comment.
 
-What `pe/compare.py` keeps: loading two runs, refusing an empty overlap, the
+What `harness/compare.py` keeps: loading two runs, refusing an empty overlap, the
 confusion matrix, the noise floor and its same-version guard, and the
 UNEXPLAINED warning. All of it task-blind.
 """
@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import re
 
-from pe.pack import PackError, tables
+from harness.pack import PackError, tables
 
 _T = tables()
 _CHG = _T["change"]
@@ -45,7 +45,7 @@ _STOPWORDS = frozenset(str(w) for w in _MATCH["stopwords"])
 #: this list and the decision must agree about what the decision reads.
 #: Printed under the confusion matrix. Which caveat is worth giving a reader
 #: depends on the question, so it is the pack's. This text was three hardcoded
-#: lines in `pe/compare.py` that named SUPP-EVIDENCE -- a class only this pack
+#: lines in `harness/compare.py` that named SUPP-EVIDENCE -- a class only this pack
 #: declares -- so a second pack's report pointed at a class absent from its own
 #: table.
 DIFF_PREAMBLE = [
@@ -234,7 +234,7 @@ def _quote_line(entry) -> str:
         return f"[{src}] {str(entry.get('quote', ''))[:150]}"
     return str(entry)[:150]
 
-#: The field a curator reads. `pe.compare` diffs this and nothing else.
+#: The field a curator reads. `harness.compare` diffs this and nothing else.
 PRIMARY_FIELD = tables()["record"]["primary_field"]
 PRIMARY_FIELD_GLOSS = tables()["record"]["primary_field_gloss"]
 

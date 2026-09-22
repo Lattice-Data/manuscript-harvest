@@ -22,7 +22,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pe.pack import tables  # noqa: E402
+from harness.pack import tables  # noqa: E402
 from task.rules import (  # noqa: E402
     DETERMINATION_LABELS, LABELS, PRIMARY_RESEARCH, consistency_checks,
     expected_determination, stage_a, stage_b,
@@ -162,7 +162,7 @@ def test_the_gate_field_is_binary():
 
 def test_the_gate_field_is_required():
     """Optional-defaulting-to-primary is a gate that never fires, which is the
-    shape six of the seven detection-review blockers had. `pe.pending` re-runs a
+    shape six of the seven detection-review blockers had. `harness.pending` re-runs a
     record that lacks it rather than assuming."""
     assert "reports_primary_research" in _REC["required_fields"]
 
@@ -192,7 +192,7 @@ def test_the_confusion_matrix_can_name_the_new_value():
 
 @pytest.fixture(scope="module")
 def gate_text():
-    spec = (Path(__file__).resolve().parent.parent / "prompt.md").read_text()
+    spec = (Path(__file__).resolve().parent.parent / "criteria" / "prompt.md").read_text()
     start = spec.index("### Step 0b:")
     return spec[start:spec.index("## Step 1:")]
 
@@ -277,5 +277,5 @@ def test_the_pending_check_rejects_a_record_without_the_gate_field():
     makes "required" mean something: a record lacking it is re-run rather than
     validated. All 392 stored v0.0.22 records lack it, which is correct -- they
     predate the criteria change and are stale by definition."""
-    from pe.pending import REQUIRED
+    from harness.pending import REQUIRED
     assert "reports_primary_research" in REQUIRED

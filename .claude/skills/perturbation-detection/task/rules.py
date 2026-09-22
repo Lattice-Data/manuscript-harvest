@@ -1,7 +1,7 @@
 """The predicates a lookup table cannot express, for this task and no other.
 
-Everything here was a module constant or a function in `pe/`, where a reader had
-no way to tell the harness's own machinery from this task's judgment. `pe/` now
+Everything here was a module constant or a function in `harness/`, where a reader had
+no way to tell the harness's own machinery from this task's judgment. `harness/` now
 holds no perturbation vocabulary at all; it calls into this module without
 knowing what any of it means.
 
@@ -19,7 +19,7 @@ three or four functions here, and if a third pack's functions turn out to share 
 shape, that is when to lift them into rows -- with two real cases to generalise
 from instead of one.
 
-The interface `pe/` relies on, and all a second pack must supply:
+The interface `harness/` relies on, and all a second pack must supply:
 
     decide(record)                        -> (label, stage_label, capped)
     checks(record)                        -> [code, ...]
@@ -32,7 +32,7 @@ The interface `pe/` relies on, and all a second pack must supply:
 
 from __future__ import annotations
 
-from pe.pack import tables
+from harness.pack import tables
 
 _T = tables()
 _REC = _T["record"]
@@ -389,7 +389,7 @@ def validate_defects(result: dict, verify, issues: list[str], flags: set[str],
 
     `verify(quote, claimed_source)` is the harness's own quote check, passed in
     for the same reason `validate_secondary` takes it: the matching logic stays
-    in `pe/` and only the field names and the wording live here.
+    in `harness/` and only the field names and the wording live here.
 
     **An unverifiable claim is dropped, not kept.** That is the opposite of
     `validate_secondary`, which keeps a suppressed candidate whose quote failed,
@@ -409,7 +409,7 @@ def validate_defects(result: dict, verify, issues: list[str], flags: set[str],
     it, which is two copies of the heading.
     """
     # The harness's own finding, recorded under the name this pack declares. It
-    # is written here rather than in `pe/` so the harness never names a field
+    # is written here rather than in `harness/` so the harness never names a field
     # only one pack has -- and it is a field of its own rather than an overwrite
     # of `text_completeness`, because prompt.md is explicit that two owners for
     # one field would make it unreadable.
@@ -527,7 +527,7 @@ def validate_secondary(result: dict, verify, issues: list[str],
     """Verify and normalize `suppressed_candidates`. Returns (entries, n, fail, wrong).
 
     `verify(quote, claimed_source)` is the harness's quote check, passed in so the
-    matching logic stays in `pe/` and only the field names and the wording live
+    matching logic stays in `harness/` and only the field names and the wording live
     here.
 
     **This function cannot move the determination, and that is structural rather
@@ -749,11 +749,11 @@ def metrics(result: dict, ctx: dict) -> dict:
 # ---------------------------------------------------------------------------
 # The determinative array, and the arrays that point into it
 #
-# Moved here verbatim from pe/validate.py rather than parameterised into it.
+# Moved here verbatim from harness/validate.py rather than parameterised into it.
 # These loops are ~55% field NAMES -- `category`, `paired_organism`,
 # `single_cell_paired`, `assay_evidence`, `perturbation_refs` -- and ~45%
 # generic mechanism, and threading a dozen names plus their message wording
-# through the harness would have put this task's vocabulary back into `pe/` in a
+# through the harness would have put this task's vocabulary back into `harness/` in a
 # less readable form. `verify` is the harness's quote check, passed in, so the
 # fuzzy matching and the cross-source resolution stay generic where they belong.
 #
@@ -910,7 +910,7 @@ def validate_items(result: dict, verify, issues: list[str],
             issues.append(f"{_REF_PATH}[{j}] is not an object")
             continue
         # v0.0.5 curator ruling: true | false | "unclear" are all schema-legal,
-        # so "unclear" is no longer an issue. Only pe.summarize's `is true` test
+        # so "unclear" is no longer an issue. Only harness.summarize's `is true` test
         # decides what counts as perturbed.
         for field in _REF_TRISTATE_BOOLS:
             if sample.get(field) not in (True, False, "unclear"):

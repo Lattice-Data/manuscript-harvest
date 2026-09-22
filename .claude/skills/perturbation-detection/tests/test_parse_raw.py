@@ -21,7 +21,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pe.validate import parse_raw  # noqa: E402
+from harness.validate import parse_raw  # noqa: E402
 
 #: Verbatim from work-corpus-v0025-r1/raw/10.1038_s41586-020-2496-1.json. These
 #: are undecoded GLYPH IDS rather than corruption, and they decode to "No sample
@@ -69,7 +69,7 @@ def test_the_stripped_set_is_the_one_the_matcher_strips():
     a quote recovered here normalizes to the same string the verifier looks for,
     so it still has to be found in the source. If these two ever diverge, a
     recovered quote could be unverifiable through no fault of the model."""
-    from pe.paper_text import normalize_text
+    from harness.paper_text import normalize_text
     recovered = parse_raw(_record(REAL_GARBLED))["text_defects"][0]["quote"]
     assert normalize_text(recovered) == normalize_text(REAL_GARBLED)
 

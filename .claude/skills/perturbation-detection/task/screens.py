@@ -1,6 +1,6 @@
 """TABLE 3's other half: the six review screens, and the keyword banks they grep.
 
-Moved out of `pe/audit.py`, which was 80% this task by line -- the worst ratio in
+Moved out of `harness/audit.py`, which was 80% this task by line -- the worst ratio in
 the tree, and the most mechanical to fix, because every screen has the same
 shape (select papers by a predicate, optionally grep the text, render some
 fields) and only the fields differ. `screen()` and `_compile()` below were
@@ -11,7 +11,7 @@ The tell that the screens were on the wrong side: a tier number went stale
 INSIDE a screen header (Screen D said "priority 3" for four versions after the
 v0.0.10 renumber) because the header was prose rather than a reference.
 
-Titles, blurbs and the keyword banks are `report.yaml`. What `pe/audit.py` keeps:
+Titles, blurbs and the keyword banks are `report.yaml`. What `harness/audit.py` keeps:
 reading a run, refusing to report on an empty set, recovering the paper text
 safely, and writing the file.
 
@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import re
 
-from pe.pack import tables
+from harness.pack import tables
 from task.rules import RULES_UNDER_REVIEW
 
 _REP = tables()["report"]

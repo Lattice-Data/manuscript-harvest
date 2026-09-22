@@ -32,12 +32,20 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pe.pack import PackError, load as load_pack, read_back_marker  # noqa: E402
-from pe.prepare import (  # noqa: E402
+from harness.pack import PackError, load as load_pack, read_back_marker  # noqa: E402
+from harness.prepare import (  # noqa: E402
     DEFAULT_BUDGET_CHARS, assembly_note, build_template, sources_within_budget,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def _spec_dir(base):
+    """Where `PACK_GLOBS` looks for the spec. A fixture that writes it
+    anywhere else builds a pack whose spec is not hashed."""
+    d = base / "criteria"
+    d.mkdir(exist_ok=True)
+    return d
 
 EXCLUDE = ("references", "supplementary", "acknowledgments", "back_matter")
 INCLUDE = ("metadata", "heading", "paragraph", "caption")
@@ -177,7 +185,7 @@ def test_switching_supplementary_off_says_so_instead_of_reporting_none_found():
 # --------------------------------------------------------------------------
 
 def test_the_note_cannot_be_mistaken_for_the_paper_text_or_a_source_block():
-    """`pe.validate` recovers the text the model saw by searching BACKWARDS for
+    """`harness.validate` recovers the text the model saw by searching BACKWARDS for
     the read-back marker, and splits it on `<<<SOURCE` markers. A note carrying
     either one would make the recovered "paper text" the wrong bytes, and then
     every quote would verify against the wrong thing."""
@@ -210,12 +218,12 @@ def test_a_spec_that_drops_the_placeholder_is_refused_by_name(tmp_path):
     note in the manifest saying otherwise."""
     pack = load_pack(ROOT)
     spec = pack.spec_path.read_text().replace(pack.placeholders["assembly"], "")
-    (tmp_path / "prompt.md").write_text(spec)
+    (_spec_dir(tmp_path) / "prompt.md").write_text(spec)
 
     class _Stub:
         anchors = pack.anchors
         placeholders = pack.placeholders
-        spec_path = tmp_path / "prompt.md"
+        spec_path = _spec_dir(tmp_path) / "prompt.md"
 
     with pytest.raises(PackError) as exc:
         build_template(_Stub())
@@ -227,10 +235,10 @@ def test_a_pack_declaring_no_assembly_placeholder_is_refused():
     """Required rather than optional, and this is the line that makes it so.
     Optional would mean absent-by-default, which is how the note would silently
     stop reaching the model."""
-    from pe.pack import TaskPack
+    from harness.pack import TaskPack
 
     config = {"name": "t", "version": "0.0.1",
-              "spec": {"path": "prompt.md",
+              "spec": {"path": "criteria/prompt.md",
                        "anchors": {"instruction": "a", "schema_start": "b",
                                    "schema_end": "c"},
                        "placeholders": {"paper_id": "{{P}}", "paper_text": "{{T}}",

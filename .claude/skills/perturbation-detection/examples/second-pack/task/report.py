@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 
-from pe.pack import tables
+from harness.pack import tables
 
 _REP = tables()["report"]
 COLUMNS = list(_REP["columns"])

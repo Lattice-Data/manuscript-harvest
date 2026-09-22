@@ -141,7 +141,7 @@ jobs:
       # Every skill's suite must be collected AND non-empty. A `pytest` that
       # finds no tests exits 5, which reads as a failure -- but a skill whose
       # tests silently stopped being discovered would otherwise pass this job by
-      # running nothing, which is the same vacuous-pass shape pe/runstate.py
+      # running nothing, which is the same vacuous-pass shape harness/runstate.py
       # exists to prevent one layer down.
       - name: Test each skill
         run: |
@@ -162,13 +162,30 @@ jobs:
 
       # Same rule selection as the package, for the same reason: correctness
       # only, no formatting gate.
+      #
+      # Discovered on `tests/`, and the whole skill directory is linted rather
+      # than a named code folder. This guard used to read `[ -d "$skill/pe" ]`
+      # and lint `$skill/pe`; when `pe/` was renamed to `harness/` on 2026-09-21
+      # the condition stopped matching and the step passed having linted
+      # nothing. The count below is the same defence the test step above already
+      # had and this one did not -- a silent no-op is the failure shape this
+      # repo keeps meeting.
       - name: Lint each skill
         run: |
           set -euo pipefail
+          found=0
           for skill in .claude/skills/*/; do
-            [ -d "$skill/pe" ] || continue
-            ruff check --select F "$skill/pe" "$skill/tests"
+            [ -d "$skill/tests" ] || continue
+            found=$((found + 1))
+            echo "::group::ruff $skill"
+            ruff check --select F "$skill"
+            echo "::endgroup::"
           done
+          if [ "$found" -eq 0 ]; then
+            echo "no skill with a tests/ directory was found -- this step linted nothing" >&2
+            exit 1
+          fi
+          echo "ok: $found skill(s) linted"
 
       # The skills take a corpus path as an argument and vendor what they need,
       # so each one must run against any directory of extracted papers rather

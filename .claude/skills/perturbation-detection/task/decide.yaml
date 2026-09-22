@@ -7,7 +7,7 @@
 
 # The complete input set. Stage A and Stage B read nothing else, so two runs that
 # agree on all five and still disagree on the determination indicate a logic bug
-# rather than a difference of reading. `pe.compare` uses exactly this list, which
+# rather than a difference of reading. `harness.compare` uses exactly this list, which
 # is the point of stating it once: the diff and the decision must agree about
 # what the decision reads.
 inputs:

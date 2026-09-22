@@ -5,12 +5,12 @@ asserted the four `schema_version` declarations inside prompt.md agreed with eac
 other — a real guard for a real bug: at v0.0.12 three of the four moved to 0.0.7
 and one did not, the model split on the contradiction (**386 of 392 records
 followed the schema example and emitted 0.0.7, 6 followed the instruction line
-and emitted 0.0.6**), and `pe.validate` compared against a literal calibrated to
+and emitted 0.0.6**), and `harness.validate` compared against a literal calibrated to
 the minority, filing a spurious issue on 386 correct records.
 
 0.0.13 removes the class of bug instead of testing for it. The version is
 declared once, in `task/task.yaml`, and prompt.md carries `{{TASK_VERSION}}` at
-every site that declares it — spliced in by `pe.prepare` exactly as
+every site that declares it — spliced in by `harness.prepare` exactly as
 `{{PAPER_ID}}` is. Four declarations that must agree becomes one declaration and
 three substitutions, so the tests below assert **the absence of a literal**
 rather than the agreement of several. A test that four copies match is a test
@@ -32,12 +32,20 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pe.pack import spec_version_line  # noqa: E402
-from pe.prepare import build_template  # noqa: E402
-from pe.validate import (  # noqa: E402
+from harness.pack import spec_version_line  # noqa: E402
+from harness.prepare import build_template  # noqa: E402
+from harness.validate import (  # noqa: E402
     LEGACY_VERSION_FIELD, expected_task_version, record_version, validate_result,
 )
-from pe.pack import PackError, TaskPack, load as load_pack, pack_files, pack_sha256  # noqa: E402
+from harness.pack import PackError, TaskPack, load as load_pack, pack_files, pack_sha256  # noqa: E402
+
+
+def _spec_dir(base):
+    """Where `PACK_GLOBS` looks for the spec. A fixture that writes it
+    anywhere else builds a pack whose spec is not hashed."""
+    d = base / "criteria"
+    d.mkdir(exist_ok=True)
+    return d
 
 ROOT = Path(__file__).resolve().parent.parent
 SEMVER = re.compile(r"\b\d+\.\d+\.\d+\b")
@@ -89,11 +97,11 @@ def test_the_spec_no_longer_asks_the_model_for_a_schema_version(pack):
 
 
 def test_nothing_in_pe_hardcodes_a_version(pack):
-    """The harness holds no opinion about the version. `pe.validate` used to
+    """The harness holds no opinion about the version. `harness.validate` used to
     compare against a literal `"0.0.6"`, which is how a correct record got
     flagged 386 times."""
     offenders = {}
-    for path in sorted((ROOT / "pe").glob("*.py")):
+    for path in sorted((ROOT / "harness").glob("*.py")):
         for number, line in enumerate(path.read_text().splitlines(), 1):
             stripped = line.strip()
             if stripped.startswith("#") or "0.0.1" in stripped and "prompt.md" in stripped:
@@ -124,7 +132,7 @@ def test_prepare_substitutes_the_version_the_pack_declares(pack, tmp_path):
 
 
 def test_the_version_line_reader_still_works(pack):
-    """`pe.pack.spec_version_line` reads the `Version:` line, and pe.prepare uses
+    """`harness.pack.spec_version_line` reads the `Version:` line, and harness.prepare uses
     it to assert the substitution has something to substitute. A regex that
     silently stopped matching would return "unknown" and disable that assertion.
 
@@ -140,13 +148,13 @@ def test_the_version_line_reader_still_works(pack):
 
 def test_the_pack_hash_covers_the_spec_and_the_pack_files(pack):
     names = {p.relative_to(ROOT).as_posix() for p in pack_files(ROOT)}
-    assert "prompt.md" in names
+    assert "criteria/prompt.md" in names
     assert "task/task.yaml" in names
     assert not any("__pycache__" in n for n in names)
 
 
 def test_the_hash_moves_when_a_rule_moves(tmp_path):
-    spec = tmp_path / "prompt.md"
+    spec = _spec_dir(tmp_path) / "prompt.md"
     spec.write_text("Version: {{TASK_VERSION}}\nrule one\n")
     (tmp_path / "task").mkdir()
     (tmp_path / "task" / "task.yaml").write_text("name: t\nversion: 0.0.1\n")
@@ -162,7 +170,7 @@ def test_the_hash_does_not_depend_on_where_the_skill_is_checked_out(tmp_path):
     a, b = tmp_path / "a", tmp_path / "b"
     for base in (a, b):
         (base / "task").mkdir(parents=True)
-        (base / "prompt.md").write_text("Version: {{TASK_VERSION}}\nrule\n")
+        (_spec_dir(base) / "prompt.md").write_text("Version: {{TASK_VERSION}}\nrule\n")
         (base / "task" / "task.yaml").write_text("name: t\nversion: 0.0.1\n")
     assert pack_sha256(a) == pack_sha256(b)
     shutil.rmtree(b)
@@ -172,7 +180,7 @@ def test_moving_a_rule_between_files_changes_the_hash(tmp_path):
     """Contents alone are not enough: a file split conserves the bytes and still
     changes where a reader has to look, so the path is hashed too."""
     (tmp_path / "task").mkdir()
-    (tmp_path / "prompt.md").write_text("Version: {{TASK_VERSION}}\n")
+    (_spec_dir(tmp_path) / "prompt.md").write_text("Version: {{TASK_VERSION}}\n")
     (tmp_path / "task" / "task.yaml").write_text("name: t\nversion: 0.0.1\nrule: x\n")
     before = pack_sha256(tmp_path)
     (tmp_path / "task" / "task.yaml").write_text("name: t\nversion: 0.0.1\n")
@@ -194,7 +202,7 @@ def test_a_missing_pack_is_an_error_not_a_default(tmp_path):
 @pytest.mark.parametrize("field", ["name", "version", "spec"])
 def test_an_incomplete_pack_names_the_missing_field(field):
     config = {"name": "t", "version": "0.0.1",
-              "spec": {"path": "prompt.md",
+              "spec": {"path": "criteria/prompt.md",
                        "anchors": {"instruction": "a", "schema_start": "b",
                                    "schema_end": "c"},
                        "placeholders": {"paper_id": "{{P}}", "paper_text": "{{T}}",
@@ -294,7 +302,7 @@ def test_a_legacy_record_files_no_issue_at_all():
     was undertaken to remove: `validation.issues` is where real problems surface,
     and one entry on every paper makes the column unreadable. A correctly-labelled
     old record is not a problem, so it is recorded structurally and counted by
-    pe.summarize instead — the same lesson `suppressed_candidates` taught, that a
+    harness.summarize instead — the same lesson `suppressed_candidates` taught, that a
     per-paper free-text note is neither enforceable nor countable.
     """
     issues = validate_result(_legacy_record(), {"main": "x"}, 0.85,

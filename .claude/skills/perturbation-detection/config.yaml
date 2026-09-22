@@ -1,5 +1,5 @@
 # Perturbation extraction configuration.
-# This file is READ by pe.prepare and pe.validate — it is not documentation.
+# This file is READ by harness.prepare and harness.validate — it is not documentation.
 
 # Where the extracted papers live: one directory per paper, each containing
 # extracted/blocks.jsonl.
@@ -14,7 +14,7 @@
 # silently selected a different, smaller corpus: 10 of the 392 papers simply
 # absent, both trees gitignored, nothing to diff.
 #
-# `--corpus` is now required, by pe.prepare and pe.validate alike. Setting
+# `--corpus` is now required, by harness.prepare and harness.validate alike. Setting
 # `corpus_dir` here still works if a checkout wants a default, but it has to be
 # written on purpose. Same treatment as `output_dir` below: a default nobody
 # meant to use is worse than no default.
@@ -36,7 +36,7 @@ exclude_sections:
   - data_availability
 
 # Supplementary content is caught primarily by source_file (see
-# pe/paper_text.py); `section` is often null for PDF-derived articles, so
+# harness/paper_text.py); `section` is often null for PDF-derived articles, so
 # section-only filtering leaks whole supplementary PDFs into the paper text.
 
 # Block kinds fed to the model. 'table' is excluded on purpose: the Cell Press
@@ -49,9 +49,9 @@ include_kinds:
   - caption
 
 # Quote validation. `threshold` is the only key here, and it is read by
-# pe.validate. `enabled`, `normalize_unicode` and `normalize_punctuation` used to
+# harness.validate. `enabled`, `normalize_unicode` and `normalize_punctuation` used to
 # sit beside it and were read by NOTHING: normalisation is unconditional in
-# pe.paper_text.normalize_text, because prompt.md requires the same
+# harness.paper_text.normalize_text, because prompt.md requires the same
 # normalisation on both sides of a comparison and a switch that turned it off on
 # one side only would make every quote check meaningless. Removed for the reason
 # stated at the bottom of this file about `output_dir` -- a key nobody reads
@@ -62,16 +62,16 @@ fuzzy_match:
 # Two more keys have been removed rather than left to look functional.
 # `confidence_thresholds` (high/medium/low bands) had no reader: the one
 # threshold triage actually applies is paper_confidence < 0.6 in
-# pe.summarize.triage_priority, which came from prompt.md step 10 and matched
+# harness.summarize.triage_priority, which came from prompt.md step 10 and matched
 # none of the three band edges here, so the file described a rubric the code did
-# not use. `flag_all_for_review: true` had no reader either -- pe.validate sets
+# not use. `flag_all_for_review: true` had no reader either -- harness.validate sets
 # `needs_review = True` on every record unconditionally, which is the curator's
 # standing decision and not a setting; a key implying it could be switched off
 # was the misleading part.
 
 # Run artifacts (work/ and output/) live OUTSIDE this directory: `claude -p`
 # cannot write under `.claude/` and exits 0 regardless, so results written
-# here are lost silently. The location comes from pe/runroot.py, overridable
+# here are lost silently. The location comes from harness/runroot.py, overridable
 # with PERTURBATION_RUN_ROOT or per-invocation with --work / --out. There is
 # deliberately no `output_dir:` key here any more -- the old one was read by
 # nothing, so setting it looked like it worked and did not.

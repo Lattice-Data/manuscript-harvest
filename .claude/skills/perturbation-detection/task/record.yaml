@@ -1,7 +1,7 @@
 # TABLE 1 of 4 — WHAT COUNTS.
 #
 # Every closed value set and every field-shape rule the record must satisfy.
-# These lived as module constants in pe/validate.py and pe/pending.py, where a
+# These lived as module constants in harness/validate.py and harness/pending.py, where a
 # reader could not tell the harness's own vocabulary (`processing_status`, which
 # any per-paper task needs) from this task's (`category`, which no other task
 # would have). Here the distinction is the file they are in.
@@ -44,7 +44,7 @@ determination_labels: ["yes", "no", "unclear", "not_applicable"]
 # The article-type gate's two values. Quoted: bare `yes`/`no` load as booleans.
 primary_research: ["yes", "no"]
 
-# The field a curator reads. `pe.compare` diffs this and nothing else, and
+# The field a curator reads. `harness.compare` diffs this and nothing else, and
 # `primary_field_gloss` is how the diff describes it to a reader -- "assay-paired"
 # is the whole point of this task and would be lost if the harness just printed
 # the field name.
@@ -73,7 +73,7 @@ unresolved_reasons:
   - none
 
 # A record missing any of these is a partial write and is re-run rather than
-# validated (pe.pending). `suppressed_candidates` is on the list deliberately:
+# validated (harness.pending). `suppressed_candidates` is on the list deliberately:
 # v0.0.9 told the model to note its exclusions in free text and nothing checked
 # that it had, so the exclusions went unrecorded. Requiring the field is what
 # makes it enforceable.
@@ -193,7 +193,7 @@ defect_array:
   # because "there is no methods text" has no substring to check.
   unquotable_kinds: [no_methods_content]
   # Section labels that count as methods content, for that falsification. A list
-  # rather than one name because publishers differ and `pe.prepare` records
+  # rather than one name because publishers differ and `harness.prepare` records
   # whatever the extractor labelled.
   methods_section_names: [methods, experimental, star methods, online methods,
                           materials and methods, methodology]
@@ -226,7 +226,7 @@ defect_array:
 #
 # Only the two the gate READS are here. `needs_section_pass` and
 # `text_completeness_source` are also harness-written, and are deliberately NOT
-# declared: `pe/` writes both as literals it owns end to end, so a declaration
+# declared: `harness/` writes both as literals it owns end to end, so a declaration
 # would be a name nothing reads -- which is the defect `cap.reason` was, and
 # `test_no_key_in_a_pack_table_is_read_by_nothing` caught this within the hour.
 harness_written_fields:

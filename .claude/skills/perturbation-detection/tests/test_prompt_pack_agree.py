@@ -1,6 +1,6 @@
 """Every value stated in both prompt.md and the pack must agree.
 
-The 0.0.13 split moved nine closed sets out of `pe/` and into `task/`, which
+The 0.0.13 split moved nine closed sets out of `harness/` and into `task/`, which
 made them findable but did **not** make them singular: prompt.md states each one
 too, because the model has to be told. So the pair survives, and the pair is the
 failure mode this repo has now hit twice.
@@ -39,7 +39,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pe.pack import load as load_pack, tables  # noqa: E402
+from harness.pack import load as load_pack, tables  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -181,7 +181,7 @@ def test_no_declared_enum_is_unguarded(spec, pack):
 
 
 def test_required_fields_all_exist_in_the_spec_schema(spec, pack):
-    """`pe.pending` re-runs any paper missing one of these, so a required field
+    """`harness.pending` re-runs any paper missing one of these, so a required field
     the spec never asks for would re-run every paper forever."""
     block = _schema_block(spec)
     top_level = set(re.findall(r'^  "(\w+)":', block, re.MULTILINE))

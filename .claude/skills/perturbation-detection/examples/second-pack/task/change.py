@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from pe.pack import PackError, tables
+from harness.pack import PackError, tables
 
 _T = tables()
 _CHG, _DEC = _T["change"], _T["decide"]

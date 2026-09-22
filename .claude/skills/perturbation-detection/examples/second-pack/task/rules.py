@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pe.pack import tables
+from harness.pack import tables
 
 _T = tables()
 _REC, _DEC = _T["record"], _T["decide"]

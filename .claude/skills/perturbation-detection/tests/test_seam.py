@@ -1,21 +1,21 @@
-"""The seam: `pe/` is the harness, `task/` is the judgment, and this holds the line.
+"""The seam: `harness/` is the harness, `task/` is the judgment, and this holds the line.
 
 Three layers, and only the top one is about perturbations:
 
     JUDGMENT   task/   the spec + four lookup tables. SWAP this.
-    PLUMBING   pe/     assemble sources, splice the prompt, one call per paper,
+    PLUMBING   harness/     assemble sources, splice the prompt, one call per paper,
                        verify every quote, prune, recompute, tabulate, diff. KEEP.
     TEXT       manuscript_harvest   DOI -> labelled text with provenance. KEEP.
 
-Before the 0.0.13 split, `pe/` was 1,038 task lines to 1,185 generic ones, with
+Before the 0.0.13 split, `harness/` was 1,038 task lines to 1,185 generic ones, with
 the two interleaved inside four files -- `audit.py` 80% task, `summarize.py` 71%,
 `validate.py` 60%. The tests below are what stops that growing back, and the
-first is the one that matters: **no module in `pe/` may name this task in code.**
+first is the one that matters: **no module in `harness/` may name this task in code.**
 
 Comments and docstrings are exempt, deliberately. Half of this repo's value is
 the record of which DOI taught which rule, and a guard that forced that history
 out of the harness would be trading the thing worth keeping for a tidier grep.
-The line drawn here is that `pe/` may EXPLAIN what it once knew and may not USE
+The line drawn here is that `harness/` may EXPLAIN what it once knew and may not USE
 it.
 
 Run: python -m pytest tests/test_seam.py -q
@@ -32,10 +32,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pe.pack import TABLE_FILES, load as load_pack, tables  # noqa: E402
+from harness.pack import TABLE_FILES, load as load_pack, tables  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-HARNESS = sorted((ROOT / "pe").glob("*.py"))
+HARNESS = sorted((ROOT / "harness").glob("*.py"))
 
 #: Words that name THIS task rather than any per-paper classification task.
 TASK_WORDS = ("perturb", "single_cell", "scrna", "snrna", "assay",
@@ -65,7 +65,7 @@ def test_the_harness_does_not_name_the_task_in_code():
     """The seam itself.
 
     A hit here means a task word has got back into an identifier, a string
-    literal or a dict key in `pe/`, which is how the layers grew together the
+    literal or a dict key in `harness/`, which is how the layers grew together the
     first time. The fix is never to add a word to the allow-list -- it is to move
     the value into `task/` and read it from there.
     """
@@ -93,7 +93,7 @@ def test_runroot_takes_its_names_from_the_pack_with_no_fallback():
     fallback now: an unreadable pack is an error, not a run that quietly writes
     to the previous task's paths.
     """
-    from pe.runroot import ENV_VAR, output_name
+    from harness.runroot import ENV_VAR, output_name
     outputs = load_pack(ROOT)._config["outputs"]
     assert ENV_VAR == outputs["env_var"]
     assert output_name("summary_csv") == outputs["summary_csv"]
@@ -102,7 +102,7 @@ def test_runroot_takes_its_names_from_the_pack_with_no_fallback():
 
 
 def _harness_imports() -> dict[str, set[str]]:
-    """What `pe/` actually imports from the pack, read out of the source.
+    """What `harness/` actually imports from the pack, read out of the source.
 
     Derived, not listed. This test used to carry a hand-written checklist of the
     interface, and running a second pack found it was missing FIVE symbols the
@@ -121,7 +121,7 @@ def _harness_imports() -> dict[str, set[str]]:
 
 
 def test_the_pack_supplies_everything_the_harness_asks_of_it():
-    """Every name `pe/` imports from the pack must exist.
+    """Every name `harness/` imports from the pack must exist.
 
     A pack missing one fails at import today; the point of checking it here is
     that a pack AUTHOR gets a list rather than a traceback, and that the list is
@@ -130,7 +130,7 @@ def test_the_pack_supplies_everything_the_harness_asks_of_it():
     import importlib
 
     required = _harness_imports()
-    assert required, "no `from task...` imports found in pe/ -- parser broken"
+    assert required, "no `from task...` imports found in harness/ -- parser broken"
     missing: dict[str, list[str]] = {}
     for module_name, names in sorted(required.items()):
         module = importlib.import_module(module_name)
@@ -172,7 +172,7 @@ def test_the_diff_and_the_decision_read_the_same_inputs():
     there too -- restated here so the failure names the reason rather than
     arriving as a PackError from an import.
 
-    If they ever disagree, `pe.compare` reports a movement as UNEXPLAINED while
+    If they ever disagree, `harness.compare` reports a movement as UNEXPLAINED while
     the input that moved is sitting in plain sight, and UNEXPLAINED is the only
     signal in the pipeline that says a human must look before the corpus run.
     """
@@ -183,9 +183,9 @@ def test_the_diff_and_the_decision_read_the_same_inputs():
 
 def test_every_rule_bearing_file_is_in_the_pack_hash():
     """A rule the hash does not cover is a rule two runs can differ on silently."""
-    from pe.pack import pack_files
+    from harness.pack import pack_files
     covered = {p.relative_to(ROOT).as_posix() for p in pack_files(ROOT)}
-    expected = {"prompt.md"} | {f"task/{f}" for f in TABLE_FILES.values()} | {
+    expected = {"criteria/prompt.md"} | {f"task/{f}" for f in TABLE_FILES.values()} | {
         "task/rules.py", "task/report.py", "task/screens.py", "task/change.py",
         "task/task.yaml"}
     assert expected <= covered, f"not hashed: {sorted(expected - covered)}"
@@ -195,17 +195,17 @@ def test_the_harness_is_not_in_the_pack_hash():
     """The hash answers "were these records produced under the same RULES", so it
     covers the spec and `task/*` and nothing else.
 
-    `pe/pack.py` is the case worth pinning: it was `task/__init__.py` and was
+    `harness/pack.py` is the case worth pinning: it was `task/__init__.py` and was
     hashed by accident of living there. A change to how tables are READ is a
     change to the harness, and if that belonged in the hash then so would
-    `pe/validate.py` -- at which point the hash stops meaning "same rules" and
+    `harness/validate.py` -- at which point the hash stops meaning "same rules" and
     starts meaning "same everything", which the git SHA already says.
     """
-    from pe.pack import pack_files
+    from harness.pack import pack_files
     covered = {p.relative_to(ROOT).as_posix() for p in pack_files(ROOT)}
-    assert not any(p.startswith("pe/") for p in covered), (
+    assert not any(p.startswith("harness/") for p in covered), (
         f"the harness is inside the pack hash: "
-        f"{sorted(p for p in covered if p.startswith('pe/'))}")
+        f"{sorted(p for p in covered if p.startswith('harness/'))}")
 
 
 def test_the_pack_has_no_generic_machinery_left_in_it():
@@ -213,18 +213,18 @@ def test_the_pack_has_no_generic_machinery_left_in_it():
 
     An `__init__.py` there is where plumbing accumulates: the loader lived in one
     for the whole of 0.0.13, and a second pack had to copy it verbatim -- 232
-    lines of machinery no pack owns, duplicated per pack. `pe/` has never had
+    lines of machinery no pack owns, duplicated per pack. `harness/` has never had
     one either, so the two layers are symmetric about it.
     """
     assert not (ROOT / "task" / "__init__.py").exists(), (
         "task/__init__.py is back. Whatever is in it is either a rule -- in which "
         "case it belongs in a named module beside the others -- or plumbing, in "
-        "which case it belongs in pe/.")
+        "which case it belongs in harness/.")
 
 
 def test_the_pack_names_the_outputs_so_a_second_pack_gets_its_own(tmp_path):
     """Two packs in one repo must not share a run root, or each would read the
-    other's papers as pending and `pe.pending` would report nonsense."""
+    other's papers as pending and `harness.pending` would report nonsense."""
     outputs = load_pack(ROOT)._config.get("outputs") or {}
     for key in ("run_root_subdir", "env_var", "per_paper_file", "summary_csv",
                 "review_txt", "diff_txt"):

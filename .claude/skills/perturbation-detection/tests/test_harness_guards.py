@@ -27,9 +27,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pe.paper_text import build_sources, split_assembled  # noqa: E402
-from pe.runroot import work_default  # noqa: E402
-from pe.validate import model_of, validate_result  # noqa: E402
+from harness.paper_text import build_sources, split_assembled  # noqa: E402
+from harness.runroot import work_default  # noqa: E402
+from harness.validate import model_of, validate_result  # noqa: E402
 from task.rules import (  # noqa: E402
     DEFECT_KINDS, HARNESS_UNREADABLE_FIELD, capping_defects, decide, stage_b,
     validate_defects,
@@ -157,7 +157,7 @@ _BLOCKS = [
 
 
 def test_main_text_only_assembly_reports_its_char_count():
-    """`pe.prepare --no-supplementary` died on `KeyError: 'chars'`.
+    """`harness.prepare --no-supplementary` died on `KeyError: 'chars'`.
 
     `build_sources` returned early on this path, before the block that set
     `chars` and `supp_chars`, so the toggle prompt.md documents ("Supplementary
@@ -193,7 +193,7 @@ def test_no_config_key_is_read_by_nothing():
     """Five keys were dead: `fuzzy_match.enabled`, `.normalize_unicode`,
     `.normalize_punctuation`, `confidence_thresholds` and `flag_all_for_review`.
 
-    config.yaml's own header says it "is READ by pe.prepare and pe.validate — it
+    config.yaml's own header says it "is READ by harness.prepare and harness.validate — it
     is not documentation", and it already carried a comment explaining that the
     removed `output_dir:` key "was read by nothing, so setting it looked like it
     worked and did not". The same failure, five more times. This is the guard
@@ -201,7 +201,7 @@ def test_no_config_key_is_read_by_nothing():
     """
     yaml = pytest.importorskip("yaml")
     config = yaml.safe_load((ROOT / "config.yaml").read_text()) or {}
-    source = "\n".join(p.read_text() for p in sorted((ROOT / "pe").glob("*.py")))
+    source = "\n".join(p.read_text() for p in sorted((ROOT / "harness").glob("*.py")))
 
     def keys(node, prefix=""):
         for key, value in node.items():
@@ -212,7 +212,7 @@ def test_no_config_key_is_read_by_nothing():
     unread = [k for k in keys(config)
               if f'"{k}"' not in source and f"'{k}'" not in source]
     assert not unread, (
-        f"config.yaml declares {unread} but no module in pe/ reads them. A key "
+        f"config.yaml declares {unread} but no module in harness/ reads them. A key "
         f"nobody reads looks like it works and does not — either wire it up or "
         f"delete it.")
 
@@ -238,7 +238,7 @@ def test_over_budget_paper_says_re_fetching_will_not_help():
     """Both papers that hit `needs_section_pass` on the 392-paper run were capped
     at "unclear"/degraded_text like any truncated paper and sorted to triage P4 —
     "route to re-fetch, not to reading". That is the wrong queue: the text arrived
-    complete and simply does not fit the budget with Methods preserved. pe.prepare
+    complete and simply does not fit the budget with Methods preserved. harness.prepare
     wrote the flag into the manifest and nothing read it.
     """
     out = validate_result(_minimal(), {"main": "x"}, 0.85,
@@ -308,7 +308,7 @@ def test_the_verifier_can_actually_fail():
     if work is None:
         pytest.skip(f"no run directory at {work_default()} (set PE_TEST_WORK)")
 
-    from pe.validate import paper_text_from_prompt
+    from harness.validate import paper_text_from_prompt
 
     checked = 0
     for path in sorted((work / "validated").glob("*.json"))[:200]:
@@ -363,7 +363,7 @@ def test_the_verifier_can_actually_fail():
 def test_prepare_refuses_an_empty_paper_set(tmp_path):
     """Found by hitting it: `cat` of two paths that did not exist.
 
-    `pe.prepare` printed "0/0 prepared" and exited 0 on an empty `--set`, so a
+    `harness.prepare` printed "0/0 prepared" and exited 0 on an empty `--set`, so a
     mistyped or half-written set file read as a successful stage 1. Stage 2 then
     found nothing pending and also exited 0, and the whole pipeline reported
     success over zero papers -- the vacuous-pass shape that three of the seven
@@ -374,7 +374,7 @@ def test_prepare_refuses_an_empty_paper_set(tmp_path):
     empty = tmp_path / "none.txt"
     empty.write_text("\n  \n")          # blank lines only: parses to zero papers
     proc = subprocess.run(
-        [sys.executable, "-m", "pe.prepare", "--set", str(empty),
+        [sys.executable, "-m", "harness.prepare", "--set", str(empty),
          "--work", str(tmp_path / "work"), "--corpus", str(tmp_path / "corpus")],
         cwd=str(ROOT), capture_output=True, text=True)
     assert proc.returncode != 0, (
@@ -393,7 +393,7 @@ USAGE_LIMIT_LINE = ("You've hit your session limit · resets 11:50pm "
                     "(America/Los_Angeles)")
 AUTH_FAILURE_LINE = "OAuth session expired. Please run /login."
 
-RUNNER = ROOT / "pe" / "run_headless.sh"
+RUNNER = ROOT / "harness" / "run_headless.sh"
 
 
 #: The predicate name the runner uses, and the variable holding its vocabulary.
@@ -530,7 +530,7 @@ def test_the_sentinel_is_written_read_and_cleared_under_one_name():
 def test_no_module_falls_back_to_a_literal_corpus_path():
     """The defect this is the regression for.
 
-    `pe.prepare` and `pe.validate` both fell back to `"./corpus"`, which
+    `harness.prepare` and `harness.validate` both fell back to `"./corpus"`, which
     resolves against the CWD -- and every documented invocation runs from the
     skill directory, where a stale 382-paper copy sits beside the 392-paper tree
     at the repo root. Forgetting `--corpus` therefore scored a different, smaller
@@ -540,7 +540,7 @@ def test_no_module_falls_back_to_a_literal_corpus_path():
     import ast
 
     offenders = []
-    for path in sorted((ROOT / "pe").glob("*.py")):
+    for path in sorted((ROOT / "harness").glob("*.py")):
         tree = ast.parse(path.read_text())
         # Docstrings are Constants too, and the modules explain the removed
         # default in prose. Comments never reach the AST, so only docstrings
@@ -561,7 +561,7 @@ def test_no_module_falls_back_to_a_literal_corpus_path():
     assert not offenders, (
         f"{offenders} -- a corpus default that resolves against the CWD picks "
         f"the stale copy whenever the flag is forgotten. Use "
-        f"pe.runstate.resolve_corpus, which refuses instead.")
+        f"harness.runstate.resolve_corpus, which refuses instead.")
 
 
 def test_prepare_refuses_when_no_corpus_is_named(tmp_path):
@@ -571,7 +571,7 @@ def test_prepare_refuses_when_no_corpus_is_named(tmp_path):
     empty_config = tmp_path / "config.yaml"
     empty_config.write_text("include_supplementary: true\n")
     proc = subprocess.run(
-        [sys.executable, "-m", "pe.prepare", "--set", str(papers),
+        [sys.executable, "-m", "harness.prepare", "--set", str(papers),
          "--work", str(tmp_path / "work"), "--config", str(empty_config)],
         cwd=str(ROOT), capture_output=True, text=True)
     assert proc.returncode != 0, (
@@ -589,7 +589,7 @@ def test_prepare_refuses_a_corpus_path_that_does_not_exist(tmp_path):
     papers = tmp_path / "one.txt"
     papers.write_text("10.1000_x\n")
     proc = subprocess.run(
-        [sys.executable, "-m", "pe.prepare", "--set", str(papers),
+        [sys.executable, "-m", "harness.prepare", "--set", str(papers),
          "--work", str(tmp_path / "work"),
          "--corpus", str(tmp_path / "typo-not-a-corpus")],
         cwd=str(ROOT), capture_output=True, text=True)
@@ -672,18 +672,18 @@ def test_a_paper_set_may_carry_comments_and_blank_lines(tmp_path):
 def test_prepare_strips_comments_rather_than_only_blank_lines():
     """The guard is on the source, because the parse above is a restatement.
 
-    Read out of `pe/prepare.py` so the test cannot keep passing while the module
+    Read out of `harness/prepare.py` so the test cannot keep passing while the module
     reverts to `if line.strip()` alone -- which is what it did until v0.0.23.
     """
-    src = (Path(__file__).resolve().parent.parent / "pe" / "prepare.py").read_text()
+    src = (Path(__file__).resolve().parent.parent / "harness" / "prepare.py").read_text()
     assert 'line.split("#", 1)[0].strip()' in src, (
-        "pe.prepare no longer strips comments from the paper set, so a labelled "
+        "harness.prepare no longer strips comments from the paper set, so a labelled "
         "acceptance set prepares its labels as papers")
 
 
 def _acceptance_set_ids():
     skill = Path(__file__).resolve().parent.parent
-    listing = skill / "papers-accept-v0023.txt"
+    listing = skill / "history" / "sets" / "papers-accept-v0023.txt"
     assert listing.is_file(), "the v0.0.23 acceptance set is missing"
     dois = [ln.split("#", 1)[0].strip() for ln in listing.read_text().splitlines()]
     return skill, [d for d in dois if d]
@@ -706,7 +706,7 @@ def test_the_v0023_acceptance_set_is_well_formed():
         f"the acceptance set has shrunk to {len(dois)} papers; it is sized to "
         f"carry the 12 curator papers, the ruling anchors and both sides of the "
         f"predicted infection movement")
-    # Comment lines must not survive as paper ids -- that is the pe.prepare bug
+    # Comment lines must not survive as paper ids -- that is the harness.prepare bug
     # this file also guards, seen from the data side.
     strays = [d for d in dois if d.startswith("#") or " " in d or "/" in d]
     assert not strays, f"acceptance set lines that are not paper ids: {strays}"
