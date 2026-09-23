@@ -394,7 +394,7 @@ opinion.
 
 **Incomplete text can never produce a confident "no."** If the text was truncated or
 the Methods never arrived, a "no" is automatically raised to "unclear" and routed back
-for re-fetching. A "yes" is *not* capped, deliberately: missing text can hide the
+for re-fetching. A "yes" is *not* downgraded, deliberately: missing text can hide the
 sentence that would have proved a pairing, but it cannot invent one.
 
 **And the model must record what it decided *not* to count**, and why, from a fixed

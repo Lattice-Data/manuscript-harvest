@@ -180,9 +180,9 @@ def test_a_failed_extraction_is_exempt_from_the_confidence_rubric(spec):
 def test_the_partial_text_ceiling_applies_only_to_negatives(spec):
     """The 1f finding, measured: three positives pinned at exactly 0.38.
 
-    Stage B caps NEGATIVES on degraded text and deliberately leaves positives
+    Stage B downgrades NEGATIVES on degraded text and deliberately leaves positives
     alone -- missing text can hide the sentence that would pair a perturbation
-    but cannot invent one. The rubric's low band contradicted that by capping
+    but cannot invent one. The rubric's low band contradicted that by downgrading
     "any determination" on partial text at 0.39, which routed every positive on
     partial text into triage tier 3 by rubric rather than by any judgment about
     the paper. All three such papers sat at the ceiling, not at the evidence.
@@ -191,7 +191,7 @@ def test_the_partial_text_ceiling_applies_only_to_negatives(spec):
     assert "partial" in rubric, "the rubric no longer mentions partial text"
     assert not re.search(r"Any determination made on `processing_status` = \"partial\"",
                          rubric), (
-        "the rubric caps ANY determination on partial text again, contradicting "
+        "the rubric downgrades ANY determination on partial text again, contradicting "
         "Stage B's deliberate asymmetry")
     assert "does not apply to a \"yes\"" in rubric, (
         "the rubric no longer states that the partial-text ceiling spares "

@@ -1,6 +1,6 @@
 # TABLE 2 of 4 — HOW TO DECIDE.
 #
-# The inputs the determination is a function of, the degraded-text cap, and the
+# The inputs the determination is a function of, the damaged text downgrade, and the
 # consistency codes with their wording. The ORDERED RULES themselves are
 # `rules.decide()` in rules.py rather than data here, and that is a deliberate
 # choice rather than an unfinished one -- see the note at the bottom.
@@ -23,24 +23,24 @@ inputs:
   defects: text_defects[].kind
   harness_withheld: harness_withheld
   # Fails CLOSED, and this is the input that does it. A quote that does not
-  # verify is a claim REFUTED -- dropped, no cap, the negative stands. An entry
+  # verify is a claim REFUTED -- dropped, no downgrade, the negative stands. An entry
   # that cannot be read at all is a claim UNKNOWN: the model saw something and
   # botched the report of it, which is not evidence that the text is whole. The
   # old trigger got this exact distinction wrong in the other direction -- it
   # tested enum membership first, so None, "", "Full" and "truncated " all
-  # escaped the cap while an honest "unknown" was capped.
+  # escaped the downgrade while an honest "unknown" was downgraded.
   defect_unreadable: defect_claim_unreadable
 
 # Stage B. Asymmetric on purpose: missing text can hide the sentence that would
 # have paired a perturbation to a qualifying assay, but it cannot invent one, so
-# only a negative is capped. A positive stands on the evidence it has.
+# only a negative is downgraded. A positive stands on the evidence it has.
 #
 # `when_completeness_not: full` means ANYTHING other than "full" -- including a
 # malformed or absent value. The guard here used to test membership of the legal
-# enum first, so None, "", "Full" and "truncated " all escaped the cap and kept
-# the "no", while an honest "unknown" was capped. A safety mechanism a typo
+# enum first, so None, "", "Full" and "truncated " all escaped the downgrade and kept
+# the "no", while an honest "unknown" was downgraded. A safety mechanism a typo
 # switches off is not one.
-cap:
+damaged_text_downgrade:
   from: "no"
   to: unclear
   # v0.0.25: the trigger is auditable, and it is not an adjective.
@@ -51,16 +51,16 @@ cap:
   # of 24). v0.0.24 removed one cause by telling the model which cuts were the
   # pipeline's own; the residual was a judgment with nothing behind it.
   #
-  # Now the cap fires on either of two facts. `harness_withheld` is the ladder
+  # Now the downgrade fires on either of two facts. `harness_withheld` is the ladder
   # having run at all, which the model cannot see and cannot dispute. A defect is
   # the model's observation, kept only where the harness could verify the quote it
   # cites -- see record.yaml's `defect_array`.
   when_harness_withheld: true
-  # WHICH defects cap. Curator decision, 2026-09-16: the cap exists because
+  # WHICH defects downgrade. Curator decision, 2026-09-16: the downgrade exists because
   # missing text can hide the sentence that would pair a perturbation to a
   # qualifying assay. A garbled TABLE in a supplementary reporting summary cannot
   # hide that sentence; an absent methods section can, wherever it lives. So a
-  # defect in the main text caps, and missing methods caps from any source.
+  # defect in the main text downgrades, and missing methods downgrades from any source.
   #
   # The alternative -- any defect in any source -- is what the old rule did in
   # effect, and it holds `10.1126/science.aat1699` at "unclear" over three garbled
@@ -68,7 +68,7 @@ cap:
   when_defect_in_sources: [main]
   when_defect_kind_any_source: [no_methods_content]
   # No `reason:` here. It said `degraded_text`, which is what
-  # `reason_rules.cap_reason` below says and what the harness actually reads --
+  # `reason_rules.downgrade_reason` below says and what the harness actually reads --
   # one value stated twice in one file, and only one of them wired. That is the
   # v0.0.7 shape in miniature, so the unread copy is gone rather than kept for
   # symmetry.
@@ -99,7 +99,7 @@ harness_raised_checks: [CC-7]
 reason_rules:
   none_value: none
   required_when: unclear
-  cap_reason: degraded_text
+  downgrade_reason: degraded_text
 
 # ---------------------------------------------------------------------------
 # Why the ordered rules are NOT data here.

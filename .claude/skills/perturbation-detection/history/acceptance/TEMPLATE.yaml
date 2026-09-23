@@ -81,6 +81,6 @@ criteria:
   # all fourteen claims, and would have agreed 24/24 over a dead gate.
   - id: the-new-thing-actually-fired
     kind: exercised
-    predicate: validation.stage_b_capped
+    predicate: validation.damaged_text_downgrade
     minimum: 1
     note: what this version is FOR must happen at least once in the set

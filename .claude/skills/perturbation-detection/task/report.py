@@ -20,7 +20,7 @@ from __future__ import annotations
 from collections import Counter
 
 from harness.pack import tables
-from task.rules import is_human, normalise_organism  # noqa: F401
+from task.rules import downgraded, is_human, normalise_organism  # noqa: F401
 
 _REP = tables()["report"]
 
@@ -156,7 +156,7 @@ def row_for(doi: str, result: dict, entry: dict) -> dict:
         "n_paired_no": validation.get("paired_no", ""),
         "n_paired_unclear": validation.get("paired_unclear", ""),
         "assay_filtered": validation.get("assay_filtered", ""),
-        "stage_b_capped": validation.get("stage_b_capped", ""),
+        "damaged_text_downgrade": downgraded(validation, ""),
         "determination_changed_by_harness": validation.get(
             "determination_changed_by_harness", ""),
         "consistency_flags": "|".join(validation.get("consistency_flags") or []),
@@ -246,9 +246,9 @@ def counters(rows: list[dict], results: dict[str, dict]) -> list[str]:
                + (", ".join(f"{k}={v}" for k, v in sorted(reasons.items()))
                   or "(no unclear papers)"))
 
-    capped = [r for r in ok if r["stage_b_capped"] is True]
-    out.append(f"  {'moved no -> unclear by Stage B (v0.0.5 cost)':<52} {len(capped)}"
-               + (f" -> {', '.join(r['doi'] for r in capped)}" if capped else ""))
+    downgraded = [r for r in ok if r["damaged_text_downgrade"] is True]
+    out.append(f"  {'moved no -> unclear by Stage B (v0.0.5 cost)':<52} {len(downgraded)}"
+               + (f" -> {', '.join(r['doi'] for r in downgraded)}" if downgraded else ""))
 
     cc = Counter(c for r in ok for c in (r["consistency_flags"] or "").split("|") if c)
     out.append(f"  {'papers hitting each CC code':<52} "

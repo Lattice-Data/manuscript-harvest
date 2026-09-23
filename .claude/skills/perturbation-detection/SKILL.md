@@ -53,7 +53,7 @@ README says so at the top.
 | table | holds |
 |---|---|
 | `task/record.yaml` | **what counts** — the closed value sets, the required fields, the array shapes, the open fields |
-| `task/decide.yaml` | **how to decide** — the determination's inputs, the degraded-text cap and what opens it, CC-1..CC-8 |
+| `task/decide.yaml` | **how to decide** — the determination's inputs, the damaged text downgrade and what opens it, CC-1..CC-8 |
 | `task/report.yaml` | **what to read first** — the triage ladder, the CSV columns, the six screens, the keyword banks |
 | `task/change.yaml` | **what counts as a change** — the 12 change classes and the cross-run match rule |
 
@@ -276,8 +276,8 @@ python -m harness.compare --baseline <old_run_dir>   # version-to-version diff
   both splices the whole paper into the instructions. `harness.prepare` uses
   `rsplit(..., 1)`.
 - **Missing text must never read as a negative.** A paper whose text is
-  truncated or has no Methods cannot resolve to "no"; it is capped at "unclear"
-  with `unresolved_reason = degraded_text`. Positives are not capped — missing
+  truncated or has no Methods cannot resolve to "no"; it is downgraded to "unclear"
+  with `unresolved_reason = degraded_text`. Positives are not downgraded — missing
   text can hide evidence but cannot invent it.
 - **The determination is recomputed after quote verification.** Any quote that
   cannot be found is dropped; a perturbation left with no verified quote is
@@ -320,22 +320,22 @@ python -m harness.compare --baseline <old_run_dir>   # version-to-version diff
 - `table` blocks are deliberately excluded: a Cell Press KEY RESOURCES TABLE
   lists every reagent in the lab, and this task turns on the *role* a reagent
   plays, not its presence.
-- **Stage B's cap is keyed on a verified quote, not on a self-report (v0.0.25).**
+- **Stage B's damaged text downgrade is keyed on a verified quote, not on a self-report (v0.0.25).**
   `text_defects` is a required array: one entry per defect, each naming the
   `<<<SOURCE>>>` it is in, its `kind`, and a quote the harness checks against
   that source with the same verifier and threshold `perturbations[]` gets. **A
-  claim whose quote does not verify is dropped and does not cap; an entry that
-  cannot be READ at all caps anyway** — refuted and unreadable are opposite
-  states, and the old trigger got that backwards. The cap fires on a defect in
+  claim whose quote does not verify is dropped and does not downgrade; an entry that
+  cannot be READ at all downgrades anyway** — refuted and unreadable are opposite
+  states, and the old trigger got that backwards. The downgrade fires on a defect in
   the **main** source, on `no_methods_content` from **any** source, or on the
   harness having withheld text; a garbled supplementary table is recorded and
-  does not cap, because it could not have hidden a pairing sentence (curator
+  does not downgrade, because it could not have hidden a pairing sentence (curator
   decision, 2026-09-16). `processing_status` and `text_completeness` stay on the
   record and no longer decide anything, so **`partial` + `full` is legal and
   means "one source is garbage, the article is whole"**. Why: that trigger
   flipped on 3 of 30 byte-identical papers at v0.0.23 and 4 of 24 at v0.0.24.
   Protocol in `ACCEPTANCE-v0.0.25.md`; the blocking criterion is now agreement
-  of `stage_b_capped` between two runs.
+  of `damaged_text_downgrade` between two runs.
 - **The text the model sees is not the published article, and since v0.0.24 the
   prompt says so.** Every source arrives with its reference list,
   acknowledgments, funding, competing-interest and data-availability sections and
@@ -344,7 +344,7 @@ python -m harness.compare --baseline <old_run_dir>   # version-to-version diff
   complete with none of that stated: **154 of the 392 corpus papers end on a bare
   heading with nothing under it** — "Associated Data", "Supplementary Materials" —
   because the exclusion list took the content and left the label. That is what
-  made `text_completeness` flip on byte-identical input, and the cap flip with
+  made `text_completeness` flip on byte-identical input, and the downgrade flip with
   it. `harness.prepare.assembly_note` now states the cuts per paper in an `ASSEMBLY:`
   block rendered from the assembly that just ran, and `"full"` is defined as
   *nothing missing beyond what `ASSEMBLY:` says was removed*. **If you add a

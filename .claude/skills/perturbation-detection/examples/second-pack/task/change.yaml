@@ -4,9 +4,9 @@ order: ["yes", "unclear", "no"]
 
 classes:
   STAGE-B: >-
-    Stage B's degraded-text cap was ENTERED in the new run
+    Stage B's damaged text downgrade was ENTERED in the new run
   STAGE-B-RELEASED: >-
-    Stage B's cap was RELEASED — e.g. re-extraction completed the text
+    Stage B's damaged text downgrade was RELEASED — e.g. re-extraction completed the text
   STATED-WHERE-CHANGED: >-
     the same tissue moved between `methods` and `inferred`, which is this task's
     whole question rather than a detail

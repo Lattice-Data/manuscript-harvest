@@ -1,6 +1,7 @@
-"""`text_defects`: the evidence Stage B's cap now needs, and the one-way check.
+"""`text_defects`: the evidence the damaged text downgrade now needs, and the
+one-way check.
 
-v0.0.25. The cap used to fire on `processing_status = "partial" OR
+v0.0.25. The downgrade used to fire on `processing_status = "partial" OR
 text_completeness != "full"` -- two paper-level adjectives -- and that trigger
 flipped on byte-identical input in two consecutive acceptance passes: **3 of 30
 papers at v0.0.23, and 4 of 24 at v0.0.24** after the `ASSEMBLY:` block had
@@ -29,7 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from harness.paper_text import section_chars, verify_quote_sourced  # noqa: E402
 from task.rules import (  # noqa: E402
-    DEFECT_KINDS, capping_defects, methods_claim_refuted, validate_defects,
+    DEFECT_KINDS, downgrading_defects, methods_claim_refuted, validate_defects,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -61,7 +62,7 @@ def test_a_verified_quote_is_kept():
 def test_an_unverifiable_quote_is_dropped_rather_than_kept():
     """The opposite of `validate_secondary`, deliberately. A suppression is a
     record of a decision already made, so a bad quote there drops the quote and
-    keeps the entry. A defect entry is a LICENCE TO CAP, so keeping one the
+    keeps the entry. A defect entry is a LICENCE TO DOWNGRADE, so keeping one the
     harness could not confirm would put the unevidenced adjective straight back.
     """
     record = _record(text_completeness="truncated", text_defects=[
@@ -125,7 +126,7 @@ def test_the_methods_check_refutes_on_substance_not_on_a_label():
     characters**: two copies of the heading "Materials and Methods" and a list
     of supplementary figure captions. Its `methods_missing` report is CORRECT.
     A check keyed on the label existing would have refuted a true claim and
-    released the cap on the one text in this corpus that is genuinely broken.
+    released the downgrade on the one text in this corpus that is genuinely broken.
     """
     assert methods_claim_refuted({"abstract": 6209, "methods": 228}) is False
     assert methods_claim_refuted({"methods": 11776}) is True
@@ -169,9 +170,9 @@ def test_two_sources_can_disagree_without_the_record_lying():
                                     "quote": "REAL mojibake"}])
     kept, _, _ = validate_defects(record, _verify, [], set())
     assert len(kept) == 1
-    assert capping_defects(record) == [], (
+    assert downgrading_defects(record) == [], (
         "a garbled reporting summary could not have hidden a pairing sentence, "
-        "so it is recorded and does not cap")
+        "so it is recorded and does not downgrade")
 
 
 def test_section_chars_counts_what_reached_the_model():
@@ -205,7 +206,7 @@ def test_the_fake_speaks_the_real_verifier_s_contract():
     was dropped: 14 of 14 in the v0.0.25 acceptance run, one of them matching its
     own cited source at ratio 1.0. Stage B was left firing on `harness_withheld`
     and `no_methods_content` alone, both deterministic, so the version's two-run
-    cap-agreement criterion would have passed over a mechanism that never ran.
+    downgrade-agreement criterion would have passed over a mechanism that never ran.
 
     It survived because `_verify` above returned the same invented shape the code
     read. A fake that agrees with the code about a contract neither one honours

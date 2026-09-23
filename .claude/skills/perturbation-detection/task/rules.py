@@ -21,7 +21,7 @@ from instead of one.
 
 The interface `harness/` relies on, and all a second pack must supply:
 
-    decide(record)                        -> (label, stage_label, capped)
+    decide(record)                        -> (label, stage_label, downgraded)
     checks(record)                        -> [code, ...]
     metrics(record, ctx)                  -> ordered dict of task counters
     validate_secondary(record, verify, issues, flags)
@@ -106,10 +106,26 @@ if _REF_POINTS_AT != _ITEM_PATH:
 
 
 CC_TEXT = dict(_DEC["checks"])
-_CAP = _DEC["cap"]
+_DOWNGRADE = _DEC["damaged_text_downgrade"]
+
+#: Where a record stores Stage B's result. Records written before 0.0.26 call it
+#: `stage_b_capped`, and every run directory on disk from before then is one of
+#: those, so anything that reads the field goes through `downgraded()` rather
+#: than indexing either name -- otherwise a comparison against an old baseline
+#: reads every old downgrade as False and reports it released.
+DOWNGRADE_FIELD = "damaged_text_downgrade"
+LEGACY_DOWNGRADE_FIELD = "stage_b_capped"
+
+
+def downgraded(validation: dict | None, default=None):
+    """Stage B's result from a record's `validation` block, under either name."""
+    v = validation or {}
+    if DOWNGRADE_FIELD in v:
+        return v[DOWNGRADE_FIELD]
+    return v.get(LEGACY_DOWNGRADE_FIELD, default)
 
 #: The text-quality array, v0.0.25. Field names and closed sets only -- the rules
-#: that read them are `validate_defects` and `capping_defects` below.
+#: that read them are `validate_defects` and `downgrading_defects` below.
 _DEFECTS = _REC["defect_array"]
 _DEFECT_PATH = _DEFECTS["path"]
 _DEFECT_SOURCE = _DEFECTS["source_field"]
@@ -222,7 +238,7 @@ def stage_a(result: dict) -> str | None:
     # A2. No qualifying assay -> nothing to pair to.
     if has_sc == "no":
         return "no"
-    # A3. An unconfirmed assay caps the paper-level call at "unclear".
+    # A3. An unconfirmed assay limits the paper-level call to "unclear".
     if has_sc == "unclear":
         return "unclear" if any(x in ("yes", "unclear") for x in paired) else "no"
     # A4. One confirmed pairing is sufficient.
@@ -235,10 +251,10 @@ def stage_a(result: dict) -> str | None:
     return "no"
 
 
-def capping_defects(result: dict) -> list[dict]:
-    """The verified defects that are in scope for the cap, per `decide.yaml`.
+def downgrading_defects(result: dict) -> list[dict]:
+    """The verified defects that are in scope for the downgrade, per `decide.yaml`.
 
-    Scope is a curator decision of 2026-09-16, and it follows from what the cap
+    Scope is a curator decision of 2026-09-16, and it follows from what the downgrade
     is FOR: missing text can hide the sentence that would pair a perturbation to
     a qualifying assay. A garbled table in a supplementary reporting summary
     cannot hide that sentence, so it does not withhold a negative; an absent
@@ -248,8 +264,8 @@ def capping_defects(result: dict) -> list[dict]:
     dropped the ones whose quote did not verify, so an unevidenced claim is not
     in this list to begin with.
     """
-    in_scope = set(_CAP["when_defect_in_sources"])
-    any_source = set(_CAP["when_defect_kind_any_source"])
+    in_scope = set(_DOWNGRADE["when_defect_in_sources"])
+    any_source = set(_DOWNGRADE["when_defect_kind_any_source"])
     return [d for d in (result.get(_DEFECT_PATH) or []) if isinstance(d, dict)
             and (d.get(_DEFECT_KIND) in any_source
                  or str(d.get(_DEFECT_SOURCE)) in in_scope)]
@@ -257,13 +273,13 @@ def capping_defects(result: dict) -> list[dict]:
 
 def stage_b(stage_a_result: str | None, harness_withheld: bool = False,
             defects: list | None = None) -> tuple[str | None, bool]:
-    """prompt.md Stage B: cap a negative drawn from text that is missing content.
+    """prompt.md Stage B: downgrade a negative drawn from text that is missing content.
 
-    Returns (determination, capped). The asymmetry is deliberate and unchanged:
+    Returns (determination, downgraded). The asymmetry is deliberate and unchanged:
     missing text can hide the sentence that would have paired a perturbation to a
-    single-cell assay, but it cannot invent one, so only "no" is capped.
+    single-cell assay, but it cannot invent one, so only "no" is downgraded.
 
-    **What changed at v0.0.25 is the ENTRY CONDITION, not the cap.** It was
+    **What changed at v0.0.25 is the ENTRY CONDITION, not the downgrade.** It was
     `processing_status == "partial" OR text_completeness != "full"` -- two
     paper-level self-reports of the text's quality, with no evidence behind
     either. Those flipped on byte-identical input in two consecutive acceptance
@@ -275,25 +291,25 @@ def stage_b(stage_a_result: str | None, harness_withheld: bool = False,
     So the trigger is now two auditable facts, either of which is sufficient:
 
     `harness_withheld` -- the truncation ladder ran. The model cannot see this
-    and cannot dispute it, and it is what keeps the cap on the two corpus papers
+    and cannot dispute it, and it is what keeps the downgrade on the two corpus papers
     that do not fit the budget with Methods preserved.
 
-    `defects` -- in-scope entries from `capping_defects`, i.e. observations the
+    `defects` -- in-scope entries from `downgrading_defects`, i.e. observations the
     model made AND the harness could verify against the source they cite. A
     claim whose quote does not verify never reaches here.
     """
-    gate = bool(harness_withheld and _CAP["when_harness_withheld"]) or bool(defects)
+    gate = bool(harness_withheld and _DOWNGRADE["when_harness_withheld"]) or bool(defects)
 
-    if gate and stage_a_result == _CAP["from"]:
-        return _CAP["to"], True
+    if gate and stage_a_result == _DOWNGRADE["from"]:
+        return _DOWNGRADE["to"], True
     return stage_a_result, False
 
 
 def decide(result: dict) -> tuple[str | None, str | None, bool]:
-    """The harness's entry point: (final label, stage-A label, capped).
+    """The harness's entry point: (final label, stage-A label, downgraded).
 
     Two values rather than one because the record keeps both -- a curator reading
-    a capped paper needs to see what the evidence alone said.
+    a downgraded paper needs to see what the evidence alone said.
     """
     a = stage_a(result)
     if a is None:
@@ -303,8 +319,8 @@ def decide(result: dict) -> tuple[str | None, str | None, bool]:
     # check, which is not the same as a claim checked and found false.
     withheld = bool(result.get(HARNESS_WITHHELD_FIELD)
                     or result.get(HARNESS_UNREADABLE_FIELD))
-    final, capped = stage_b(a, withheld, capping_defects(result))
-    return final, a, capped
+    final, downgraded = stage_b(a, withheld, downgrading_defects(result))
+    return final, a, downgraded
 
 
 def expected_determination(result: dict) -> str | None:
@@ -394,7 +410,7 @@ def validate_defects(result: dict, verify, issues: list[str], flags: set[str],
     **An unverifiable claim is dropped, not kept.** That is the opposite of
     `validate_secondary`, which keeps a suppressed candidate whose quote failed,
     and the asymmetry is the point: a suppression is a record of a decision
-    already made, while a defect entry is a LICENCE TO CAP. Keeping one the
+    already made, while a defect entry is a LICENCE TO DOWNGRADE. Keeping one the
     harness could not confirm would put the unevidenced adjective back -- which
     is the entire defect v0.0.25 exists to remove. `atvbaha.122.317953` claimed
     "truncated" in one v0.0.24 run and named no locus at all; under this function
@@ -472,7 +488,7 @@ def validate_defects(result: dict, verify, issues: list[str], flags: set[str],
         # the v0.0.25 acceptance run -- 14 of 14, one of them matching its own
         # cited source at ratio 1.0. The gate was then left firing on
         # `harness_withheld` and `no_methods_content` alone, both deterministic,
-        # so `ACCEPTANCE-v0.0.25.md` criterion 2 -- "the cap agrees across two
+        # so `ACCEPTANCE-v0.0.25.md` criterion 2 -- "the downgrade agrees across two
         # runs" -- would have passed over a mechanism that never once ran. A
         # criterion that cannot distinguish a working gate from an absent one is
         # the shape this pack keeps re-learning; the companion guard is that the
@@ -485,7 +501,7 @@ def validate_defects(result: dict, verify, issues: list[str], flags: set[str],
         if check["status"] == "unverified":
             issues.append(
                 f"{_DEFECT_PATH}: the quote for {kind!r} does not verify against "
-                f"{source!r}, so the claim is dropped and does not cap")
+                f"{source!r}, so the claim is dropped and does not downgrade")
             flags.add("EV-DEFECT-UNVERIFIED")
             rejected += 1
             continue
@@ -503,7 +519,7 @@ def validate_defects(result: dict, verify, issues: list[str], flags: set[str],
     if unreadable:
         issues.append(
             f"{unreadable} {_DEFECT_PATH} entr{'y' if unreadable == 1 else 'ies'} "
-            f"could not be read at all, so the cap is applied rather than "
+            f"could not be read at all, so the downgrade is applied rather than "
             f"released: an unreadable claim is not a refuted one")
 
     # A degraded self-report with nothing behind it. Not a consistency code: the
@@ -514,7 +530,7 @@ def validate_defects(result: dict, verify, issues: list[str], flags: set[str],
     if completeness not in (None, "full") and not kept and not harness_withheld:
         issues.append(
             f"text_completeness={completeness!r} with no verified {_DEFECT_PATH} "
-            f"entry: the claim carries no evidence, so it does not cap")
+            f"entry: the claim carries no evidence, so it does not downgrade")
     return kept, checked, rejected
 
 
@@ -664,8 +680,8 @@ def progress_line(doi: str, result: dict) -> str:
     flags = ""
     if v[f"{_ITEM_PATH}_dropped"]:
         flags += f"  DROPPED={v[f'{_ITEM_PATH}_dropped']}"
-    if v["stage_b_capped"]:
-        flags += "  STAGE-B-CAP"
+    if v[DOWNGRADE_FIELD]:
+        flags += "  DAMAGED-TEXT-DOWNGRADE"
     if v["determination_changed_by_harness"]:
         flags += f"  MODEL={result[_REC['model_field']]}"
     if v["assay_filtered"]:

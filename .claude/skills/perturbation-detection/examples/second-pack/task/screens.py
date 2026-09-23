@@ -102,7 +102,7 @@ def render(loaded, text_for) -> tuple[list[str], dict[str, int]]:
     header("D")
     for doi, record, _ in loaded:
         v = record.get("validation") or {}
-        if not v.get("stage_b_capped"):
+        if not v.get("damaged_text_downgrade"):
             continue
         counts["D"] += 1
         lines.append("")

@@ -1290,9 +1290,9 @@ kept, so the gap between them measures fabricated evidence directly. Over the fu
 the fabrication meter reads **0 of 392**.
 
 **Seven determinations were still overruled, and they are a different mechanism —
-keeping them apart is the point.** All seven are the degraded-text cap below, not
+keeping them apart is the point.** All seven are the damaged text downgrade below, not
 evidence pruning: the model said `no`, the harness could not account for the text it
-was shown, and the paper was capped at `unclear`. Reporting a single "harness
+was shown, and the paper was downgraded to `unclear`. Reporting a single "harness
 disagreed" count would merge a claim about the *model's honesty* with a claim about
 the *text's completeness*, and only the first is what quote verification measures.
 
@@ -1312,9 +1312,9 @@ known to pass and a checker known to be able to fail.
 
 This mirrors the `## Design` principle above: emptiness you cannot account for is
 worthless, so a paper whose text is truncated or missing its Methods can never be
-reported as "not perturbed" — it is capped at "unclear" and routed to re-fetch.
-Positives are not capped, because missing text can conceal evidence but cannot
-manufacture it.
+reported as "not perturbed" — the damaged text downgrade moves it to "unclear" and
+routes it to re-fetch. Positives are not downgraded, because missing text can
+conceal evidence but cannot manufacture it.
 
 The same principle applies to what the prompt *excludes*, which took a version to
 learn. v0.0.9 moved four boundary categories — reporters and epitope tags,

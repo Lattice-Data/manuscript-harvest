@@ -6,7 +6,7 @@
 The prompt is explicit that this diff is NOT expected to be empty, and that it
 should be *classified* rather than merely counted:
 
-    "Expect movement in exactly two classes: papers capped by Stage B, and
+    "Expect movement in exactly two classes: papers downgraded by Stage B, and
      papers with has_single_cell_assay = 'unclear' plus a 'yes' pairing (CC-5).
      Any change outside those two classes is a bug in this version, not a
      refinement, and should be investigated before the corpus run."
@@ -21,8 +21,8 @@ labelled UNEXPLAINED and is what the prompt says to investigate.
 Two later additions, both of which were previously landing in UNEXPLAINED and so
 reading as logic bugs:
 
-  STAGE-B-RELEASED — Stage B's cap is symmetric, but only its ENTRY was
-    classified. A paper leaving the cap (`stage_b_capped` True -> False, which is
+  STAGE-B-RELEASED — Stage B's damaged text downgrade is symmetric, but only its ENTRY was
+    classified. A paper leaving the downgrade (`damaged_text_downgrade` True -> False, which is
     what a completed re-extraction looks like) had no class. Observed on
     10.1126/science.adf5357.
   SUPPRESSED — v0.0.10 lets a paper move because a candidate was recorded in

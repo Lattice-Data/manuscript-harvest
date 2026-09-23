@@ -326,11 +326,11 @@ def _minimal_pack(base: Path) -> None:
     (base / "task" / "decide.yaml").write_text(yaml.safe_dump({
         "inputs": {"processing_status": "processing_status",
                    "paired": "items[].paired"},
-        "cap": {"when_status": "partial", "when_completeness_not": "full",
+        "damaged_text_downgrade": {"when_status": "partial", "when_completeness_not": "full",
                 "from": "no", "to": "unclear", "reason": "none"},
         "checks": {}, "harness_raised_checks": [],
         "reason_rules": {"none_value": "none", "required_when": "unclear",
-                         "cap_reason": "none"},
+                         "downgrade_reason": "none"},
     }, sort_keys=False))
     (base / "task" / "report.yaml").write_text(yaml.safe_dump({
         "tiers": [{"n": 9, "summary": "all", "label": "everything"}],
@@ -575,5 +575,6 @@ def test_no_key_in_a_pack_table_is_read_by_nothing(table):
         f"task/{table}.yaml declares {dead} and nothing in harness/ or task/ reads "
         f"them. Wire the key up, delete it, or add it to TABLE_KEYS_FOR_A_HUMAN "
         f"with a reason. A key nobody reads looks like it works and does not: "
-        f"`cap.reason` sat beside `reason_rules.cap_reason` holding the same "
-        f"value, with only the second one wired.")
+        f"`damaged_text_downgrade.reason` sat beside "
+        f"`reason_rules.downgrade_reason` holding the same value, with only the "
+        f"second one wired.")

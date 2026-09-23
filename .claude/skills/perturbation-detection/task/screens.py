@@ -25,7 +25,7 @@ from __future__ import annotations
 import re
 
 from harness.pack import tables
-from task.rules import RULES_UNDER_REVIEW
+from task.rules import RULES_UNDER_REVIEW, downgraded
 
 _REP = tables()["report"]
 
@@ -209,7 +209,7 @@ def render(loaded, text_for) -> tuple[list[str], dict[str, int]]:
         if note:
             lines.append(f"  model's ambiguities note: {note[:300]}")
 
-    # ---- Screen D: Stage-B caps (route to re-fetch, not to reading) ---------
+    # ---- Screen D: damaged text downgrades (route to re-fetch, not to reading) ---------
     lines.append("")
     lines.append("=" * 78)
     lines.append(f"SCREEN D — {SCREENS['D']['title']}")
@@ -217,7 +217,7 @@ def render(loaded, text_for) -> tuple[list[str], dict[str, int]]:
     lines.append("=" * 78)
     for doi, result, _ in loaded:
         validation = result.get("validation") or {}
-        if not validation.get("stage_b_capped"):
+        if not downgraded(validation):
             continue
         counts["D"] += 1
         lines.append("")

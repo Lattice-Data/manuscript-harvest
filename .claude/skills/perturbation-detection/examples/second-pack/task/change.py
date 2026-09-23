@@ -58,10 +58,10 @@ def _tokens(value) -> set[str]:
 def classify(new: dict, old: dict | None = None) -> list[str]:
     v = new.get("validation") or {}
     classes = []
-    old_capped = bool(((old or {}).get("validation") or {}).get("stage_b_capped"))
-    if v.get("stage_b_capped"):
+    old_downgraded = bool(((old or {}).get("validation") or {}).get("damaged_text_downgrade"))
+    if v.get("damaged_text_downgrade"):
         classes.append("STAGE-B")
-    elif old_capped:
+    elif old_downgraded:
         classes.append("STAGE-B-RELEASED")
     if v.get("determination_changed_by_harness"):
         classes.append("HARNESS-PRUNE")

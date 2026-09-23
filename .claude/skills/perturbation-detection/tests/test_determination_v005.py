@@ -89,7 +89,7 @@ def test_a2_no_assay_is_no():
     assert stage_a(make(has_sc="no", paired=("unclear", "no"))) == "no"
 
 
-def test_a3_unclear_assay_caps_at_unclear():
+def test_a3_unclear_assay_limits_to_unclear():
     assert stage_a(make(has_sc="unclear", paired=("unclear",))) == "unclear"
     assert stage_a(make(has_sc="unclear", paired=("no", "no"))) == "no"
     # CC-5: a "yes" pairing under an unclear assay is a contradiction, and the
@@ -128,14 +128,14 @@ def test_a1_precedes_a2_v005_ordering():
 # Stage B
 # --------------------------------------------------------------------------
 
-def test_stage_b_caps_only_negatives():
-    """v0.0.25 rewrote the TRIGGER, not the cap. Two facts open the gate now:
+def test_stage_b_downgrades_only_negatives():
+    """v0.0.25 rewrote the TRIGGER, not the downgrade. Two facts open the gate now:
     the harness having withheld text, and a verified in-scope defect."""
     main_defect = [{"source_id": "main", "kind": "garbled_run"}]
     assert stage_b("no", True, []) == ("unclear", True)
     assert stage_b("no", False, main_defect) == ("unclear", True)
     assert stage_b("no", False, []) == ("no", False)
-    # Positives and unclears are never capped: missing text can hide evidence
+    # Positives and unclears are never downgraded: missing text can hide evidence
     # but cannot manufacture it.
     assert stage_b("yes", True, main_defect) == ("yes", False)
     assert stage_b("unclear", True, main_defect) == ("unclear", False)
@@ -175,11 +175,11 @@ def test_worked_examples():
     assert expected_determination(make(paired=("yes",))) == "yes"
 
 
-def test_worked_example_2_on_degraded_text_is_capped():
+def test_worked_example_2_on_degraded_text_is_downgraded():
     """The prompt states this explicitly under the worked examples.
 
     v0.0.25: "degraded text" is a verified defect rather than a `partial`
-    self-report, so the example is built the way the cap now reads it. The
+    self-report, so the example is built the way the downgrade now reads it. The
     supplementary case is asserted too, because that is the half of the scope
     decision an example could otherwise hide.
     """
@@ -412,6 +412,6 @@ def test_harness_truncation_overrides_a_model_claiming_full():
     out = validate_result(result, split_assembled(ASSEMBLED), 0.85, "0.0.5",
                           truncated_by_harness=True)
     assert out["text_completeness"] == "truncated"
-    # ...and Stage B then caps the negative.
+    # ...and Stage B then downgrades the negative.
     assert out["perturbation_present_final"] == "unclear"
     assert out["unresolved_reason"] == "degraded_text"

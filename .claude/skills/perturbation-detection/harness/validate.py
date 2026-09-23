@@ -309,7 +309,7 @@ def validate_result(result: dict, sources_text: dict[str, str], threshold: float
 
     # The truncation ladder ran out. harness.prepare wrote this into the manifest and
     # nothing read it, so the flag was decoration: both papers that hit it on the
-    # 392-paper run were capped at "unclear"/degraded_text like any truncated
+    # 392-paper run were downgraded to "unclear"/degraded_text like any truncated
     # paper and sorted to triage P4 -- "route to re-fetch, not to reading", which
     # is the WRONG QUEUE. Re-fetching cannot help. The text arrived complete and
     # does not fit the budget even after dropping Discussion, Introduction and
@@ -319,7 +319,7 @@ def validate_result(result: dict, sources_text: dict[str, str], threshold: float
     if needs_section_pass:
         issues.append(
             "harness truncation ran out of ladder (needs_section_pass): the text "
-            "does not fit the budget with Methods preserved, so the cap at "
+            "does not fit the budget with Methods preserved, so the downgrade to "
             "'unclear' is NOT a fetch problem and re-fetching will not change it. "
             "prompt.md batch spec step 3: run a section-level second pass")
         result["needs_section_pass"] = True
@@ -377,7 +377,7 @@ def validate_result(result: dict, sources_text: dict[str, str], threshold: float
         issues.append(f"consistency_flags did not declare {undeclared} "
                       f"(model reported {model_flags or 'none'})")
 
-    final, a_result, capped = decide(result)
+    final, a_result, downgraded = decide(result)
 
     result[MODEL_FIELD] = model_present
     result[PRIMARY_FIELD] = final if final is not None else model_present
@@ -391,11 +391,11 @@ def validate_result(result: dict, sources_text: dict[str, str], threshold: float
     # `none_value` and `required_when` are read rather than restated: they were
     # declared in the pack and hardcoded here, which is the `read_back_marker`
     # shape -- a pack-to-HARNESS key that nothing read, so a pack changing it was
-    # silently ignored. `cap_reason` beside them was always read.
+    # silently ignored. `downgrade_reason` beside them was always read.
     no_reason = REASON_RULES["none_value"]
     needs_reason = REASON_RULES["required_when"]
-    if capped:
-        result["unresolved_reason"] = REASON_RULES["cap_reason"]
+    if downgraded:
+        result["unresolved_reason"] = REASON_RULES["downgrade_reason"]
     elif result[PRIMARY_FIELD] != needs_reason \
             and result.get("unresolved_reason") != no_reason:
         issues.append(f"unresolved_reason={result.get('unresolved_reason')!r} but "
@@ -427,7 +427,7 @@ def validate_result(result: dict, sources_text: dict[str, str], threshold: float
                            "secondary_checked": s_checked,
                            "secondary_failed": s_failed}),
         "stage_a": a_result,
-        "stage_b_capped": capped,
+        "damaged_text_downgrade": downgraded,
         "determination_changed_by_harness": final is not None and model_present != final,
         "consistency_flags": cc_codes,
         "evidence_flags": sorted(evidence_flags),
@@ -571,7 +571,7 @@ def main() -> int:
         done += 1
 
         # Which conditions are worth shouting about is the pack's call, not the
-        # harness's -- STAGE-B-CAP and ASSAY-FILTERED mean nothing to a different
+        # harness's -- DAMAGED-TEXT-DOWNGRADE and ASSAY-FILTERED mean nothing to a different
         # question.
         print(progress_line(doi, result))
 

@@ -93,18 +93,18 @@ def test_the_gate_is_not_folded_into_the_empty_array_rule():
             == "not_applicable", f"any_assay={any_assay} reached A1"
 
 
-def test_a_gated_paper_is_not_capped_by_degraded_text():
+def test_a_gated_paper_is_not_downgraded_by_degraded_text():
     """A review very often has no Methods section, so it lands
-    `text_completeness="methods_missing"` -- exactly the condition Stage B caps.
-    The cap exists because missing text can hide a pairing sentence; a review has
-    no pairing to hide, and capping every review to "unclear" would send them all
+    `text_completeness="methods_missing"` -- exactly the condition Stage B downgrades.
+    The downgrade exists because missing text can hide a pairing sentence; a review has
+    no pairing to hide, and downgrading every review to "unclear" would send them all
     to triage to be re-read as if the extraction had failed."""
     for completeness in ("truncated", "methods_missing", "unknown"):
-        final, capped = stage_b("not_applicable", "ok", completeness)
-        assert (final, capped) == ("not_applicable", False), (
+        final, downgraded = stage_b("not_applicable", "ok", completeness)
+        assert (final, downgraded) == ("not_applicable", False), (
             f"{completeness}: Stage B moved a gated paper to {final!r}")
     assert stage_b("no", "ok", "methods_missing") == ("unclear", True), \
-        "the cap must still fire on a real negative, or this test proves nothing"
+        "the downgrade must still fire on a real negative, or this test proves nothing"
 
 
 def test_the_gate_survives_stage_b_end_to_end():

@@ -5,7 +5,7 @@
 
 prompt.md's validation loop (added in v0.0.3) asks for three things. This produces
 those three as Screens A, B and C, plus three more that later versions needed --
-D (Stage-B caps), E (supplementary-only evidence and quote attribution) and
+D (damaged text downgrades), E (supplementary-only evidence and quote attribution) and
 F (suppressed candidates). Six in total; all of them mechanical.
 
   Screen A — assay-pairing disagreements. Papers where

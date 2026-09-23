@@ -85,7 +85,7 @@ columns:
   - n_paired_no
   - n_paired_unclear
   - assay_filtered
-  - stage_b_capped
+  - damaged_text_downgrade
   - determination_changed_by_harness
   - consistency_flags
   - evidence_flags
@@ -142,8 +142,8 @@ screens:
     title: "perturbation_present_any_assay = no, but perturbation language appears"
     grep: perturbation
   - id: D
-    summary: "capped at unclear by Stage B — re-fetch queue"
-    title: "capped at 'unclear' by Stage B (degraded/incomplete text)"
+    summary: "downgraded to unclear by Stage B — re-fetch queue"
+    title: "downgraded to 'unclear' by Stage B (degraded/incomplete text)"
     blurb: "prompt.md step 10 priority 4: these go to the re-fetch queue, not to a reader"
     empty: "none — no paper's negative rested on degraded text"
   - id: E

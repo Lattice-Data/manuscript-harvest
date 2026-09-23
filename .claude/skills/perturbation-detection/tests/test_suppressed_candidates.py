@@ -25,7 +25,7 @@ from harness.paper_text import split_assembled  # noqa: E402
 from task.report import triage_priority  # noqa: E402
 from harness.validate import validate_result  # noqa: E402
 from task.rules import (  # noqa: E402
-    SUPPRESSION_RULES, expected_determination, stage_a,
+    SUPPRESSION_RULES, downgraded, expected_determination, stage_a,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -100,7 +100,8 @@ def test_suppressed_candidate_does_not_move_the_determination():
     assert withsupp["perturbation_present"] == "no"
     assert withsupp["perturbation_present_final"] == bare["perturbation_present_final"]
     assert withsupp["validation"]["stage_a"] == bare["validation"]["stage_a"]
-    assert withsupp["validation"]["stage_b_capped"] is bare["validation"]["stage_b_capped"]
+    assert (withsupp["validation"]["damaged_text_downgrade"]
+            is bare["validation"]["damaged_text_downgrade"])
     # And it never leaked into the array Stage A reads.
     assert withsupp["perturbations"] == []
 
@@ -395,9 +396,9 @@ def test_renumbered_ladder_matches_prompt_step_10():
         }])
     assert triage_priority(low_conf_yes) == 9
 
-    # v0.0.25: what caps is a verified defect in the main source, not a
+    # v0.0.25: what downgrades is a verified defect in the main source, not a
     # `partial` self-report. The subject here is the TIER, so the record is
-    # built the way the cap now reads it.
+    # built the way the downgrade now reads it.
     degraded = _scored(processing_status="partial", text_completeness="truncated",
                        unresolved_reason="degraded_text",
                        text_defects=[{"source_id": "main",
@@ -439,7 +440,7 @@ def test_renumbered_ladder_matches_prompt_step_10():
 # harness.compare: the SUPPRESSED class, and Stage B's missing direction.
 # --------------------------------------------------------------------------
 
-def _run(present, perts=(), supp=(), capped=False):
+def _run(present, perts=(), supp=(), downgraded=False):
     return {
         "perturbation_present": present,
         "processing_status": "ok",
@@ -448,7 +449,7 @@ def _run(present, perts=(), supp=(), capped=False):
         "perturbation_present_any_assay": "yes",
         "perturbations": [{"agent": a, "single_cell_paired": p} for a, p in perts],
         "suppressed_candidates": list(supp),
-        "validation": {"stage_b_capped": capped, "consistency_flags": [],
+        "validation": {"damaged_text_downgrade": downgraded, "consistency_flags": [],
                        "evidence_flags": []},
     }
 
@@ -514,23 +515,44 @@ def test_unmatched_suppression_does_not_excuse_an_unexplained_change():
     assert "SUPPRESSED" not in classify(new, old)
 
 
-def test_stage_b_cap_release_is_classified_not_unexplained():
-    """A cap release -- what a completed re-extraction looks like -- previously
+def test_stage_b_downgrade_release_is_classified_not_unexplained():
+    """A downgrade release -- what a completed re-extraction looks like -- previously
     fell through to UNEXPLAINED, whose message says to investigate a logic bug.
     Observed on 10.1126/science.adf5357."""
-    old = _run("unclear", capped=True)
-    new = _run("no", capped=False)
+    old = _run("unclear", downgraded=True)
+    new = _run("no", downgraded=False)
     classes = classify(new, old)
     assert "STAGE-B-RELEASED" in classes
     assert "UNEXPLAINED" not in classes
 
 
-def test_stage_b_cap_entry_is_still_classified():
-    old = _run("no", capped=False)
-    new = _run("unclear", capped=True)
+def test_stage_b_downgrade_entry_is_still_classified():
+    old = _run("no", downgraded=False)
+    new = _run("unclear", downgraded=True)
     classes = classify(new, old)
     assert "STAGE-B" in classes
     assert "STAGE-B-RELEASED" not in classes
+
+
+def test_a_baseline_from_before_the_rename_still_reads_as_downgraded():
+    """Records written before 0.0.26 store Stage B's result as `stage_b_capped`,
+    and every run directory on disk is one of them. Read by the new name alone,
+    an old downgraded baseline looks not downgraded, so its release falls
+    through to UNEXPLAINED -- the class that says to look for a logic bug."""
+    old = _run("unclear")
+    del old["validation"]["damaged_text_downgrade"]
+    old["validation"]["stage_b_capped"] = True
+    new = _run("no", downgraded=False)
+    classes = classify(new, old)
+    assert "STAGE-B-RELEASED" in classes
+    assert "UNEXPLAINED" not in classes
+
+
+def test_the_downgrade_reader_prefers_the_new_name_and_falls_back_to_the_old():
+    assert downgraded({"damaged_text_downgrade": False, "stage_b_capped": True}) is False
+    assert downgraded({"stage_b_capped": True}) is True
+    assert downgraded({}) is None
+    assert downgraded(None, "") == ""
 
 
 def test_a_genuinely_unexplained_change_is_still_unexplained():

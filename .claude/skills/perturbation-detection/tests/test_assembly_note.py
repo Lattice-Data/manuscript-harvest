@@ -10,7 +10,7 @@ and left the label, and 192 end without terminal punctuation.
 
 `10.1182/bloodadvances.2023011445` is the paper that forced the block. Two
 byte-identical v0.0.23 acceptance runs reported "full" and then "truncated",
-Stage B capped one and not the other, and the determination moved -- on a paper
+Stage B downgraded one and not the other, and the determination moved -- on a paper
 whose every harness fact says complete (JATS, 0.98 section coverage, all five
 body sections found, supplement fetched and read, rung 0) and whose text ends on
 "Associated Data / Supplementary Materials" with nothing under it.

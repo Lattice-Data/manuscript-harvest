@@ -162,7 +162,7 @@ def test_all_four_tables_exist_and_are_named_for_what_they_hold():
     loaded = tables(ROOT)
     assert set(loaded) == set(TABLE_FILES)
     assert {"labels", "required_fields", "item_array"} <= set(loaded["record"])
-    assert {"inputs", "cap", "checks"} <= set(loaded["decide"])
+    assert {"inputs", "damaged_text_downgrade", "checks"} <= set(loaded["decide"])
     assert {"tiers", "columns", "screens", "signals"} <= set(loaded["report"])
     assert {"classes", "order", "match"} <= set(loaded["change"])
 
