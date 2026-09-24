@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
-"""What a run spent, per model and per paper, reconstructed from its transcripts.
+"""Which models a run used and how many tokens, per model and per paper.
 
-Reports tokens. Output tokens and request count are the per-paper evidence that
-a determination was reasoned rather than assigned: both collapse for a paper
-that was not actually read, while cache-read does not. A list-price dollar
-equivalent is printed last, because a subscription run is not billed per token
-and that figure is a size, not an invoice.
+Reports models and tokens, and prices nothing. Output tokens and request count
+are the per-paper evidence that a determination was reasoned rather than
+assigned: both collapse for a paper that was not actually read, while
+cache-read does not. Thinking is counted inside output and shown beside it,
+wherever the CLI recorded it.
+
+There is no dollar figure. A subscription run is not billed per token, and a
+list-price equivalent needed every model's rates copied into a table and kept
+in step with Anthropic's price list by hand. When it was deleted that table
+lacked ten current models and had one rate wrong. Token counts need no table:
+every model the CLI names gets a row.
 
     python -m harness.usage --list
     python -m harness.usage --work work-corpus-v0021-r1
@@ -13,7 +19,7 @@ and that figure is a size, not an invoice.
 
 Stage 2 invokes `claude -p` with `--output-format text`, so the only thing the
 per-paper log captures is the agent's final reply -- every log in the 392-paper
-v0.0.21 run is five bytes reading `DONE`. No tokens, no cost, no request count.
+v0.0.21 run is five bytes reading `DONE`. No tokens and no request count.
 
 They were never lost, only unrecorded. `run_headless.sh` does `cd "$ROOT"`
 before it starts, so each `claude -p` call persisted a session transcript under
@@ -46,6 +52,15 @@ runner's own abort-sentinel comment records as wasted. They are excluded from
 the request count and reported on their own line, because that count is the
 most actionable number here.
 
+**Two checks, and neither needs a price.** Where a session left both an
+envelope and a transcript, the report compares their token counts class by
+class. The envelope is the CLI's own accounting and the transcript is this
+module's reconstruction; the two are parsed independently, so agreement vouches
+for both readers and a disagreement names the paper. And where the runner
+recorded which model it asked for, the report names every paper that another
+model served -- after a refusal fallback, say -- which the per-model table
+would otherwise show only as an extra row with no paper attached.
+
 One honest limitation. A transcript records per-message `timestamp` and nothing
 else about time, so the span this module reports is the AGENT's wall-clock --
 model inference plus tool execution plus queueing. It is not "model time". The
@@ -60,15 +75,14 @@ import argparse
 import json
 import re
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from harness.pricing import RATES, canonical, cost  # noqa: E402
-from harness.runroot import run_root  # noqa: E402
+from harness.runroot import model_of, run_root  # noqa: E402
 
 #: Where the CLI persists sessions: one directory per working directory, named
 #: by flattening that path's separators. `run_headless.sh` cd's to the skill
@@ -111,6 +125,27 @@ PROMPT_PATH = re.compile(
 #: The CLI's stand-in for a message it generated itself rather than fetching.
 SYNTHETIC = "<synthetic>"
 
+#: How many papers or sessions a report line names before it summarises the rest.
+LISTED = 10
+
+
+def canonical(model: str | None) -> str | None:
+    """`claude-haiku-4-5-20251001` -> `claude-haiku-4-5`.
+
+    One model, one row. The envelope's `modelUsage` block already supplies a
+    `canonicalModel` field, but the transcript records this module backfills
+    from carry only the dated `message.model`, so the two paths need one shared
+    way to agree on a name. Nothing here is a list of known models: a model this
+    module has never heard of is counted under its own name.
+    """
+    if not model:
+        return None
+    # Strip a trailing -YYYYMMDD, which is the only suffix form in use.
+    head, _, tail = model.rpartition("-")
+    if head and len(tail) == 8 and tail.isdigit():
+        return head
+    return model
+
 
 class UsageError(RuntimeError):
     """A caller asked for a run that cannot be reported on."""
@@ -122,40 +157,71 @@ class Tokens:
 
     input: int = 0
     output: int = 0
+    #: A share of `output`, not an addition to it. Thinking tokens are output
+    #: tokens, so `total` must not count them twice.
+    thinking: int = 0
+    #: Output from requests that carried no thinking count at all. Kept apart
+    #: so that "none recorded" cannot read as "none used": the CLI reported
+    #: thinking only from partway through this project's runs.
+    thinking_unrecorded: int = 0
     cache_read: int = 0
-    cache_write_1h: int = 0
-    cache_write_5m: int = 0
+    #: One number. The 5-minute/1-hour split decided what a write cost and
+    #: nothing else, and nothing here is priced.
+    cache_write: int = 0
     requests: int = 0
 
     @property
     def total(self) -> int:
-        return (
-            self.input
-            + self.output
-            + self.cache_read
-            + self.cache_write_1h
-            + self.cache_write_5m
-        )
+        return self.input + self.output + self.cache_read + self.cache_write
+
+    @property
+    def thinking_recorded(self) -> bool:
+        """True when every output token here came with a thinking count."""
+        return self.thinking_unrecorded == 0
 
     def add(self, other: "Tokens") -> None:
         self.input += other.input
         self.output += other.output
+        self.thinking += other.thinking
+        self.thinking_unrecorded += other.thinking_unrecorded
         self.cache_read += other.cache_read
-        self.cache_write_1h += other.cache_write_1h
-        self.cache_write_5m += other.cache_write_5m
+        self.cache_write += other.cache_write
         self.requests += other.requests
 
-    def as_usage(self) -> dict:
-        """The shape `pricing.cost` reads, so one pricing path serves both."""
-        return {
-            "input_tokens": self.input,
-            "output_tokens": self.output,
-            "cache_read_input_tokens": self.cache_read,
-            "cache_creation": {
-                "ephemeral_1h_input_tokens": self.cache_write_1h,
-                "ephemeral_5m_input_tokens": self.cache_write_5m,
-            },
-        }
+
+def _thinking(block: object, key: str) -> int | None:
+    """A thinking count, or None where the record carries none -- which is not 0."""
+    if not isinstance(block, dict):
+        return None
+    value = block.get(key)
+    return int(value) if isinstance(value, (int, float)) else None
+
+
+def _written(usage: dict) -> int:
+    """Cache-write tokens in one usage block.
+
+    The flat total where there is one, which is every record measured; failing
+    that, the 5-minute/1-hour split it is the sum of. A record carrying only the
+    split must not read as no writes at all.
+    """
+    value = usage.get("cache_creation_input_tokens")
+    if isinstance(value, (int, float)):
+        return int(value)
+    creation = usage.get("cache_creation")
+    if not isinstance(creation, dict):
+        return 0
+    parts = (creation.get(key) for key in ("ephemeral_1h_input_tokens",
+                                           "ephemeral_5m_input_tokens"))
+    return sum(int(part) for part in parts if isinstance(part, (int, float)))
+
+
+def _add_output(tokens: Tokens, output: int, thinking: int | None) -> None:
+    """Book output, and the thinking inside it, or the fact that it went unrecorded."""
+    tokens.output += output
+    if thinking is None:
+        tokens.thinking_unrecorded += output
+    else:
+        tokens.thinking += thinking
 
 
 @dataclass
@@ -168,11 +234,6 @@ class Session:
     path: Path
     by_model: dict[str, Tokens] = field(default_factory=lambda: defaultdict(Tokens))
     limit_refusals: int = 0
-    #: The CLI's own list-price figure, when this session came from an envelope.
-    #: Not used for the total -- one arithmetic path serves both sources -- but
-    #: compared against it, so a change to Anthropic's published prices shows up
-    #: as a disagreement instead of silently mispricing every later run.
-    reported_cost: float | None = None
     started: datetime | None = None
     ended: datetime | None = None
     #: From an envelope only. `duration_ms` is the agent's span and
@@ -270,19 +331,12 @@ def read_session(path: Path) -> Session | None:
                 value = src.get(name)
                 return int(value) if isinstance(value, (int, float)) else 0
 
-            creation = usage.get("cache_creation")
-            if isinstance(creation, dict):
-                write_1h = count("ephemeral_1h_input_tokens", creation)
-                write_5m = count("ephemeral_5m_input_tokens", creation)
-            else:
-                write_1h, write_5m = 0, count("cache_creation_input_tokens")
-
             bucket = by_model[canonical(model) or "unknown"]
             bucket.input += count("input_tokens")
-            bucket.output += count("output_tokens")
+            _add_output(bucket, count("output_tokens"),
+                        _thinking(usage.get("output_tokens_details"), "thinking_tokens"))
             bucket.cache_read += count("cache_read_input_tokens")
-            bucket.cache_write_1h += write_1h
-            bucket.cache_write_5m += write_5m
+            bucket.cache_write += _written(usage)
             bucket.requests += 1
 
     if work is None or doi is None:
@@ -305,7 +359,7 @@ def read_session(path: Path) -> Session | None:
 ENVELOPE_GLOB = "meta/*.usage.jsonl"
 
 
-def from_envelopes(work_dir: Path) -> list[Session]:
+def from_envelopes(work_dir: Path, complete_only: bool = True) -> list[Session]:
     """Read a run's usage from the envelopes it recorded, if it recorded any.
 
     Preferred over the transcript scan wherever it is available, because it is
@@ -313,6 +367,10 @@ def from_envelopes(work_dir: Path) -> list[Session]:
     `duration_api_ms`, which is real model time, where a transcript can only
     give the agent's wall-clock span. Runs made before the invocation changed
     have no envelopes and fall back automatically.
+
+    `complete_only=False` returns whatever parsed, however little. That is for
+    the token check, which compares session by session and so is as good on a
+    partly instrumented run as on a whole one; the report itself never uses it.
     """
     work_dir = Path(work_dir)
     # Envelopes only exist for papers run after the invocation changed, and a
@@ -342,30 +400,20 @@ def from_envelopes(work_dir: Path) -> list[Session]:
                               path=path)
             # `modelUsage` is per-model and already aggregated across turns,
             # which is the shape the report wants. The flat `usage` block is the
-            # same totals without the model split; its only unique contribution
-            # is the cache-write TTL split, which decides whether those tokens
-            # cost 2.0x or 1.25x the input rate -- a ~$140 difference over the
-            # v0.0.21 corpus run. Its `iterations` array must never be summed:
-            # it lists one entry per turn but not reliably all of them.
+            # same totals without the model split, read only where `modelUsage`
+            # is absent -- and for thinking, which older CLIs reported there
+            # and nowhere else. Its `iterations` array must never be summed: it
+            # lists one entry per turn but not reliably all of them.
             flat = envelope.get("usage") or {}
-            creation = flat.get("cache_creation") or {}
-            hour = int(creation.get("ephemeral_1h_input_tokens") or 0)
-            five = int(creation.get("ephemeral_5m_input_tokens") or 0)
-            # Absent a split, price at the CHEAPER rate rather than guess high.
-            # `hour >= five` would be true when both are zero, which is the
-            # degenerate case this comment claims to handle and quietly got
-            # backwards -- a run with no TTL reported would have been billed at
-            # 2.0x. Guessing low is self-correcting: the drift line below
-            # compares against the CLI's own total and says so.
-            long_lived = hour > 0 and hour >= five
+            flat_thinking = _thinking(flat.get("output_tokens_details"), "thinking_tokens")
 
             per_model = envelope.get("modelUsage")
             # An API-error envelope carries `modelUsage: {}` and no top-level
             # `model`, so the fallback below would book it under "unknown" with
-            # zero tokens -- inventing a row the report then flags as spend it
-            # could not price. Nothing was billed; count it as a refusal and
-            # move on. That also restores the wasted-spawn tally on this path,
-            # which the transcript reader has and this one silently lacked.
+            # zero tokens -- inventing a model row with nothing in it. No tokens
+            # were used; count it as a refusal and move on. That also restores
+            # the wasted-spawn tally on this path, which the transcript reader
+            # has and this one silently lacked.
             if not (isinstance(per_model, dict) and per_model) and not (
                     envelope.get("usage") or {}).get("output_tokens"):
                 if envelope.get("is_error"):
@@ -375,35 +423,28 @@ def from_envelopes(work_dir: Path) -> list[Session]:
                     sessions.append(refusals_only)
                 continue
             if isinstance(per_model, dict) and per_model:
-                for name, counts in per_model.items():
-                    if not isinstance(counts, dict):
-                        continue
+                rows = {name: counts for name, counts in per_model.items()
+                        if isinstance(counts, dict)}
+                for name, counts in rows.items():
                     tokens = session.by_model[canonical(name) or "unknown"]
                     tokens.input += int(counts.get("inputTokens") or 0)
-                    tokens.output += int(counts.get("outputTokens") or 0)
                     tokens.cache_read += int(counts.get("cacheReadInputTokens") or 0)
-                    written = int(counts.get("cacheCreationInputTokens") or 0)
-                    # `modelUsage` gives a total with no TTL; the flat block
-                    # gives the TTL with no model. Collapsing the flat split to
-                    # one boolean sent every model's writes to whichever side
-                    # won, so a genuinely mixed envelope priced part of itself
-                    # at the wrong rate. Apply the flat block's own ratio.
-                    if hour and five:
-                        share = hour / (hour + five)
-                        tokens.cache_write_1h += round(written * share)
-                        tokens.cache_write_5m += written - round(written * share)
-                    elif long_lived:
-                        tokens.cache_write_1h += written
-                    else:
-                        tokens.cache_write_5m += written
+                    tokens.cache_write += int(counts.get("cacheCreationInputTokens") or 0)
+                    # Per model where the CLI gives it. Older CLIs gave only the
+                    # flat session total, which is this model's own when it is
+                    # the only one -- equal to the per-model figure on all 418
+                    # envelopes measured that carry both. With two models the
+                    # total cannot be split, so it goes unrecorded, not guessed.
+                    thinking = _thinking(counts, "thinkingTokens")
+                    if thinking is None and len(rows) == 1:
+                        thinking = flat_thinking
+                    _add_output(tokens, int(counts.get("outputTokens") or 0), thinking)
             else:
                 tokens = session.by_model[canonical(envelope.get("model")) or "unknown"]
                 tokens.input += int(flat.get("input_tokens") or 0)
-                tokens.output += int(flat.get("output_tokens") or 0)
                 tokens.cache_read += int(flat.get("cache_read_input_tokens") or 0)
-                tokens.cache_write_1h += hour
-                tokens.cache_write_5m += five or (
-                    0 if hour else int(flat.get("cache_creation_input_tokens") or 0))
+                tokens.cache_write += _written(flat)
+                _add_output(tokens, int(flat.get("output_tokens") or 0), flat_thinking)
 
             # `num_turns` counts the SESSION, not a model, so it cannot be split
             # when more than one model ran. Attributed to the one that produced
@@ -416,9 +457,6 @@ def from_envelopes(work_dir: Path) -> list[Session]:
 
             session.duration_ms = int(envelope.get("duration_ms") or 0)
             session.api_ms = int(envelope.get("duration_api_ms") or 0)
-            reported = envelope.get("total_cost_usd")
-            if isinstance(reported, (int, float)):
-                session.reported_cost = float(reported)
             sessions.append(session)
 
     # Coverage is checked against the DOIs that actually parsed, not against the
@@ -436,7 +474,7 @@ def from_envelopes(work_dir: Path) -> list[Session]:
             entries = []
         expected = {str(e.get("doi")) for e in entries
                     if isinstance(e, dict) and e.get("doi") and "error" not in e}
-        if expected and not expected <= {s.doi for s in sessions}:
+        if complete_only and expected and not expected <= {s.doi for s in sessions}:
             return []
 
     return sessions
@@ -464,6 +502,88 @@ def collect(work: str | None = None, projects: list[str] | None = None) -> list[
     return found
 
 
+def requested_models(work_dir: Path, dois) -> dict[str, str]:
+    """The model the runner asked for, per paper, where it wrote one down.
+
+    The runner writes `meta/<doi>.model` beside a paper's result, so a paper
+    with no result has none, and neither does any run from before the sidecar.
+    Both are reported as not recorded rather than filled in with the pin.
+    """
+    found = {}
+    for doi in dois:
+        name = model_of(work_dir, doi)
+        if name:
+            found[doi] = name
+    return found
+
+
+# ---------------------------------------------------------------- token check
+
+#: Compared exactly. `requests` is not: an envelope reports turns and a
+#: transcript reports messages, which are counts of different things.
+_CHECKED = ("input", "output", "cache_read", "cache_write")
+
+
+@dataclass
+class TokenCheck:
+    """Envelope against transcript, for every session that left both."""
+
+    #: Sessions whose envelope shows any tokens. An attempt that errored has
+    #: nothing to compare, and is left out rather than counted as a match.
+    envelopes: int = 0
+    compared: int = 0
+    matched: int = 0
+    #: One DOI per session whose two records disagree.
+    differing: list[str] = field(default_factory=list)
+
+    @property
+    def without_transcript(self) -> int:
+        return self.envelopes - self.compared
+
+
+def _same(a: dict[str, Tokens], b: dict[str, Tokens]) -> bool:
+    for name in set(a) | set(b):
+        x, y = a.get(name, Tokens()), b.get(name, Tokens())
+        if any(getattr(x, key) != getattr(y, key) for key in _CHECKED):
+            return False
+        # Thinking only where both sides recorded it. An older envelope without
+        # it is a gap in one record, not a disagreement about the count.
+        if x.thinking_recorded and y.thinking_recorded and x.thinking != y.thinking:
+            return False
+    return True
+
+
+def check_tokens(envelopes: list[Session], directories: list[Path]) -> TokenCheck:
+    """Compare each envelope with the transcript of the same session.
+
+    The envelope is the CLI's own accounting and the transcript is rebuilt here
+    message by message. They are parsed independently, so agreement vouches for
+    both readers -- the transcript reader above all, since it is the only
+    source for every run made before envelopes existed. The session id names
+    the transcript file, so this reads one transcript per session rather than
+    scanning every directory the way `collect` does.
+    """
+    check = TokenCheck()
+    for session in envelopes:
+        if not session.by_model:
+            continue
+        check.envelopes += 1
+        rebuilt = None
+        for directory in directories:
+            candidate = directory / f"{session.session_id}.jsonl"
+            if candidate.is_file():
+                rebuilt = read_session(candidate)
+                break
+        if rebuilt is None:
+            continue
+        check.compared += 1
+        if _same(session.by_model, rebuilt.by_model):
+            check.matched += 1
+        else:
+            check.differing.append(session.doi)
+    return check
+
+
 # ---------------------------------------------------------------- reporting
 
 
@@ -480,9 +600,26 @@ def _duration(seconds: float) -> str:
     return f"{seconds / 3600:.1f}h"
 
 
+def _papers(n: int) -> str:
+    return f"{n} paper" if n == 1 else f"{n} papers"
+
+
+def _sessions(n: int) -> str:
+    return f"{n} session" if n == 1 else f"{n} sessions"
+
+
+def _thinking_cell(tokens: Tokens) -> str:
+    """Thinking tokens, or why there is no number. Never a bare 0 for "unknown"."""
+    if tokens.output and tokens.thinking_unrecorded == tokens.output:
+        return "not recorded"
+    if tokens.thinking_unrecorded:
+        return f"{_thousands(tokens.thinking)} (partial)"
+    return _thousands(tokens.thinking)
+
+
 def _table(by_model: dict[str, Tokens]) -> list[str]:
     """The per-model block, in the shape Claude Code's own run summary uses."""
-    head = ("Model", "Input", "Output", "Cache read", "Cache write", "Total")
+    head = ("Model", "Input", "Output", "Thinking", "Cache read", "Cache write", "Total")
     rows = []
     for name in sorted(by_model, key=lambda m: -by_model[m].total):
         tokens = by_model[name]
@@ -491,8 +628,9 @@ def _table(by_model: dict[str, Tokens]) -> list[str]:
                 name,
                 _thousands(tokens.input),
                 _thousands(tokens.output),
+                _thinking_cell(tokens),
                 _thousands(tokens.cache_read),
-                _thousands(tokens.cache_write_1h + tokens.cache_write_5m),
+                _thousands(tokens.cache_write),
                 _thousands(tokens.total),
             )
         )
@@ -500,69 +638,107 @@ def _table(by_model: dict[str, Tokens]) -> list[str]:
     for tokens in by_model.values():
         grand.add(tokens)
     if len(by_model) > 1:
-        rows.append(("All models", "", "", "", "", _thousands(grand.total)))
+        rows.append(("All models", "", "", "", "", "", _thousands(grand.total)))
 
     if not rows:
-        # Every attempt errored, so nothing was billed. `max(x, *())` raises,
+        # Every attempt errored, so no tokens were used. `max(x, *())` raises,
         # which turned a run of pure refusals into a crash in the reporter
         # rather than a report saying no tokens were spent.
-        return ["(no billable usage: every attempt returned an error)"]
+        return ["(no token usage: every attempt returned an error)"]
 
-    widths = [max(len(head[i]), *(len(r[i]) for r in rows)) for i in range(6)]
+    widths = [max(len(head[i]), *(len(r[i]) for r in rows)) for i in range(len(head))]
     lines = ["  ".join(h.ljust(widths[i]) if i == 0 else h.rjust(widths[i])
                        for i, h in enumerate(head))]
     for row in rows:
         lines.append("  ".join(cell.ljust(widths[i]) if i == 0 else cell.rjust(widths[i])
                                for i, cell in enumerate(row)))
+    if 0 < grand.thinking_unrecorded < grand.output:
+        lines.append(f"Thinking was not recorded for {_thousands(grand.thinking_unrecorded)} of "
+                     f"{_thousands(grand.output)} output tokens; the column counts the rest.")
     return lines
 
 
-def _priced(by_model: dict[str, Tokens]) -> tuple[float, list[str]]:
-    """Total list-price dollars, plus the names of any models we cannot price."""
-    total, unknown = 0.0, []
-    for name, tokens in by_model.items():
-        amount = cost(name, tokens.as_usage())
-        if amount is None:
-            unknown.append(name)
-        else:
-            total += amount
-    return total, unknown
+def _spread(counts: Counter, papers: int) -> list[str]:
+    """`claude-opus-5 for all 392 papers`, or one clause per model."""
+    if len(counts) == 1 and sum(counts.values()) == papers:
+        (name,) = counts
+        return [f"{name} for the only paper" if papers == 1
+                else f"{name} for all {papers} papers"]
+    ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    return [f"{name} for {_papers(n)}" for name, n in ranked]
 
 
-def _split(by_model: dict[str, Tokens]) -> str:
-    """Which token class dominates, weighted by price rather than by count.
+def _model_lines(served: dict[str, set[str]], requested: dict[str, str],
+                 other: dict[str, set[str]]) -> list[str]:
+    """What the runner asked for, what answered, and every paper where they differ.
 
-    Cost-weighted on purpose: by raw count cache-read swamps everything, which
-    says only that the prompt is long. Weighting by rate says where the work
-    actually is -- on these runs, cache-write.
+    The table already shows a second model as a second row, but not which
+    papers it answered. A refusal fallback or a mistyped pin changes who made a
+    determination, and a run total is where that would hide.
     """
-    buckets = {"cache-write": 0.0, "cache-read": 0.0, "output": 0.0, "input": 0.0}
-    for name, tokens in by_model.items():
-        if canonical(name) not in RATES:
-            continue
-        rate_in, rate_out = RATES[canonical(name)]
-        buckets["input"] += tokens.input * rate_in
-        buckets["output"] += tokens.output * rate_out
-        buckets["cache-read"] += tokens.cache_read * rate_in * 0.10
-        buckets["cache-write"] += (
-            tokens.cache_write_1h * rate_in * 2.00 + tokens.cache_write_5m * rate_in * 1.25
-        )
-    grand = sum(buckets.values())
-    if grand <= 0:
-        return ""
-    parts = []
-    for name, value in sorted(buckets.items(), key=lambda kv: -kv[1]):
-        if value <= 0:
-            continue
-        share = 100 * value / grand
-        # A bucket that rounds to 0% is not absent, and "input 0%" reads like a
-        # bug. Input really is that small on these runs -- 0.007% of the corpus
-        # run -- because the paper arrives as cache, not as fresh input.
-        parts.append(f"{name} {share:.0f}%" if share >= 0.5 else f"{name} <1%")
-    return "  " + " · ".join(parts)
+    papers = len(served)
+    asked = Counter(canonical(requested[doi]) for doi in served if doi in requested)
+    unrecorded = papers - sum(asked.values())
+    if not asked:
+        asked_text = ("not recorded" if papers == 1
+                      else f"not recorded for any of the {papers} papers")
+    else:
+        clauses = _spread(asked, papers)
+        if unrecorded:
+            clauses.append(f"not recorded for {unrecorded}")
+        asked_text = ", ".join(clauses)
+
+    answered = Counter(name for names in served.values() for name in names)
+    idle = sum(1 for names in served.values() if not names)
+    if not answered:
+        served_text = "no tokens used"
+    else:
+        clauses = _spread(answered, papers)
+        if idle:
+            clauses.append(f"no tokens for {idle}")
+        served_text = ", ".join(clauses)
+
+    lines = [f"Model requested: {asked_text}", f"Model served:    {served_text}"]
+    if other:
+        lines.append(f"{_papers(len(other))} served by a model other than the one requested:")
+        for doi in sorted(other)[:LISTED]:
+            lines.append(f"  {doi}: requested {requested[doi]}, "
+                         f"served {' + '.join(sorted(other[doi]))}")
+        if len(other) > LISTED:
+            lines.append(f"  ...and {len(other) - LISTED} more")
+    return lines
 
 
-def render(sessions: list[Session], work: str, per_paper: bool = False) -> str:
+def _check_lines(check: TokenCheck) -> list[str]:
+    """The token check, including when and why it could not run."""
+    if not check.envelopes:
+        return ["Token check: not possible, this run recorded no envelopes "
+                "to check the transcripts against."]
+    if not check.compared:
+        which = ("the only session" if check.envelopes == 1
+                 else f"any of the {check.envelopes} sessions")
+        return [f"Token check: not possible, no transcript was found for {which}."]
+    if check.matched == check.compared:
+        scope = ("in the only session" if check.compared == 1
+                 else f"in all {check.compared} sessions")
+    else:
+        scope = f"in {check.matched} of {_sessions(check.compared)}"
+    lines = [f"Token check: transcripts match the CLI's own counts {scope}."]
+    if check.differing:
+        lines.append(f"  Differ in {len(check.differing)}:")
+        lines += [f"    {doi}" for doi in check.differing[:LISTED]]
+        if len(check.differing) > LISTED:
+            lines.append(f"    ...and {len(check.differing) - LISTED} more")
+    if check.without_transcript:
+        lines.append(f"  No transcript for {check.without_transcript} of the "
+                     f"{_sessions(check.envelopes)}.")
+    return lines
+
+
+def render(sessions: list[Session], work: str, per_paper: bool = False,
+           requested: dict[str, str] | None = None,
+           check: TokenCheck | None = None) -> str:
+    requested = requested or {}
     by_model: dict[str, Tokens] = defaultdict(Tokens)
     papers: dict[str, list[Session]] = defaultdict(list)
     refusals = 0
@@ -575,12 +751,19 @@ def render(sessions: list[Session], work: str, per_paper: bool = False) -> str:
         seconds += session.seconds
 
     requests = sum(t.requests for t in by_model.values())
-    total, unknown = _priced(by_model)
-    reported = [s.reported_cost for s in sessions if s.reported_cost is not None]
+
+    # A model "served" a paper when it used any tokens on it, in any attempt.
+    served = {doi: {name for session in group
+                    for name, tokens in session.by_model.items() if tokens.total}
+              for doi, group in papers.items()}
+    other = {doi: names for doi, names in served.items()
+             if doi in requested and names and names != {canonical(requested[doi])}}
 
     # The work directory already names the run and the pack version, so the
     # heading does not restate what task this is -- which it also may not do.
     out = [f"Run usage — {work}", ""]
+    out += _model_lines(served, requested, other)
+    out.append("")
     out += _table(by_model)
     out.append("")
     api_seconds = sum(s.api_ms for s in sessions) / 1000.0
@@ -612,7 +795,7 @@ def render(sessions: list[Session], work: str, per_paper: bool = False) -> str:
     # paper that was labelled without being read. Cache-read cannot carry that
     # weight -- it is dominated by the shared prompt, so it stays large whether
     # or not the paper was engaged with. So the per-paper view sorts and
-    # summarises on output, and prices come last or not at all.
+    # summarises on output, and thinking is reported as a share of it.
     per = []
     for doi, group in papers.items():
         merged: dict[str, Tokens] = defaultdict(Tokens)
@@ -631,9 +814,20 @@ def render(sessions: list[Session], work: str, per_paper: bool = False) -> str:
         p10 = ordered[max(0, int(0.10 * (len(ordered) - 1)))]
         p90 = ordered[min(len(ordered) - 1, int(0.90 * (len(ordered) - 1)))]
         turns = sorted(c[1] for c in per)
+        # A share only for a paper whose every output token came with a count:
+        # a paper that recorded half its thinking would read as half as much.
+        worked = [g for *_, g in per if g.output]
+        shares = sorted(g.thinking / g.output for g in worked if g.thinking_recorded)
+        if not shares:
+            nothing = all(g.thinking_unrecorded == g.output for g in worked)
+            thinking = ", thinking not recorded" if nothing else ", thinking only partly recorded"
+        else:
+            thinking = f", {100 * shares[len(shares) // 2]:.0f}% of it thinking"
+            if len(shares) < len(worked):
+                thinking += f" in the {_papers(len(shares))} that recorded it"
         out.append(
             f"Per paper: median {_thousands(mid)} output tokens "
-            f"(p10 {_thousands(p10)}, p90 {_thousands(p90)}), "
+            f"(p10 {_thousands(p10)}, p90 {_thousands(p90)}){thinking}, "
             f"median {turns[len(turns) // 2]} requests."
         )
         # The floor is the number worth reading. A paper that was assigned a
@@ -656,27 +850,20 @@ def render(sessions: list[Session], work: str, per_paper: bool = False) -> str:
             )
             out.append(
                 f"           in {_thousands(grand.input)}"
+                f" / thinking {_thinking_cell(grand)}"
                 f" / cache-read {_thousands(grand.cache_read)}"
-                f" / cache-write {_thousands(grand.cache_write_1h + grand.cache_write_5m)}"
+                f" / cache-write {_thousands(grand.cache_write)}"
             )
+            if doi in other:
+                out.append(f"           ! served by {' + '.join(sorted(other[doi]))}, "
+                           f"requested {requested[doi]}")
 
-    # Last, and deliberately: a run on a subscription is not billed per token,
-    # so this is what the same work would have cost at list price through the
-    # API. It is a size, not an invoice, and it is not what this report is for.
-    # The drift check stays with it -- a gap against the CLI's own figure is
-    # still the only cross-check that the token accounting above is right.
-    out.append("")
-    out.append(f"List-price equivalent (not a bill): ${total:,.2f}")
-    split = _split(by_model)
-    if split:
-        out.append(split)
-    if unknown:
-        out.append(f"  price unknown for: {', '.join(sorted(unknown))} — excluded from the total")
-    if reported and total > 0 and not unknown:
-        drift = abs(sum(reported) - total) / total
-        if drift > 0.01:
-            out.append(f"  ! the CLI reported ${sum(reported):,.2f} for the same work, "
-                       f"a {drift:.0%} gap — harness/pricing.py:RATES is probably stale")
+    # Last, because it vouches for everything above it: the token counts are
+    # only as good as the reader that produced them, and this is the one place
+    # two independent readers are held against each other.
+    if check is not None:
+        out.append("")
+        out += _check_lines(check)
 
     return "\n".join(out)
 
@@ -696,8 +883,8 @@ def main() -> int:
     # into "this run cannot be reported", which is false.
     sessions = []
     source = "CLI transcripts"
-    if args.work and not args.projects:
-        work_dir = run_root() / args.work
+    work_dir = run_root() / args.work if args.work else None
+    if work_dir is not None and not args.projects:
         sessions = from_envelopes(work_dir)
         if sessions:
             source = f"envelopes in {work_dir}"
@@ -731,7 +918,13 @@ def main() -> int:
             f"have transcripts; the CLI may have pruned older ones."
         )
 
-    print(render(sessions, args.work, per_paper=args.per_paper))
+    # Both read the run directory, so both exist only for a named run. The
+    # check takes every envelope that parsed, not only a complete set, because
+    # it compares session by session.
+    requested = requested_models(work_dir, {s.doi for s in sessions})
+    check = check_tokens(from_envelopes(work_dir, complete_only=False), directories)
+    print(render(sessions, args.work, per_paper=args.per_paper,
+                 requested=requested, check=check))
     # Named because the two sources are not equivalent: only the envelope
     # carries `duration_api_ms`, and only the transcript survives a work
     # directory being deleted.

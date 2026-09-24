@@ -1,20 +1,20 @@
-"""Guards for the usage backfill, one per way it produced a wrong number first.
+"""Guards for the usage report, one per way it produced a wrong number first.
 
-`harness.usage` rebuilds what a run cost from the transcripts `claude -p` already
-persisted. Every guard here is a defect that was real before it was a test:
+`harness.usage` rebuilds which models a run used and how many tokens, from the
+transcripts `claude -p` already persisted or the envelopes it now writes.
+Every guard here is a defect that was real before it was a test:
 
   * summing per JSONL line instead of per `message.id` overstated one sampled
     transcript's output by 39%, because streaming re-emits a message;
   * counting the CLI's injected usage-limit messages as API requests
     overstated the v0.0.21 corpus run by exactly 145;
-  * pricing 1-hour cache writes at the 5-minute rate understated that run by
-    about $140;
   * attributing every session in the project directory to a paper would have
     swept in 2,208 unrelated interactive sessions.
 
-The pricing table is checked against two real `claude -p --output-format json`
-envelopes captured on this machine, to the cent. That is what makes the dollar
-figures a measurement rather than an assertion.
+Nothing is priced. The counts are checked against the CLI's own instead: where
+a session left both an envelope and a transcript the report compares them, and
+on the runs saved on this machine they agreed exactly in 545 of 552 sessions.
+That is what makes the counts a measurement rather than an assertion.
 
 `test_it_reproduces_the_v0021_corpus_run` is the end-to-end one and skips when
 the transcripts are absent, the way `test_harness_guards.py` skips for want of
@@ -32,101 +32,28 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from harness.pricing import CACHE_READ, CACHE_WRITE_1H, CACHE_WRITE_5M, RATES, canonical, cost  # noqa: E402
-from harness.usage import collect, from_envelopes, read_session, render  # noqa: E402
+from harness.usage import (  # noqa: E402
+    canonical, check_tokens, collect, from_envelopes, read_session, render, requested_models,
+)
 
 
-# --------------------------------------------------------------- pricing
-
-#: Two real envelopes from `claude -p --output-format json` on this machine.
-#: Kept verbatim, including the reported total, so the table is checked against
-#: the CLI's own arithmetic rather than against a restatement of itself.
-ENVELOPES = [
-    {
-        "model": "claude-haiku-4-5-20251001",
-        "usage": {
-            "input_tokens": 10,
-            "output_tokens": 47,
-            "cache_read_input_tokens": 13979,
-            "cache_creation": {
-                "ephemeral_1h_input_tokens": 7243,
-                "ephemeral_5m_input_tokens": 0,
-            },
-        },
-        "total_cost_usd": 0.0161289,
-    },
-    {
-        "model": "claude-haiku-4-5-20251001",
-        "usage": {
-            "input_tokens": 18,
-            "output_tokens": 394,
-            "cache_read_input_tokens": 35228,
-            "cache_creation": {
-                "ephemeral_1h_input_tokens": 9066,
-                "ephemeral_5m_input_tokens": 0,
-            },
-        },
-        "total_cost_usd": 0.0236428,
-    },
-]
+# --------------------------------------------------------------- model names
 
 
-@pytest.mark.parametrize("envelope", ENVELOPES)
-def test_the_price_table_reproduces_a_real_envelope_to_the_cent(envelope):
-    got = cost(envelope["model"], envelope["usage"])
-    assert got == pytest.approx(envelope["total_cost_usd"], abs=1e-9), (
-        f"priced {got} against the CLI's own {envelope['total_cost_usd']}"
-    )
-
-
-def test_the_v0021_corpus_totals_price_to_the_published_figure():
-    """The whole corpus run, from the token counts three readers agreed on."""
-    got = cost("claude-opus-5", {
-        "input_tokens": 9_158,
-        "output_tokens": 3_660_624,
-        "cache_read_input_tokens": 295_151_111,
-        "cache_creation": {
-            "ephemeral_1h_input_tokens": 37_446_096,
-            "ephemeral_5m_input_tokens": 0,
-        },
-    })
-    assert round(got, 2) == 613.60
-
-
-def test_a_one_hour_cache_write_costs_more_than_a_five_minute_one():
-    """The $140 defect: collapsing the TTL split to the cheaper rate.
-
-    These runs use 1-hour caching exclusively, so a reader that ignores
-    `cache_creation` and prices the flat total at the 5-minute rate understates
-    every one of them.
-    """
-    tokens = 37_446_096
-    hour = cost("claude-opus-5", {
-        "cache_creation": {"ephemeral_1h_input_tokens": tokens,
-                           "ephemeral_5m_input_tokens": 0}})
-    five = cost("claude-opus-5", {
-        "cache_creation": {"ephemeral_1h_input_tokens": 0,
-                           "ephemeral_5m_input_tokens": tokens}})
-    assert hour > five
-    assert round(hour - five, 2) == 140.42
-
-
-def test_cache_rates_are_derived_not_stored():
-    """Two numbers per model, three ratios shared. Drift has nowhere to hide."""
-    for name, (rate_in, _) in RATES.items():
-        one = 1_000_000
-        assert cost(name, {"cache_read_input_tokens": one}) == pytest.approx(rate_in * CACHE_READ)
-        assert cost(name, {"cache_creation": {"ephemeral_5m_input_tokens": one}}) == \
-            pytest.approx(rate_in * CACHE_WRITE_5M)
-        assert cost(name, {"cache_creation": {"ephemeral_1h_input_tokens": one}}) == \
-            pytest.approx(rate_in * CACHE_WRITE_1H)
-
-
-def test_an_unknown_model_is_not_guessed():
-    """A wrong price gets quoted; a missing one is visible in the report."""
-    assert cost("claude-something-unreleased", {"output_tokens": 10_000}) is None
-    assert canonical("claude-opus-5-20260101") == "claude-opus-5"
+def test_a_dated_model_name_joins_its_undated_row():
+    """Transcripts carry `claude-haiku-4-5-20251001`; envelopes need not."""
+    assert canonical("claude-haiku-4-5-20251001") == "claude-haiku-4-5"
+    assert canonical("claude-opus-5") == "claude-opus-5"
     assert canonical(None) is None
+
+
+def test_a_model_no_list_has_heard_of_still_gets_a_row(tmp_path):
+    """The price table this replaced named five models, and every other one
+    came out as `price unknown`. Counting tokens needs no list of models."""
+    path = _transcript(tmp_path, _line(message={"model": "claude-unreleased-9"}))
+    report = render([read_session(path)], "work-x")
+    assert any(line.startswith("claude-unreleased-9") for line in report.splitlines())
+    assert "unknown" not in report
 
 
 # --------------------------------------------------------------- transcripts
@@ -145,6 +72,7 @@ def _line(**over):
                 "input_tokens": 2,
                 "output_tokens": 100,
                 "cache_read_input_tokens": 1_000,
+                "cache_creation_input_tokens": 500,
                 "cache_creation": {"ephemeral_1h_input_tokens": 500,
                                    "ephemeral_5m_input_tokens": 0},
             },
@@ -253,19 +181,65 @@ def test_usage_is_summed_across_attempts(tmp_path):
     assert "2 sessions" in report
 
 
-def test_an_unpriceable_model_is_named_rather_than_dropped_silently(tmp_path):
+#: One request's usage, recording 40 of its 100 output tokens as thinking.
+THINKING = {"input_tokens": 2, "output_tokens": 100, "cache_read_input_tokens": 1_000,
+            "cache_creation_input_tokens": 500,
+            "output_tokens_details": {"thinking_tokens": 40}}
+
+
+def test_thinking_is_read_per_message_and_sits_inside_output(tmp_path):
+    """Thinking tokens are output tokens. Adding them to the total would count
+    them twice; showing them apart is the point."""
     path = _transcript(
-        tmp_path, _line(message={"model": "claude-unreleased-9"}))
+        tmp_path,
+        _line(message={"usage": THINKING}),
+        _line(message={"usage": THINKING}),  # a streamed copy, counted once
+        _line(requestId="req_2", uuid="u2", message={"id": "msg_2", "usage": THINKING}),
+    )
+    session = read_session(path)
+    tokens = session.by_model["claude-opus-5"]
+    assert (tokens.output, tokens.thinking, tokens.thinking_unrecorded) == (200, 80, 0)
+    assert tokens.total == 2 * (2 + 100 + 1_000 + 500)
+    assert "40% of it thinking" in render([session], "work-x")
+
+
+def test_no_thinking_count_is_not_recorded_rather_than_zero(tmp_path):
+    """The CLI recorded no thinking for the first runs. A 0 there would claim
+    the model did not think, which nobody measured."""
+    session = read_session(_transcript(tmp_path, _line()))
+    assert session.by_model["claude-opus-5"].thinking_unrecorded == 100
+    report = render([session], "work-x")
+    row = next(line for line in report.splitlines() if line.startswith("claude-opus-5"))
+    assert "not recorded" in row
+    assert "thinking not recorded" in report
+
+
+def test_a_partly_recorded_run_says_how_much_thinking_is_missing(tmp_path):
+    path = _transcript(
+        tmp_path,
+        _line(),
+        _line(requestId="req_2", uuid="u2", message={"id": "msg_2", "usage": THINKING}),
+    )
     report = render([read_session(path)], "work-x")
-    assert "price unknown" in report
-    assert "claude-unreleased-9" in report
+    assert "40 (partial)" in report
+    assert "Thinking was not recorded for 100 of 200 output tokens" in report
+
+
+def test_a_record_with_only_the_lifetime_split_still_counts_its_writes(tmp_path):
+    """Every transcript measured carries the flat write total, but the 5-minute
+    and 1-hour split alone is the same count and must not read as no writes."""
+    usage = {"input_tokens": 2, "output_tokens": 100, "cache_read_input_tokens": 1_000,
+             "cache_creation": {"ephemeral_1h_input_tokens": 500,
+                                "ephemeral_5m_input_tokens": 20}}
+    session = read_session(_transcript(tmp_path, _line(message={"usage": usage})))
+    assert session.by_model["claude-opus-5"].cache_write == 520
 
 
 # --------------------------------------------------------------- end to end
 
 
 def test_it_reproduces_the_v0021_corpus_run():
-    """The real thing: 392 papers, from transcripts, to the cent.
+    """The real thing: 392 papers, from transcripts, to the token.
 
     Skips where the transcripts are absent -- another machine, or a CLI that
     has pruned them. The numbers below were independently derived three times
@@ -276,7 +250,6 @@ def test_it_reproduces_the_v0021_corpus_run():
         pytest.skip("no work-corpus-v0021-r1 transcripts on this machine")
 
     report = render(sessions, "work-corpus-v0021-r1")
-    assert "$613.60" in report
     assert "4,579 API requests" in report
     assert "535 sessions" in report
     assert "392 papers" in report
@@ -291,10 +264,7 @@ def test_it_reproduces_the_v0021_corpus_run():
     assert sum(t.input for t in opus) == 9_158
     assert sum(t.output for t in opus) == 3_660_624
     assert sum(t.cache_read for t in opus) == 295_151_111
-    assert sum(t.cache_write_1h for t in opus) == 37_446_096
-    # The whole run used 1-hour caching; a 5-minute write here would mean the
-    # CLI changed its caching behaviour and the price table needs revisiting.
-    assert sum(t.cache_write_5m for t in opus) == 0
+    assert sum(t.cache_write for t in opus) == 37_446_096
 
 
 # --------------------------------------------------------- envelopes
@@ -304,15 +274,38 @@ def test_it_reproduces_the_v0021_corpus_run():
 REAL_ENVELOPE = {
     "type": "result", "subtype": "success", "is_error": False, "result": "DONE",
     "num_turns": 5, "duration_ms": 148000, "duration_api_ms": 145686,
-    "total_cost_usd": 1.0141,
     "usage": {"input_tokens": 10, "output_tokens": 13100,
               "cache_read_input_tokens": 193525,
               "cache_creation": {"ephemeral_1h_input_tokens": 58974,
                                  "ephemeral_5m_input_tokens": 0}},
     "modelUsage": {"claude-opus-5": {
         "inputTokens": 10, "outputTokens": 13100,
-        "cacheReadInputTokens": 193525, "cacheCreationInputTokens": 58974,
-        "costUSD": 1.0141, "costBasis": "list"}},
+        "cacheReadInputTokens": 193525, "cacheCreationInputTokens": 58974}},
+}
+
+#: Two more real envelopes, one per CLI generation, because the two put the
+#: thinking count in different places. The older CLI (the envelope smoke run)
+#: gives it only in the flat block; the newer one (a paper from
+#: work-glyphfix-17) gives it per model as well. Trimmed like the one above.
+OLDER_CLI_ENVELOPE = {
+    "type": "result", "subtype": "success", "is_error": False, "result": "DONE",
+    "num_turns": 6, "duration_ms": 228626, "duration_api_ms": 226005,
+    "usage": {"input_tokens": 12, "output_tokens": 19984,
+              "cache_read_input_tokens": 265057, "cache_creation_input_tokens": 66378,
+              "output_tokens_details": {"thinking_tokens": 11255}},
+    "modelUsage": {"claude-opus-5": {
+        "inputTokens": 12, "outputTokens": 19984,
+        "cacheReadInputTokens": 265057, "cacheCreationInputTokens": 66378}},
+}
+NEWER_CLI_ENVELOPE = {
+    "type": "result", "subtype": "success", "is_error": False, "result": "DONE",
+    "num_turns": 17, "duration_ms": 207186, "duration_api_ms": 202533,
+    "usage": {"input_tokens": 34, "output_tokens": 14719,
+              "cache_read_input_tokens": 1334580, "cache_creation_input_tokens": 125836,
+              "output_tokens_details": {"thinking_tokens": 8458}},
+    "modelUsage": {"claude-opus-5": {
+        "inputTokens": 34, "outputTokens": 14719, "thinkingTokens": 8458,
+        "cacheReadInputTokens": 1334580, "cacheCreationInputTokens": 125836}},
 }
 
 
@@ -324,20 +317,12 @@ def _run(tmp_path, doi="10.1000_a", envelopes=(REAL_ENVELOPE,)):
     return work
 
 
-def test_an_envelope_reproduces_the_clis_own_cost(tmp_path):
-    """The live check: our table against the CLI's figure on a real Opus-5 call."""
-    sessions = from_envelopes(_run(tmp_path))
-    report = render(sessions, "work-x")
-    assert "$1.01" in report
-    # No drift warning means the two agree within 1%.
-    assert "pricing.py:RATES is probably stale" not in report
-
-
-def test_a_price_change_is_reported_rather_than_absorbed(tmp_path):
-    """If Anthropic's rates move, the table is wrong and must say so."""
-    envelope = dict(REAL_ENVELOPE, total_cost_usd=99.0)
-    report = render(from_envelopes(_run(tmp_path, envelopes=[envelope])), "work-x")
-    assert "pricing.py:RATES is probably stale" in report
+def test_an_envelope_puts_the_clis_own_counts_in_the_table(tmp_path):
+    report = render(from_envelopes(_run(tmp_path)), "work-x")
+    row = next(line for line in report.splitlines() if line.startswith("claude-opus-5"))
+    # This envelope predates thinking counts, so that cell says so.
+    assert row.split() == ["claude-opus-5", "10", "13,100", "not", "recorded",
+                           "193,525", "58,974", "265,609"]
 
 
 def test_every_attempt_in_the_file_is_counted(tmp_path):
@@ -347,22 +332,34 @@ def test_every_attempt_in_the_file_is_counted(tmp_path):
     assert sum(t.output for s in sessions for t in s.by_model.values()) == 26200
 
 
-def test_the_cache_write_ttl_comes_from_the_flat_block(tmp_path):
-    """`modelUsage` gives no TTL, and the 1h rate is 1.6x the 5m one."""
+def test_cache_writes_are_one_count_straight_from_modelusage(tmp_path):
+    """The 5-minute/1-hour split only ever set a price. The count is the CLI's."""
     tokens = from_envelopes(_run(tmp_path))[0].by_model["claude-opus-5"]
-    assert tokens.cache_write_1h == 58974
-    assert tokens.cache_write_5m == 0
+    assert tokens.cache_write == 58974
 
 
-def test_an_envelope_without_a_ttl_split_is_priced_at_the_cheaper_rate(tmp_path):
-    """Guessing high would overstate a bill; guessing low is visible in the drift
-    line rather than silently inflating a number somebody quotes."""
-    envelope = json.loads(json.dumps(REAL_ENVELOPE))
-    envelope["usage"]["cache_creation"] = {}
-    envelope["usage"]["cache_creation_input_tokens"] = 58974
-    tokens = from_envelopes(_run(tmp_path, envelopes=[envelope]))[0].by_model["claude-opus-5"]
-    assert tokens.cache_write_1h == 0
-    assert tokens.cache_write_5m == 58974
+def test_a_newer_envelope_gives_thinking_per_model(tmp_path):
+    session = from_envelopes(_run(tmp_path, envelopes=[NEWER_CLI_ENVELOPE]))[0]
+    tokens = session.by_model["claude-opus-5"]
+    assert (tokens.thinking, tokens.thinking_unrecorded) == (8458, 0)
+
+
+def test_an_older_envelope_gives_thinking_only_in_its_flat_block(tmp_path):
+    """The flat total equals the per-model figure on all 418 envelopes measured
+    that carry both, so for one model it is that model's own. With two it
+    cannot be split, and a guess would be a number nobody measured."""
+    session = from_envelopes(_run(tmp_path, envelopes=[OLDER_CLI_ENVELOPE]))[0]
+    tokens = session.by_model["claude-opus-5"]
+    assert (tokens.thinking, tokens.thinking_unrecorded) == (11255, 0)
+
+    two = json.loads(json.dumps(OLDER_CLI_ENVELOPE))
+    two["modelUsage"]["claude-haiku-4-5-20251001"] = {
+        "inputTokens": 5, "outputTokens": 300,
+        "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0}
+    by_model = from_envelopes(_run(tmp_path / "two", envelopes=[two]))[0].by_model
+    assert set(by_model) == {"claude-opus-5", "claude-haiku-4-5"}
+    assert all(t.thinking == 0 and t.thinking_unrecorded == t.output
+               for t in by_model.values())
 
 
 def test_model_time_is_reported_apart_from_the_agent_span(tmp_path):
@@ -396,6 +393,8 @@ def test_a_partly_instrumented_run_defers_to_the_transcripts(tmp_path):
         {"doi": "10.1000_a"}, {"doi": "10.1000_b"},
     ]), encoding="utf-8")
     assert from_envelopes(work) == []
+    # The token check still sees the instrumented part.
+    assert len(from_envelopes(work, complete_only=False)) == 1
 
     # Once every paper is instrumented it is used again.
     (work / "meta" / "10.1000_b.usage.jsonl").write_text(
@@ -414,19 +413,6 @@ def test_a_manifest_error_entry_does_not_block_the_envelopes(tmp_path):
 
 
 # ------------------------------------------- envelope reader, adversarial
-
-
-def test_an_unpriceable_model_does_not_masquerade_as_price_drift(tmp_path):
-    """`_priced` excludes an unknown model; total_cost_usd includes it. The gap
-    is then guaranteed and blames the price table for someone else's problem."""
-    envelope = json.loads(json.dumps(REAL_ENVELOPE))
-    envelope["modelUsage"]["claude-unreleased-9"] = {
-        "inputTokens": 1, "outputTokens": 5000, "cacheReadInputTokens": 0,
-        "cacheCreationInputTokens": 0, "costUSD": 40.0}
-    envelope["total_cost_usd"] = 41.0141
-    report = render(from_envelopes(_run(tmp_path, envelopes=[envelope])), "work-x")
-    assert "price unknown" in report
-    assert "probably stale" not in report
 
 
 def test_model_time_without_a_span_does_not_divide_by_zero(tmp_path):
@@ -464,27 +450,13 @@ def test_a_truncated_envelope_makes_the_run_defer_to_transcripts(tmp_path):
     assert from_envelopes(work) == []
 
 
-def test_a_mixed_ttl_envelope_splits_writes_rather_than_picking_a_side(tmp_path):
-    """`modelUsage` gives a write total with no TTL and the flat block gives the
-    TTL with no model; collapsing to one boolean priced part of a genuinely
-    mixed envelope at the wrong rate."""
-    envelope = json.loads(json.dumps(REAL_ENVELOPE))
-    envelope["usage"]["cache_creation"] = {"ephemeral_1h_input_tokens": 20000,
-                                           "ephemeral_5m_input_tokens": 38974}
-    tokens = from_envelopes(_run(tmp_path, envelopes=[envelope]))[0].by_model["claude-opus-5"]
-    assert tokens.cache_write_1h + tokens.cache_write_5m == 58974
-    assert tokens.cache_write_1h > 0 and tokens.cache_write_5m > 0
-    # Proportional to the flat block, not all-or-nothing.
-    assert abs(tokens.cache_write_1h / 58974 - 20000 / 58974) < 0.01
-
-
 def test_a_run_where_every_attempt_errored_reports_rather_than_crashes(tmp_path):
     """`max(x, *())` raises, so an all-refusals run crashed the reporter."""
     envelope = {"type": "result", "is_error": True, "api_error_status": "429",
                 "result": "rate_limit_error", "num_turns": 1,
                 "total_cost_usd": 0, "usage": {}, "modelUsage": {}}
     report = render(from_envelopes(_run(tmp_path, envelopes=[envelope])), "work-x")
-    assert "no billable usage" in report
+    assert "no token usage" in report
 
 
 # ------------------------------------------- tokens as evidence of work
@@ -531,14 +503,110 @@ def test_the_per_paper_listing_is_ordered_by_output_not_by_price(tmp_path):
     assert listing.index("10.1000_worked") < listing.index("10.1000_thin")
 
 
-def test_the_price_line_comes_last_and_is_not_called_a_bill(tmp_path):
-    """A subscription run is not billed per token. The figure stays for the
-    drift check against the CLI, but it is a footer, not the headline."""
+def test_the_report_prints_no_dollar_figure(tmp_path):
+    """Deleted outright. The report answers which models ran and how many
+    tokens they used, and a dollar figure needed a price table kept in step
+    with Anthropic's by hand. The envelope still carries the CLI's own cost,
+    so this proves the report ignores it rather than that it was never there."""
+    envelope = json.loads(json.dumps(REAL_ENVELOPE))
+    envelope["total_cost_usd"] = 1.0141
+    envelope["modelUsage"]["claude-opus-5"]["costUSD"] = 1.0141
+    work = _run(tmp_path, envelopes=[envelope])
+    report = render(from_envelopes(work), "work-x", per_paper=True,
+                    check=check_tokens(from_envelopes(work), []))
+    assert "$" not in report
+    assert "price" not in report.lower()
+
+
+# ------------------------------------------------ models requested and served
+
+
+def test_the_requested_model_is_read_beside_each_result(tmp_path):
+    """The runner writes `meta/<doi>.model` only beside a result, so a paper
+    without one is reported as not recorded rather than assumed to have the pin."""
+    work = _two_papers(tmp_path, 13100, 200)
+    (work / "meta" / "10.1000_worked.model").write_text("claude-opus-5\n")
+    requested = requested_models(work, {"10.1000_worked", "10.1000_thin"})
+    assert requested == {"10.1000_worked": "claude-opus-5"}
+    report = render(from_envelopes(work), "work-evidence", requested=requested)
+    assert "Model requested: claude-opus-5 for 1 paper, not recorded for 1" in report
+    assert "Model served:    claude-opus-5 for all 2 papers" in report
+    assert "other than the one requested" not in report
+
+
+def test_a_run_that_recorded_no_model_says_so(tmp_path):
     report = render(from_envelopes(_two_papers(tmp_path, 13100, 200)), "work-evidence")
-    lines = [line for line in report.splitlines() if line.strip()]
-    price = [i for i, line in enumerate(lines) if line.startswith("List-price equivalent")]
-    assert price, "the list-price line should still be printed"
-    assert "not a bill" in lines[price[0]]
-    # Everything above it is tokens, requests and time; nothing below but the
-    # price split and the drift warning.
-    assert all("output tokens" not in line for line in lines[price[0]:])
+    assert "Model requested: not recorded for any of the 2 papers" in report
+
+
+def test_a_paper_another_model_served_is_named(tmp_path):
+    """A second row in the table says a second model ran. Only this says for
+    which paper, and that decides whose determination the record holds."""
+    work = _two_papers(tmp_path, 13100, 200)
+    path = work / "meta" / "10.1000_thin.usage.jsonl"
+    envelope = json.loads(path.read_text())
+    envelope["modelUsage"]["claude-sonnet-5"] = envelope["modelUsage"].pop("claude-opus-5")
+    path.write_text(json.dumps(envelope) + "\n")
+    requested = {"10.1000_worked": "claude-opus-5", "10.1000_thin": "claude-opus-5"}
+    report = render(from_envelopes(work), "work-evidence", per_paper=True,
+                    requested=requested)
+    assert "Model served:    claude-opus-5 for 1 paper, claude-sonnet-5 for 1 paper" in report
+    assert "1 paper served by a model other than the one requested:" in report
+    assert "  10.1000_thin: requested claude-opus-5, served claude-sonnet-5" in report
+    assert "! served by claude-sonnet-5, requested claude-opus-5" in report
+
+
+# ------------------------------------------------------------ the token check
+
+#: A transcript request with exactly REAL_ENVELOPE's counts, plus a thinking
+#: count that envelope never had.
+MATCHING = {"input_tokens": 10, "output_tokens": 13100, "cache_read_input_tokens": 193525,
+            "cache_creation_input_tokens": 58974,
+            "output_tokens_details": {"thinking_tokens": 6000}}
+
+
+def _paired(tmp_path, transcript_usage):
+    """One envelope and the transcript of the same session."""
+    # `_transcript` writes `session.jsonl`, and the session id names the file.
+    work = _run(tmp_path, envelopes=[dict(REAL_ENVELOPE, session_id="session")])
+    directory = tmp_path / "projects"
+    directory.mkdir()
+    _transcript(directory, _line(message={"usage": transcript_usage}))
+    return from_envelopes(work, complete_only=False), [directory]
+
+
+def test_the_token_check_passes_when_both_records_agree(tmp_path):
+    """The envelope predates thinking counts and the transcript has one: a gap
+    in one record, which must not read as a disagreement about the count."""
+    envelopes, directories = _paired(tmp_path, MATCHING)
+    check = check_tokens(envelopes, directories)
+    assert (check.envelopes, check.compared, check.matched) == (1, 1, 1)
+    report = render(envelopes, "work-x", check=check)
+    assert "Token check: transcripts match the CLI's own counts in the only session." in report
+
+
+def test_the_token_check_names_a_session_whose_records_disagree(tmp_path):
+    """Seven sessions of the v0.0.25 corpus run do this, and nothing reported
+    it until the two records were held against each other."""
+    envelopes, directories = _paired(tmp_path, dict(MATCHING, cache_read_input_tokens=150000))
+    check = check_tokens(envelopes, directories)
+    assert check.differing == ["10.1000_a"]
+    report = render(envelopes, "work-x", check=check)
+    assert "Token check: transcripts match the CLI's own counts in 0 of 1 session." in report
+    assert "  Differ in 1:\n    10.1000_a" in report
+
+
+def test_the_token_check_says_when_it_could_not_run(tmp_path):
+    """No envelopes, or envelopes with no transcript left, and each says so.
+    An attempt that errored used no tokens and is not a session to compare."""
+    session = read_session(_transcript(tmp_path, _line()))
+    report = render([session], "work-x", check=check_tokens([], [tmp_path]))
+    assert "Token check: not possible, this run recorded no envelopes" in report
+
+    errored = {"type": "result", "is_error": True, "api_error_status": "429",
+               "result": "rate_limit_error", "num_turns": 1, "usage": {}, "modelUsage": {}}
+    work = _run(tmp_path / "run", envelopes=[REAL_ENVELOPE, errored])
+    check = check_tokens(from_envelopes(work, complete_only=False), [tmp_path / "gone"])
+    assert (check.envelopes, check.compared) == (1, 0)
+    report = render(from_envelopes(work), "work-x", check=check)
+    assert "Token check: not possible, no transcript was found for the only session." in report

@@ -43,7 +43,7 @@ try:
 except ImportError:
     yaml = None
 
-from harness.runroot import output_name, work_default  # noqa: E402
+from harness.runroot import model_of, output_name, work_default  # noqa: E402
 from harness.runstate import (  # noqa: E402
     RunError, entry_paths, load_manifest, resolve_corpus, resolve_run_dir,
 )
@@ -222,23 +222,6 @@ def record_version(result: dict, run_version: str | None = None) -> tuple[str | 
     if result.get(LEGACY_VERSION_FIELD) is not None:
         return (str(run_version) if run_version else None), True
     return None, False
-
-
-def model_of(work: Path, doi: str) -> str | None:
-    """Which model produced this paper's raw result, if the runner recorded it.
-
-    `harness/run_headless.sh` pins the model so results are attributable across
-    machines and across time, and wrote that pin nowhere -- so the record could
-    not answer "which model said this", the only question the pin exists to make
-    answerable. The runner writes it beside the result rather than into it,
-    because the raw JSON is the model's own output and the harness does not edit
-    it before reading it back. `None` for every run that predates the sidecar,
-    which is the honest answer there rather than a guess at the default.
-    """
-    path = work / "meta" / f"{doi}.model"
-    if not path.is_file():
-        return None
-    return path.read_text().strip() or None
 
 
 def validate_result(result: dict, sources_text: dict[str, str], threshold: float,
