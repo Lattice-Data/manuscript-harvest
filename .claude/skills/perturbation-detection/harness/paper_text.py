@@ -299,7 +299,7 @@ def section_chars(blocks, exclude_sections=EXCLUDE_SECTIONS,
     `methods`-labelled blocks totalling **228 characters**: two repeats of the
     heading "Materials and Methods" and a list of supplementary figure captions.
     Its `methods_missing` report is correct, and a check that asked only whether
-    the label existed would have refuted a true claim and quietly removed the cap
+    the label existed would have refuted a true claim and quietly removed the downgrade
     from the one corpus text that is genuinely broken.
 
     Derived from the same filters `build_sources` applies, for the reason the

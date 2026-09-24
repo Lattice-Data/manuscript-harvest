@@ -6,7 +6,7 @@ inputs:
   paired: tissues[].is_sequenced
   stated: tissues[].stated_where
 
-cap:
+damaged_text_downgrade:
   when_status: partial
   when_completeness_not: full
   from: "no"
@@ -23,4 +23,4 @@ harness_raised_checks: []
 reason_rules:
   none_value: none
   required_when: unclear
-  cap_reason: degraded_text
+  downgrade_reason: degraded_text

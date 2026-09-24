@@ -173,26 +173,26 @@ def test_run_to_run_instability_is_caught(tmp_path):
 
 
 def test_exercised_counts_papers_where_the_mechanism_fired(tmp_path):
-    write_run(tmp_path, "r1", {"10.1/a": {"v": "no", "validation": {"capped": True}},
-                               "10.1/b": {"v": "no", "validation": {"capped": False}}})
-    write_run(tmp_path, "r2", {"10.1/a": {"v": "no", "validation": {"capped": False}},
-                               "10.1/b": {"v": "no", "validation": {"capped": False}}})
+    write_run(tmp_path, "r1", {"10.1/a": {"v": "no", "validation": {"downgraded": True}},
+                               "10.1/b": {"v": "no", "validation": {"downgraded": False}}})
+    write_run(tmp_path, "r2", {"10.1/a": {"v": "no", "validation": {"downgraded": False}},
+                               "10.1/b": {"v": "no", "validation": {"downgraded": False}}})
     spec = spec_dict({"10.1/a": {"role": "free"}, "10.1/b": {"role": "free"}},
                      [{"id": "fired", "kind": "exercised",
-                       "predicate": "validation.capped", "minimum": 1}])
+                       "predicate": "validation.downgraded", "minimum": 1}])
     applicable, failures = verdicts(run(tmp_path, spec))["fired"]
     assert applicable == 1 and not failures
 
 
 def test_a_mechanism_that_never_fired_is_not_a_pass(tmp_path):
     """The v0.0.25 case exactly: the defect gate read a key the verifier never
-    returned, so every claim was dropped, the cap fell back to a deterministic
+    returned, so every claim was dropped, the downgrade fell back to a deterministic
     route, and the criterion would have agreed 24/24 over a dead mechanism."""
     write_run(tmp_path, "r1", {"10.1/a": {"v": "no", "validation": {}}})
     write_run(tmp_path, "r2", {"10.1/a": {"v": "no", "validation": {}}})
     spec = spec_dict({"10.1/a": {"role": "free"}},
                      [{"id": "fired", "kind": "exercised",
-                       "predicate": "validation.capped", "minimum": 1}])
+                       "predicate": "validation.downgraded", "minimum": 1}])
     outcome = run(tmp_path, spec)
     assert outcome["criteria"][0]["applicable"] == 0
     assert report(spec, outcome) == 1

@@ -31,7 +31,7 @@ from harness.paper_text import build_sources, split_assembled  # noqa: E402
 from harness.runroot import work_default  # noqa: E402
 from harness.validate import model_of, validate_result  # noqa: E402
 from task.rules import (  # noqa: E402
-    DEFECT_KINDS, HARNESS_UNREADABLE_FIELD, capping_defects, decide, stage_b,
+    DEFECT_KINDS, HARNESS_UNREADABLE_FIELD, downgrading_defects, decide, stage_b,
     validate_defects,
 )
 
@@ -43,9 +43,9 @@ ROOT = Path(__file__).resolve().parent.parent
 # --------------------------------------------------------------------------
 #
 # These guards are v0.0.25 rewrites of the same lesson, on a different trigger.
-# The cap used to key on `text_completeness != "full"`, and the guard tested enum
-# membership FIRST -- so None, "", "Full" and "truncated " all escaped the cap and
-# kept the "no", while an honest "unknown" was capped. A safety mechanism a typo
+# The downgrade used to key on `text_completeness != "full"`, and the guard tested enum
+# membership FIRST -- so None, "", "Full" and "truncated " all escaped the downgrade and
+# kept the "no", while an honest "unknown" was downgraded. A safety mechanism a typo
 # switches off is not one.
 #
 # The trigger is now a verified quote plus a harness fact, so the typo has a new
@@ -60,19 +60,19 @@ def _clean() -> dict:
 
 
 @pytest.mark.parametrize("withheld", [True, 1, "yes", ["anything"]])
-def test_any_truthy_harness_fact_caps_a_negative(withheld):
+def test_any_truthy_harness_fact_downgrades_a_negative(withheld):
     """The harness's own finding cannot be argued with, and cannot be typed
     wrong into oblivion: it is read for truthiness, not matched against a set."""
     assert stage_b("no", withheld, []) == ("unclear", True)
 
 
-def test_stage_b_does_not_cap_when_neither_fact_is_present():
+def test_stage_b_does_not_downgrade_when_neither_fact_is_present():
     assert stage_b("no", False, []) == ("no", False)
     assert stage_b("no") == ("no", False)
 
 
 @pytest.mark.parametrize("verdict", ["yes", "unclear", "not_applicable"])
-def test_stage_b_never_caps_a_non_negative(verdict):
+def test_stage_b_never_downgrades_a_non_negative(verdict):
     """The asymmetry is the point: missing text can hide the sentence that would
     have paired a perturbation, but it cannot invent one."""
     assert stage_b(verdict, True, [{"source_id": "main", "kind": "garbled_run"}]) \
@@ -80,33 +80,33 @@ def test_stage_b_never_caps_a_non_negative(verdict):
 
 
 @pytest.mark.parametrize("kind", DEFECT_KINDS)
-def test_every_defect_kind_caps_from_the_main_source(kind):
+def test_every_defect_kind_downgrades_from_the_main_source(kind):
     """A tightened trigger must not have loosened the set it replaced: whatever
-    the kind, a verified defect in the text the paper is made of caps."""
+    the kind, a verified defect in the text the paper is made of downgrades."""
     record = dict(_clean(), text_defects=[{"source_id": "main", "kind": kind}])
-    assert stage_b("no", False, capping_defects(record)) == ("unclear", True)
+    assert stage_b("no", False, downgrading_defects(record)) == ("unclear", True)
 
 
 @pytest.mark.parametrize("kind", DEFECT_KINDS)
-def test_a_supplementary_defect_caps_only_when_it_is_missing_methods(kind):
+def test_a_supplementary_defect_downgrades_only_when_it_is_missing_methods(kind):
     """The scope decision of 2026-09-16, as a property over every kind rather
     than an example. A garbled table in a reporting summary could not have
     hidden a pairing sentence; an absent methods section could, wherever it is.
     """
     record = dict(_clean(), text_defects=[{"source_id": "supp2", "kind": kind}])
-    capped = stage_b("no", False, capping_defects(record))[1]
-    assert capped is (kind == "no_methods_content"), (
-        f"{kind!r} in a supplementary source: capped={capped}")
+    downgraded = stage_b("no", False, downgrading_defects(record))[1]
+    assert downgraded is (kind == "no_methods_content"), (
+        f"{kind!r} in a supplementary source: downgraded={downgraded}")
 
 
-def test_a_botched_claim_caps_and_a_refuted_one_does_not():
+def test_a_botched_claim_downgrades_and_a_refuted_one_does_not():
     """The v0.0.25 form of "a typo must not switch the safety off", and the one
     asymmetry in this file that is easy to get backwards.
 
     A quote the harness checked and could not find is a claim REFUTED: the
     negative stands. An entry the harness could not read at all is a claim
     UNKNOWN -- the model saw something and botched the report of it, which is no
-    evidence that the text is whole -- so the cap applies.
+    evidence that the text is whole -- so the downgrade applies.
     """
     botched = dict(_clean(), text_defects=[
         {"source_id": "main", "kind": "not_a_kind", "quote": "x"}])
@@ -235,7 +235,7 @@ def _minimal(**over):
 
 
 def test_over_budget_paper_says_re_fetching_will_not_help():
-    """Both papers that hit `needs_section_pass` on the 392-paper run were capped
+    """Both papers that hit `needs_section_pass` on the 392-paper run were downgraded
     at "unclear"/degraded_text like any truncated paper and sorted to triage P4 —
     "route to re-fetch, not to reading". That is the wrong queue: the text arrived
     complete and simply does not fit the budget with Methods preserved. harness.prepare

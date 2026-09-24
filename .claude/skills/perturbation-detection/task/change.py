@@ -2,7 +2,7 @@
 
 Moved out of `harness/compare.py`. The labels are `change.yaml`; the predicates that
 read a pair of records are here, because each one names fields only this task
-has -- `single_cell_paired`, `suppressed_candidates`, `stage_b_capped`.
+has -- `single_cell_paired`, `suppressed_candidates`, `damaged_text_downgrade`.
 
 The one invariant worth stating twice: `determination_inputs` must list exactly
 what the decision reads. If the two ever disagree, the diff reports a change as
@@ -19,6 +19,7 @@ from __future__ import annotations
 import re
 
 from harness.pack import PackError, tables
+from task.rules import downgraded
 
 _T = tables()
 _CHG = _T["change"]
@@ -90,16 +91,16 @@ def classify(new: dict, old: dict | None = None) -> list[str]:
     if old is not None and old.get("pairing_pass") == "skipped_no_perturbations":
         classes.append("BASELINE-UNASSESSED")
 
-    # Stage B is symmetric: a paper moves both when it ENTERS the degraded-text
-    # cap and when it LEAVES it. Only the first was checked before, so a cap
-    # release -- `stage_b_capped` True -> False, which is what re-extraction
-    # completing a paper's text looks like -- fell through to UNEXPLAINED and
-    # read as a logic bug. Observed on 10.1126/science.adf5357.
-    old_capped = bool(((old or {}).get("validation") or {}).get("stage_b_capped"))
-    new_capped = bool(validation.get("stage_b_capped"))
-    if new_capped:
+    # Stage B is symmetric: a paper moves both when it ENTERS the damaged text
+    # downgrade and when it LEAVES it. Only the first was checked before, so a
+    # release -- `damaged_text_downgrade` True -> False, which is what
+    # re-extraction completing a paper's text looks like -- fell through to
+    # UNEXPLAINED and read as a logic bug. Observed on 10.1126/science.adf5357.
+    old_downgraded = bool(downgraded((old or {}).get("validation")))
+    new_downgraded = bool(downgraded(validation))
+    if new_downgraded:
         classes.append("STAGE-B")
-    elif old_capped:
+    elif old_downgraded:
         classes.append("STAGE-B-RELEASED")
     if "CC-5" in (validation.get("consistency_flags") or []):
         classes.append("CC-5")
@@ -278,12 +279,12 @@ def render_paper(doi: str, old: dict, new: dict, entry: dict,
         lines.append(f"    SUPPRESSED ({rule}): baseline reported "
                      f"{old_agent[:60]!r}")
         lines.append(f"      now recorded as a suppressed candidate: {cand[:80]}")
-    old_cap = bool((old.get("validation") or {}).get("stage_b_capped"))
-    new_cap = bool(validation.get("stage_b_capped"))
-    if old_cap != new_cap:
-        lines.append(f"  Stage B cap: {old_cap} -> {new_cap}"
+    old_downgraded = bool(downgraded(old.get("validation")))
+    new_downgraded = bool(downgraded(validation))
+    if old_downgraded != new_downgraded:
+        lines.append(f"  damaged text downgrade: {old_downgraded} -> {new_downgraded}"
                      + ("  (released — the text is no longer degraded)"
-                        if old_cap else "  (entered)"))
+                        if old_downgraded else "  (entered)"))
     before, after = determination_inputs(old), determination_inputs(new)
     moved = [k for k in before if before[k] != after[k]]
     if moved:

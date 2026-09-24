@@ -17,7 +17,7 @@ STATED_WHERE = tuple(_ITEMS["enums"]["stated_where"])
 #: working it out. The whole question turns on this line.
 STATED_EXPLICITLY = tuple(w for w in STATED_WHERE if w != "inferred")
 CC_TEXT = dict(_DEC["checks"])
-_CAP = _DEC["cap"]
+_DOWNGRADE = _DEC["damaged_text_downgrade"]
 
 
 def _items(record: dict) -> list[dict]:
@@ -50,10 +50,10 @@ def stage_a(record: dict) -> str | None:
 
 
 def stage_b(stage_a_result, processing_status, text_completeness):
-    degraded = (processing_status == _CAP["when_status"]
-                or text_completeness != _CAP["when_completeness_not"])
-    if degraded and stage_a_result == _CAP["from"]:
-        return _CAP["to"], True
+    degraded = (processing_status == _DOWNGRADE["when_status"]
+                or text_completeness != _DOWNGRADE["when_completeness_not"])
+    if degraded and stage_a_result == _DOWNGRADE["from"]:
+        return _DOWNGRADE["to"], True
     return stage_a_result, False
 
 
@@ -61,9 +61,9 @@ def decide(record: dict):
     a = stage_a(record)
     if a is None:
         return None, None, False
-    final, capped = stage_b(a, record.get("processing_status"),
+    final, downgraded = stage_b(a, record.get("processing_status"),
                             record.get("text_completeness"))
-    return final, a, capped
+    return final, a, downgraded
 
 
 def checks(record: dict) -> list[str]:
@@ -208,8 +208,8 @@ def progress_line(doi: str, record: dict) -> str:
     flags = ""
     if v[f"{_ITEM_PATH}_dropped"]:
         flags += f"  DROPPED={v[f'{_ITEM_PATH}_dropped']}"
-    if v["stage_b_capped"]:
-        flags += "  STAGE-B-CAP"
+    if v["damaged_text_downgrade"]:
+        flags += "  DAMAGED-TEXT-DOWNGRADE"
     if v["inferred_only"]:
         flags += "  INFERRED-ONLY"
     if v["consistency_flags"]:

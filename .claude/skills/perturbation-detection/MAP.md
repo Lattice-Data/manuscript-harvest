@@ -4,9 +4,15 @@ What every file is for, what the system guarantees, and what it does not.
 
 Written 2026-09-21 against task version 0.0.25 and a 392-paper corpus, then
 revised as the layout, the ledger check and the acceptance runner were built.
-Every count below was re-derived from the tree on 2026-09-22.
+Every count below was re-derived from the tree on 2026-09-23, at task version
+0.0.26.
 
 **Everything described here is on disk.** Nothing in this file is only proposed.
+
+**One name changed at 0.0.26.** When the text is damaged, Stage B moves a "no" to
+"unclear". That is the **damaged text downgrade**. Until 0.0.26 it was called "the
+cap", and records written before then store it as `stage_b_capped` rather than
+`damaged_text_downgrade`. Documents under `history/` keep the old word.
 
 ---
 
@@ -25,10 +31,10 @@ answer to "why doesn't this look organised":
 | Group | Files | Lines | What it is |
 |---|---|---|---|
 | `criteria/` | 2 | 1,539 | **the product** — what counts, and what is correct |
-| `task/` | 9 | 2,992 | the decision procedure |
+| `task/` | 9 | 3,016 | the decision procedure |
 | `harness/` | 17 | 4,910 | reusable machinery, question-blind |
-| `tests/` | 17 | 6,476 | the guards |
-| `history/` | 38 | 4,615 | development record |
+| `tests/` | 17 | 6,500 | the guards |
+| `history/` | 38 | 4,617 | development record |
 | `examples/` | 13 | 1,486 | proof the machinery is reusable |
 
 The rules and criteria are a handful of files. Before the reorganisation, 33
@@ -80,14 +86,14 @@ different question. **The folder name and these filenames are hardcoded** in
 
 | File | Lines | What it is |
 |---|---|---|
-| `task/task.yaml` | 132 | Pack identity. **The one place the version is written.** Anchors, output filenames. |
-| `task/record.yaml` | 309 | What a record must contain, and the validation rules. |
-| `task/decide.yaml` | 124 | Which fields the verdict depends on, the degraded-text cap, check wording. |
+| `task/task.yaml` | 138 | Pack identity. **The one place the version is written.** Anchors, output filenames. |
+| `task/record.yaml` | 310 | What a record must contain, and the validation rules. |
+| `task/decide.yaml` | 124 | Which fields the verdict depends on, the damaged text downgrade, check wording. |
 | `task/report.yaml` | 322 | Triage tiers and reporting. |
 | `task/change.yaml` | 134 | What counts as a change between two runs. |
-| `task/rules.py` | 956 | `stage_a`, `stage_b`, `decide`, `checks`, `metrics`. |
+| `task/rules.py` | 972 | `stage_a`, `stage_b`, `decide`, `checks`, `metrics`. |
 | `task/screens.py` | 343 | The six review screens. |
-| `task/change.py` | 336 | Classifying what moved between two runs. |
+| `task/change.py` | 337 | Classifying what moved between two runs. |
 | `task/report.py` | 336 | Rendering the summary. |
 
 ### `harness/` — the machinery
@@ -127,7 +133,7 @@ colleagues, not part of the product.
 
 ### The guards
 
-17 test files, 407 tests. The six that hold the structure rather than testing
+17 test files, 409 tests. The six that hold the structure rather than testing
 behaviour:
 
 - `test_seam.py` — the machinery may not name the task.
@@ -231,9 +237,9 @@ decision, not oversight — see below. There is a line before which the evidence
 cannot be re-run, and it is 0.0.25.
 
 **4. Two runs of the same input do not always agree, and v0.0.25's change to
-stop that fails its own gate.** v0.0.25 keyed the Stage B cap on a verified
+stop that fails its own gate.** v0.0.25 keyed the damaged text downgrade on a verified
 quote so that it would reproduce. Scored on 2026-09-22 from runs already on
-disk, the cap agrees on 22 of 24 papers against a predicted 24, and both flips
+disk, the downgrade agrees on 22 of 24 papers against a predicted 24, and both flips
 are the model not reporting, in one run, a defect it reported in the other.
 Results in `ACCEPTANCE-v0.0.25.md`. Stage A agreed on all 24, including
 `10.1038/s41586-021-03852-1`, which flipped at v0.0.24 — ruling 23's paper, so
@@ -357,7 +363,7 @@ papers the PDF glyph repair actually moved. Re-validating only the first would
 have silently reverted those 17 to their pre-glyph-fix answers — a regression
 with no error message, in a directory git does not track.
 
-**Result: 0 of 392 determinations moved**, and Stage A, the Stage B cap and the
+**Result: 0 of 392 determinations moved**, and Stage A, the damaged text downgrade and the
 model's own answer are unchanged on every paper. 123 yes, 261 no, 7 unclear, 1
 not applicable, before and after. Checked across both clearings together, against
 `<run-root>/corpus-perturbations-backup-pre-hash-revalidate` (taken at

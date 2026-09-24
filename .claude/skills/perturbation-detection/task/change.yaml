@@ -35,10 +35,10 @@ order: ["yes", "unclear", "no", "not_applicable"]
 
 classes:
   STAGE-B: >-
-    Stage B's degraded-text cap was ENTERED in the new run — predicted class (a)
+    Stage B's damaged text downgrade was ENTERED in the new run — predicted class (a)
   STAGE-B-RELEASED: >-
-    Stage B's cap was RELEASED (the baseline was capped, this run is not) — e.g.
-    re-extraction completed the text
+    Stage B's damaged text downgrade was RELEASED (the baseline was downgraded,
+    this run is not) — e.g. re-extraction completed the text
   SUPPRESSED: >-
     a candidate the baseline reported as a perturbation is now recorded in
     suppressed_candidates (v0.0.10)

@@ -68,7 +68,13 @@ name: perturbation-detection
 # and stop deciding anything. Measured cause: the old trigger flipped on 3 of 30
 # byte-identical papers at 0.0.23 and 4 of 24 at 0.0.24, and three quarters of
 # those eight flips were adjudicable by a quote the model had already read.
-version: 0.0.25
+#
+# 0.0.26 renames and changes no rule. What the prompt and the code called Stage
+# B's "cap" is now the damaged text downgrade, and the record field
+# `validation.stage_b_capped` is now `validation.damaged_text_downgrade`. Records
+# written before this carry the old name; `task.rules.downgraded()` reads either.
+# It is a version because the prompt the model reads changed.
+version: 0.0.26
 
 # What the model is asked, in one line, for a reader deciding whether this pack
 # is the one they want. The criteria live in prompt.md and nowhere else.

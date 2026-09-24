@@ -74,7 +74,7 @@ def row_for(doi: str, record: dict, entry: dict) -> dict:
         "tissue_names": "|".join(v.get("tissue_names") or []),
         "stated_where": "|".join(v.get("stated_where") or []),
         "strongest_statement": v.get("strongest_statement") or "",
-        "stage_b_capped": v.get("stage_b_capped", ""),
+        "damaged_text_downgrade": v.get("damaged_text_downgrade", ""),
         "determination_changed_by_harness": v.get("determination_changed_by_harness", ""),
         "consistency_flags": "|".join(v.get("consistency_flags") or []),
         "evidence_flags": "|".join(v.get("evidence_flags") or []),

@@ -47,7 +47,7 @@ columns:
   - tissue_names
   - stated_where
   - strongest_statement
-  - stage_b_capped
+  - damaged_text_downgrade
   - determination_changed_by_harness
   - consistency_flags
   - evidence_flags
@@ -79,8 +79,8 @@ screens:
     blurb: "stated_where = inferred for every yes pairing: the curator must confirm"
     empty: "none — no paper rests on an inference alone"
   - id: D
-    summary: "capped by Stage B"
-    title: "capped at 'unclear' by Stage B (degraded/incomplete text)"
+    summary: "downgraded by Stage B"
+    title: "downgraded to 'unclear' by Stage B (degraded/incomplete text)"
     blurb: "these go to the re-fetch queue, not to a reader"
     empty: "none — no negative rested on degraded text"
 
