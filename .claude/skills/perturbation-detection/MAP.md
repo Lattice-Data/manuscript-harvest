@@ -32,8 +32,8 @@ answer to "why doesn't this look organised":
 |---|---|---|---|
 | `criteria/` | 2 | 1,539 | **the product** — what counts, and what is correct |
 | `task/` | 9 | 3,016 | the decision procedure |
-| `harness/` | 17 | 4,910 | reusable machinery, question-blind |
-| `tests/` | 17 | 6,500 | the guards |
+| `harness/` | 16 | 5,002 | reusable machinery, question-blind |
+| `tests/` | 17 | 6,568 | the guards |
 | `history/` | 38 | 4,617 | development record |
 | `examples/` | 13 | 1,486 | proof the machinery is reusable |
 
@@ -98,7 +98,7 @@ different question. **The folder name and these filenames are hardcoded** in
 
 ### `harness/` — the machinery
 
-17 files, 4,910 lines. The reusable, question-blind half. `tests/test_seam.py`
+16 files, 5,002 lines. The reusable, question-blind half. `tests/test_seam.py`
 enforces that by reading every module and rejecting a task word in any
 identifier, string or key.
 
@@ -133,7 +133,7 @@ colleagues, not part of the product.
 
 ### The guards
 
-17 test files, 409 tests. The six that hold the structure rather than testing
+17 test files, 412 tests. The six that hold the structure rather than testing
 behaviour:
 
 - `test_seam.py` — the machinery may not name the task.

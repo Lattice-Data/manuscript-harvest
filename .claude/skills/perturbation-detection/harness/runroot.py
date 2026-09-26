@@ -69,3 +69,24 @@ def output_name(key: str) -> str:
     the seam conceded in the one place nobody would look for it.
     """
     return str(_OUT[key])
+
+
+def model_of(work: Path, doi: str) -> str | None:
+    """Which model produced this paper's raw result, if the runner recorded it.
+
+    `harness/run_headless.sh` pins the model so results are attributable across
+    machines and across time, and wrote that pin nowhere -- so the record could
+    not answer "which model said this", the only question the pin exists to make
+    answerable. The runner writes it beside the result rather than into it,
+    because the raw JSON is the model's own output and the harness does not edit
+    it before reading it back. `None` for every run that predates the sidecar,
+    which is the honest answer there rather than a guess at the default.
+
+    Here, with the other facts about where a run keeps things, rather than in
+    `harness.validate`: the usage report reads it too, and importing the
+    validator would pull the task's rules into a report that has no use for them.
+    """
+    path = Path(work) / "meta" / f"{doi}.model"
+    if not path.is_file():
+        return None
+    return path.read_text().strip() or None
