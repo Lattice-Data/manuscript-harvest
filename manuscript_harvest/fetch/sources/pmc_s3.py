@@ -113,12 +113,13 @@ Bytes verified against the copies a human downloads: the S3
 the same file fetched by hand from the PMC article page. `supplement-9.pdf`
 (121,584 B, `%PDF`) and the 6.3 MB article PDF also arrived whole.
 
-**Politeness.** The bucket is a bulk AWS object store and publishes no courtesy
-interval, unlike NCBI's E-utilities which asks for one -- and one article here is
-up to `max_files` separate requests rather than a single archive, so the global
-3.0 s interval would spend ~45 s asleep on the 14-supplement article above and
-~150 s at the cap. `fetch.min_interval_overrides` lowers it for this host alone;
-see `Http._wait_for_host`.
+**Politeness.** The bucket is a bulk AWS object store and publishes no rate
+guideline, unlike NCBI's E-utilities (at most 3 requests a second without a key)
+-- and one article here is up to `max_files` separate requests rather than a
+single archive, so the 3.0 s per-host interval this tool shipped with until
+2026-10-09 spent ~45 s asleep on the 14-supplement article above and ~150 s at
+the cap. `fetch.min_interval_overrides` sets this host's own interval; see
+`Http._wait_for_host`.
 """
 
 import re
@@ -134,6 +135,7 @@ from .base import (
     FetchedFile,
     Source,
     SourceResult,
+    as_int,
 )
 from .pmc_oa import supplement_or_media
 
@@ -176,7 +178,7 @@ class _Object(NamedTuple):
     """One listed object: its key, its declared size, and the key parsed.
 
     `size` is Optional because a malformed `<Size>` has to mean *unknown* rather
-    than zero -- see `_as_int`.
+    than zero -- see `base.as_int`.
     """
 
     key: str
@@ -197,20 +199,6 @@ def _child_text(element, name: str) -> str:
         if _local(child.tag) == name:
             return (child.text or "").strip()
     return ""
-
-
-def _as_int(text: str) -> Optional[int]:
-    """`<Size>` as an int, or None when it is absent or not a number.
-
-    None is *unknown*, not zero, and the difference is the whole point of the
-    pre-download refusal: reading a malformed size as 0 would wave a 4 GB object
-    through the cap. Unknown skips the early refusal and falls back to the
-    post-download length check in `_download`.
-    """
-    try:
-        return int(text)
-    except (TypeError, ValueError):
-        return None
 
 
 def _read_page(root) -> Tuple[List[Tuple[str, Optional[int]]], Optional[str]]:
@@ -235,7 +223,7 @@ def _read_page(root) -> Tuple[List[Tuple[str, Optional[int]]], Optional[str]]:
         if local == "Contents":
             key = _child_text(child, "Key")
             if key:
-                keys.append((key, _as_int(_child_text(child, "Size"))))
+                keys.append((key, as_int(_child_text(child, "Size"))))
         elif local == "NextContinuationToken":
             token = (child.text or "").strip()
     return keys, (token or None)
@@ -283,11 +271,13 @@ def _self_named_suffix(item: _Object) -> Optional[str]:
 
 class PmcS3Source(Source):
     name = "pmc_s3"
+    provides_xml = True
 
     def applies(self, ids) -> bool:
         return bool(ids.pmcid)
 
-    def fetch(self, ids, need_pdf: bool, need_supplements: bool) -> SourceResult:
+    def fetch(self, ids, need_pdf: bool, need_supplements: bool,
+              need_xml: Optional[bool] = None) -> SourceResult:
         result = SourceResult(tier=self.name)
 
         listed, complete = self._list_objects(ids, result)
@@ -327,19 +317,27 @@ class PmcS3Source(Source):
             skipped=skipped,
         )
 
-        if need_pdf:
+        want_xml = self.wants_xml(need_pdf, need_xml)
+        if need_pdf or want_xml:
             if not complete:
+                # Neither file is taken off a partial enumeration, whichever of the
+                # two is wanted: the version walk is the argument, and it does not
+                # weaken because the PDF already arrived from elsewhere.
                 self._withhold_article_files(article, result)
             else:
-                self._fetch_article_pdf(article.get("pdf"), result)
-                # Same rule as `europepmc`: the XML is taken while the full text is
-                # still wanted. It is not free here -- it is one more request per
-                # article, not a member of an archive already in hand -- and every
-                # article this bucket holds is in PMC, so `europepmc`'s `fullTextXML`
-                # has usually answered for it two tiers earlier. This copy earns its
-                # request in the case where that endpoint did not, which is the same
-                # case in which the PDF is still missing.
-                self._fetch_article_xml(article.get("xml"), result)
+                if need_pdf:
+                    self._fetch_article_pdf(article.get("pdf"), result)
+                if want_xml:
+                    # One more request per article, not a member of an archive already
+                    # in hand -- and worth it. Every article this bucket holds is in
+                    # PMC, so `europepmc`'s `fullTextXML` has usually answered two tiers
+                    # earlier; where it answered 404, this is the copy that reaches the
+                    # corpus. Until the XML was a need of its own it was taken only
+                    # while the PDF was still wanted, and 79 of the corpus's 330 PMC
+                    # articles sat without a JATS because Europe PMC's PDF route had
+                    # succeeded first. Three of three probed on the live bucket listed
+                    # `<prefix>.xml`.
+                    self._fetch_article_xml(article.get("xml"), result)
 
         if need_supplements:
             self._fetch_payload(payload, complete, result)

@@ -293,6 +293,19 @@ def test_jats_is_skipped_when_the_details_record_carries_no_link():
     assert [f.name for f in result.files] == ["fulltext.pdf"]
 
 
+def test_the_jats_can_be_asked_for_on_its_own():
+    """The details lookup is unavoidable -- it names the version -- but with only the
+    XML wanted that is all the tier spends besides the JATS itself."""
+    http = _biorxiv_http()
+    result = BiorxivSource(http).fetch(_preprint_ids(), need_pdf=False,
+                                       need_supplements=False, need_xml=True)
+
+    assert [f.role for f in result.files] == ["fulltext_xml"]
+    assert result.pdf_status is None and result.suppl_status is None
+    assert http.called_matching(FULL_PDF) == 0
+    assert http.called_matching(SUPPL_PAGE) == 0
+
+
 def test_jats_transport_failure_is_recorded():
     class Exploding(FakeHttp):
         def get(self, url, params=None, accept=None, allow_redirects=True,
@@ -1684,6 +1697,53 @@ def test_need_supplements_false_fetches_nothing_from_the_payload():
     assert _statuses(result, "cap") == [], "a cap cannot drop files nobody asked for"
 
 
+def test_need_xml_alone_lists_the_deposit_and_takes_only_the_jats():
+    """The gap this closes. 79 of the corpus's 330 PMC articles had no JATS on disk:
+    Europe PMC's PDF route had succeeded, its `fullTextXML` had answered 404, and
+    every tier took the XML only while the PDF was still wanted -- so nobody asked
+    the bucket, which listed `<prefix>.xml` for three of three articles probed. One
+    listing and one object, nothing else."""
+    http = _s3_http()
+    result = PmcS3Source(http).fetch(_pmc_ids(), need_pdf=False, need_supplements=False,
+                                     need_xml=True)
+
+    assert [f.role for f in result.files] == ["fulltext_xml"]
+    assert result.pdf_status is None and result.suppl_status is None
+    assert http.called_matching(f"{V1}.xml") == 1
+    assert http.called_matching(f"{V1}.pdf") == 0
+    assert http.called_matching("supplement-1") == 0
+
+
+def test_need_xml_unset_follows_need_pdf():
+    """`need_xml=None` is the contract every caller had before the argument existed:
+    the XML is wanted exactly when the PDF is. Pinned so the default cannot drift to
+    True and start charging a supplements-only pass a second object -- and so an
+    explicit False withholds the JATS even with the PDF wanted."""
+    http = _s3_http()
+    PmcS3Source(http).fetch(_pmc_ids(), need_pdf=False, need_supplements=True)
+    assert http.called_matching(f"{V1}.xml") == 0
+
+    http = _s3_http()
+    result = PmcS3Source(http).fetch(_pmc_ids(), need_pdf=True, need_supplements=False,
+                                     need_xml=False)
+    assert [f.role for f in result.files] == ["fulltext_pdf"]
+    assert http.called_matching(f"{V1}.xml") == 0
+
+
+def test_an_incomplete_listing_withholds_the_jats_when_only_it_is_wanted():
+    """The version walk cannot be read off a partial enumeration, and that argument
+    does not weaken because the PDF already arrived from elsewhere."""
+    pages = {None: s3_listing((f"{V1}/{V1}.xml", 100), token="tok"),
+             "tok": (503, b"", "")}
+    http = _s3_http(pages=pages)
+    result = PmcS3Source(http).fetch(_pmc_ids(), need_pdf=False, need_supplements=False,
+                                     need_xml=True)
+
+    assert result.files == []
+    assert http.called_matching(f"{V1}.xml") == 0
+    assert _statuses(result, "pdf") == ["listing_incomplete"]
+
+
 def test_contents_without_a_size_is_unknown_not_zero():
     """`<Size>` is not guaranteed by anything but observation, and an absent one must
     not read as 0 -- that is the value that walks an oversize object past the cap."""
@@ -2075,6 +2135,25 @@ def test_a_transport_failure_on_the_xml_is_recorded():
 def test_the_xml_is_not_requested_without_a_pmcid():
     http = _epmc_http()
     EuropePmcSource(http).fetch(_epmc_ids(pmcid=None), need_pdf=True, need_supplements=False)
+    assert http.called_matching(EPMC_XML) == 0
+
+
+def test_the_xml_can_be_asked_for_on_its_own():
+    """`need_xml=True` with nothing else wanted costs exactly the `fullTextXML`
+    request: no PDF candidate, no supplement ZIP. The fetcher asks this once the PDF
+    and the supplements are settled and a JATS is still missing."""
+    http = _epmc_http()
+    result = EuropePmcSource(http).fetch(_epmc_ids(), need_pdf=False, need_supplements=False,
+                                         need_xml=True)
+
+    assert [f.role for f in result.files] == ["fulltext_xml"]
+    assert result.pdf_status is None and result.suppl_status is None
+    assert http.called_matching(EPMC_XML) == 1 and len(http.calls) == 1
+
+
+def test_europepmc_takes_the_xml_only_with_the_pdf_when_need_xml_is_unset():
+    http = _epmc_http()
+    EuropePmcSource(http).fetch(_epmc_ids(), need_pdf=False, need_supplements=True)
     assert http.called_matching(EPMC_XML) == 0
 
 

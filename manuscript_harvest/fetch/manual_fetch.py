@@ -63,12 +63,6 @@ MANUAL_DIR_ENV = "MANUSCRIPT_HARVEST_MANUAL_DIR"
 DEFAULT_MANUAL_DIR = "manual_fetch"
 SPEC_NAME = "manual_fetch.yaml"
 
-# Statuses that mean the PDF is on disk and usable. Kept in step with
-# `store.PDF_USABLE`, which is the definition; duplicated rather than imported so
-# that this verification harness reads on its own, without the fetch stage's
-# internals. If that pair ever changes, it changes in `store` first.
-PDF_SUCCESS = {"ok", "scanned_pdf_suspected"}
-
 # Elsevier names every supplementary component mmc<N>, and the article PDF is
 # never one of them. Without this rule the Cell Genomics mmc12.pdf -- a 59-page
 # extended version of the article that opens with the word "Article" -- reads like
@@ -164,14 +158,6 @@ def rendition_of(head_text: str) -> str:
 
 # -- reading files -----------------------------------------------------------
 
-def sha256_file(path) -> str:
-    digest = hashlib.sha256()
-    with open(path, "rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def archive_members(path) -> List[Tuple[str, str]]:
     """(name, sha256) for every file inside an archive; empty for anything else.
 
@@ -262,7 +248,7 @@ def fingerprint(path) -> dict:
     entry = {
         "file": path.name,
         "bytes": path.stat().st_size,
-        "sha256": sha256_file(path),
+        "sha256": store.sha256_file(path),
     }
     if path.suffix.lower() == ".pdf":
         pages = pdf_pages(path)
@@ -286,7 +272,7 @@ def hash_universe(paths) -> Dict[str, str]:
         path = Path(path)
         if not path.is_file():
             continue
-        universe.setdefault(sha256_file(path), path.name)
+        universe.setdefault(store.sha256_file(path), path.name)
         for name, digest in archive_members(path):
             universe.setdefault(digest, f"{path.name}!{name}")
     return universe
@@ -447,7 +433,7 @@ def compare(article: dict, record: dict, directory, root=None) -> List[dict]:
     # -- the PDF -------------------------------------------------------------
     fulltext = record.get("fulltext") or {}
     pdf_status = fulltext.get("status", "missing")
-    got_pdf = pdf_status in PDF_SUCCESS
+    got_pdf = pdf_status in store.PDF_USABLE
     manual_pdf = article.get("main_pdf")
 
     if manual_pdf is None:

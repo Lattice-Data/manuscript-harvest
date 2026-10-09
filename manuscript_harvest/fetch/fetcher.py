@@ -1,7 +1,9 @@
 """Tier orchestration.
 
-Each tier is asked only for what is still missing, and the loop stops as soon as
-there is a usable PDF and the supplement question is settled.
+Each tier is asked only for what is still missing. Once there is a usable PDF and
+the supplement question is settled, the only tiers still asked are those that can
+supply the article's JATS, and only while none has arrived -- see `need_xml` on
+`Source.fetch`.
 
 The status taxonomy is the point of this module. An empty result and a failed
 result look identical downstream unless something names them apart, and the trap
@@ -118,11 +120,6 @@ from .sources.base import (
     not_text_bearing_note,
 )
 
-# Statuses that mean the PDF is on disk and usable. Defined in `store`, which is
-# where `finalize_status` reads it, so the orchestrator and the record it writes
-# cannot disagree about what counts as having the article.
-_PDF_SUCCESS = store.PDF_USABLE
-
 #: Tier `suppl_status` values that mean *another route may still hold the files*: a
 #: download or an archive that failed, or a page nothing could read. Exactly the
 #: statuses a tier can set that `store.SUPPL_SETTLED` does not contain, and the one
@@ -157,7 +154,7 @@ def _best_pdf_status(reported: List[str]) -> str:
     one tier or from two.
     """
     for status in reported:
-        if status in _PDF_SUCCESS:
+        if status in store.PDF_USABLE:
             return status
     if not reported:
         return "not_found"
@@ -370,7 +367,7 @@ def build_http(config: dict) -> Http:
     response_mb = fetch_cfg.get("max_response_mb")
     return Http(
         contact_email=fetch_cfg.get("contact_email"),
-        min_interval_seconds=fetch_cfg.get("min_interval_seconds", 3.0),
+        min_interval_seconds=fetch_cfg.get("min_interval_seconds", 1.0),
         # Per-host exceptions to that interval. Absent means an empty mapping, which
         # is the single global interval this had before -- so a config that does not
         # mention the key behaves exactly as it did.
@@ -497,8 +494,18 @@ def fetch_publication(
     text_bearing_only = text_bearing.policy_is_on(fetch_cfg)
 
     for source in build_sources(tier_names, http, fetch_cfg):
+        need_xml = xml_file is None
         if not need_pdf and not need_supplements:
-            break
+            # `continue`, not `break`: a tier that serves JATS still gets its turn
+            # while the XML is missing, and no other tier does. 79 of this corpus's
+            # 330 PMC articles had no JATS because the loop used to stop here the
+            # moment Europe PMC's PDF route succeeded, its `fullTextXML` 404 answered
+            # by nobody -- while the S3 bucket listed `<prefix>.xml` for every one
+            # probed. `getattr` because a tier may be duck-typed (the tests do); the
+            # base class says False, so a tier that has not thought about XML is
+            # skipped rather than asked.
+            if not (need_xml and getattr(source, "provides_xml", False)):
+                continue
         if not source.applies(ids):
             record["attempts"].append(
                 {"tier": source.name, "action": "skipped", "status": "not_applicable"}
@@ -507,7 +514,8 @@ def fetch_publication(
 
         record["tiers_tried"].append(source.name)
         try:
-            result = source.fetch(ids, need_pdf=need_pdf, need_supplements=need_supplements)
+            result = source.fetch(ids, need_pdf=need_pdf, need_supplements=need_supplements,
+                                  need_xml=need_xml)
         except Exception as e:  # a broken tier must not sink the whole fetch
             record["problems"].append(f"tier {source.name} raised {type(e).__name__}: {e}")
             record["attempts"].append(
@@ -587,6 +595,7 @@ def fetch_publication(
                     else None
                 if reason is not None:
                     skipped_here.append((item.name, item.role, reason))
+                    _discard_staged(item)
                     continue
                 # Europe PMC's ZIP and the PMC listing overlap, so the same file
                 # can arrive twice. The key is (bytes, name), not bytes alone:
@@ -594,8 +603,13 @@ def fetch_publication(
                 # templates, repeated controls), and dropping one of those would
                 # be exactly the kind of silent loss this pipeline avoids.
                 # Storing a rare duplicate is the cheaper mistake.
-                key = (store.sha256_bytes(item.content), store.sanitize_filename(item.name))
+                #
+                # A streamed body has no `content` to hash -- `b""`, the same for
+                # every such file -- so its digest is read off the staged file; two
+                # large supplements sharing a name would otherwise collapse into one.
+                key = (_digest_of(item), store.sanitize_filename(item.name))
                 if key in seen_digests:
+                    _discard_staged(item)
                     continue
                 seen_digests[key] = item.name
                 item.tier = source.name
@@ -890,3 +904,30 @@ def _write_group(directory, subdir: str, files: List) -> List[dict]:
         })
         entries.append(entry)
     return entries
+
+
+def _digest_of(item) -> str:
+    """sha256 of a fetched file's bytes, wherever they are: in memory, or staged on disk."""
+    staged = getattr(item, "staged_path", None)
+    if staged:
+        return store.sha256_file(staged)
+    return store.sha256_bytes(item.content)
+
+
+def _discard_staged(item) -> None:
+    """Delete a streamed body this run decided not to keep.
+
+    `_write_group` is the only other consumer of `staged_path`, and it moves the
+    file. A file the text-bearing filter refused, or one dropped as a duplicate,
+    never reaches it -- so without this the bytes, up to a 488 MB supplement, stay
+    in the temp dir with nothing pointing at them.
+    """
+    staged = getattr(item, "staged_path", None)
+    if not staged:
+        return
+    path = Path(staged)
+    path.unlink(missing_ok=True)
+    try:
+        path.parent.rmdir()
+    except OSError:
+        pass

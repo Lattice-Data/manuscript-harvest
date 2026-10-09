@@ -57,7 +57,7 @@ class Http:
     def __init__(
         self,
         contact_email: Optional[str] = None,
-        min_interval_seconds: float = 3.0,
+        min_interval_seconds: float = 1.0,
         timeout_seconds: int = 60,
         max_retries: int = 2,
         ncbi_api_key: Optional[str] = None,
@@ -94,12 +94,16 @@ class Http:
         """Sleep until this host may be asked again.
 
         One interval for everything, with per-host exceptions from
-        `fetch.min_interval_overrides`. The default is a courtesy NCBI's E-utilities
-        documents and asks for; some hosts ask for nothing and are built for volume,
-        and a single number cannot say both. `pmc_s3` is the case that forced the
-        distinction: it fetches one object per request, so a 14-supplement article
-        spends ~45 s asleep and one at the 50-file cap ~150 s, against an AWS bulk
-        object store that publishes no such request.
+        `fetch.min_interval_overrides`. The default is a courtesy to hosts this tool
+        has not measured; the exceptions carry the published numbers -- NCBI's
+        E-utilities allow 3 requests a second without a key and 10 with one -- and
+        the measured ones, with their reasons, in `config.yaml`. The default was 3.0 s
+        until 2026-10-09, on a misreading of that guideline as one request every 3
+        seconds: roughly 1.5 hours of sleep in a full re-fetch of this corpus. `pmc_s3`
+        is the case that forced per-host numbers at all: it fetches one object per
+        request, so at 3.0 s a 14-supplement article spent ~45 s asleep and one at the
+        50-file cap ~150 s, against an AWS bulk object store that publishes no such
+        request.
 
         Matched on the exact netloc, not a suffix. A suffix rule for
         `s3.amazonaws.com` would quietly cover every bucket on it, including hosts

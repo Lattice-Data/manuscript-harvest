@@ -11,9 +11,11 @@ fetch:
   # out without one -- which works, but is not the documented convention.
   contact_email: "gabdank@stanford.edu"
 
-  # Optional. Raises NCBI's own ceiling from 3 to 10 req/s -- but this client is
-  # throttled by min_interval_seconds below, which is per host and does not drop
-  # when a key is present, so lowering that is what makes a key worth having.
+  # Optional. Raises NCBI's own ceiling from 3 to 10 requests per second. The two
+  # NCBI entries in min_interval_overrides below are set for the keyless ceiling
+  # and do not drop on their own when a key is present; with one, 0.15 s on both
+  # stays inside the keyed ceiling, and lowering them is what makes a key worth
+  # having.
   ncbi_api_key: null
 
   # Optional. A free TDM key from dev.elsevier.com, sent as an X-ELS-APIKey header.
@@ -26,22 +28,51 @@ fetch:
   # var, because this file is tracked in git.
   elsevier_api_key: null
 
-  min_interval_seconds: 3.0               # per host; 1-10 papers needs nothing cleverer
+  # Minimum seconds between two requests to the same host, for any host not named
+  # in min_interval_overrides below: publishers' PDF and static-content servers,
+  # Crossref, anything this tool has not measured. One second is a courtesy none
+  # of them asks for. It was 3.0 until 2026-10-09, on a misreading of NCBI's
+  # E-utilities guideline -- at most 3 requests *per second* without an API key,
+  # 10 with one -- as one request every 3 seconds; a full re-fetch of this corpus
+  # spent roughly 1.5 hours asleep on that reading.
+  min_interval_seconds: 1.0
 
-  # Per-host exceptions to the interval above, matched on the exact host name.
-  # The 3.0 s default is a courtesy NCBI's E-utilities documents and asks for.
-  # PMC's Open Access S3 bucket asks for nothing -- it is a bulk object store,
-  # and the pmc_s3 tier spends one request per file rather than one per article,
-  # so the default would leave a 14-supplement paper asleep for ~45 s and one at
-  # the max_files cap for ~150 s. 0.2 s is 5 requests a second to a service built
-  # for far more. Anything not listed here keeps the default above.
-  # api.elsevier.com is the same shape of case: elsevier_tdm spends one request per
-  # attachment, so at 3.0 s a 9-supplement article sleeps ~27 s against an API the
-  # dev portal documents at 10 req/s. 0.2 s is the rate the live probe ran cleanly
-  # at, and Object Retrieval publishes no quota, so it stays conservative.
+  # Per-host exceptions, matched on the exact host name. Anything not listed keeps
+  # the default above.
+  #
+  # NCBI's two hosts: 0.4 s is 2.5 requests a second against the documented
+  # keyless ceiling of 3. The guideline is written for the E-utilities (idconv and
+  # oa.fcgi on www); pmc.ncbi.nlm.nih.gov is held to the same number because its
+  # /bin/ endpoints answer this client with a proof-of-work page, and a burst there
+  # would only earn more of them.
+  #
+  # Europe PMC publishes no limit and enforces per IP; it inherits the default and
+  # is listed so that raising the default for unmeasured publishers does not slow
+  # the host every article hits four or five times.
+  #
+  # PMC's Open Access S3 bucket asks for nothing -- it is a bulk object store, and
+  # the pmc_s3 tier spends one request per file rather than one per article, so
+  # even 1.0 s would leave a 14-supplement paper asleep for ~14 s and one at the
+  # max_files cap for ~50 s. 0.2 s is 5 requests a second to a service built for
+  # far more. api.elsevier.com is the same shape of case: elsevier_tdm spends one
+  # request per attachment against an API the dev portal documents at 10 req/s;
+  # 0.2 s is the rate the live probe ran cleanly at, and Object Retrieval publishes
+  # no quota, so it stays conservative.
+  #
+  # bioRxiv goes the other way. www.biorxiv.org is the one host that has
+  # rate-limited this client: 11 of the 13 HTTP 429s recorded across the corpus
+  # came from it, at the old 3.0 s spacing, on PDFs, JATS and supplement files
+  # alike. 5 s is a guess in the safe direction. api.biorxiv.org (the details
+  # lookup) never answered 429 and is held to the same number only because it is
+  # the same operator and costs at most two requests per preprint.
   min_interval_overrides:
+    "www.ncbi.nlm.nih.gov": 0.4
+    "pmc.ncbi.nlm.nih.gov": 0.4
+    "www.ebi.ac.uk": 1.0
     "pmc-oa-opendata.s3.amazonaws.com": 0.2
     "api.elsevier.com": 0.2
+    "www.biorxiv.org": 5.0
+    "api.biorxiv.org": 5.0
 
   timeout_seconds: 60
 

@@ -105,6 +105,7 @@ from .base import (
     FetchedFile,
     Source,
     SourceResult,
+    as_int,
 )
 
 OBJECT_BASE = "https://api.elsevier.com/content/object/doi/"
@@ -204,14 +205,6 @@ def _field(entry: dict, name: str) -> str:
     return "" if value in (None, "") else str(value)
 
 
-def _as_int(raw: str) -> Optional[int]:
-    """`size` arrives as a JSON string. None when it is absent or not a number."""
-    try:
-        return int(raw)
-    except (TypeError, ValueError):
-        return None
-
-
 def _attachment_entries(payload: dict) -> Optional[list]:
     """The raw attachment list from a `view=META` body, or None if there is none.
 
@@ -287,7 +280,8 @@ class ElsevierTdmSource(Source):
 
     # -- the one listing request --------------------------------------------
 
-    def fetch(self, ids, need_pdf: bool, need_supplements: bool) -> SourceResult:
+    def fetch(self, ids, need_pdf: bool, need_supplements: bool,
+              need_xml: Optional[bool] = None) -> SourceResult:
         result = SourceResult(tier=self.name)
         if not need_pdf and not need_supplements:
             # No request at all. The listing is the only thing this tier could ask
@@ -308,7 +302,7 @@ class ElsevierTdmSource(Source):
                 url=_field(entry, "prism:url"),
                 type=_field(entry, "type"),
                 mimetype=_field(entry, "mimetype"),
-                size=_as_int(_field(entry, "size")),
+                size=as_int(_field(entry, "size")),
             )
             for entry in entries
             if isinstance(entry, dict)

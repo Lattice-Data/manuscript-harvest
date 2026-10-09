@@ -21,7 +21,7 @@ rather than guessed by `extract/pdf.py`'s heuristics.
 
 import io
 import zipfile
-from typing import List
+from typing import List, Optional
 
 from ... import text_bearing
 from ..http import HttpError
@@ -62,19 +62,21 @@ def _complain(complaints: List[str], url: str, advertised: set, why: str,
 
 class EuropePmcSource(Source):
     name = "europepmc"
+    provides_xml = True
 
     def applies(self, ids) -> bool:
         # Needs a PMCID for the supplements endpoint; the PDF URLs come from the
         # Tier 0 lookup and can exist even when the article is not in PMC.
         return bool(ids.pmcid) or bool(ids.open_access_pdf_urls())
 
-    def fetch(self, ids, need_pdf: bool, need_supplements: bool) -> SourceResult:
+    def fetch(self, ids, need_pdf: bool, need_supplements: bool,
+              need_xml: Optional[bool] = None) -> SourceResult:
         result = SourceResult(tier=self.name)
 
         if need_pdf:
             self._fetch_pdf(ids, result)
-            if ids.pmcid:
-                self._fetch_xml(ids, result)
+        if self.wants_xml(need_pdf, need_xml) and ids.pmcid:
+            self._fetch_xml(ids, result)
         if need_supplements and ids.pmcid:
             self._fetch_supplements(ids, result)
 
@@ -213,7 +215,7 @@ class EuropePmcSource(Source):
         # The endpoint sometimes answers 200 with something that is not an archive
         # (an error page, for instance). Check the magic bytes before unpacking so
         # the manifest says "not a zip" rather than leaking a BadZipFile.
-        if not resp.content[:2] == b"PK":
+        if resp.content[:2] != b"PK":
             result.suppl_status = "partial_failure"
             result.problems.append(
                 "europepmc supplementaryFiles returned a non-ZIP body "

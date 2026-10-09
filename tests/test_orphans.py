@@ -715,7 +715,8 @@ class _FakeTier:
     def applies(self, ids):
         return True
 
-    def fetch(self, ids, need_pdf: bool, need_supplements: bool) -> SourceResult:
+    def fetch(self, ids, need_pdf: bool, need_supplements: bool,
+              need_xml=None) -> SourceResult:
         result = SourceResult(tier=self.name)
         if self.with_pdf:
             result.files.append(FetchedFile(role=ROLE_PDF, name="fulltext.pdf",

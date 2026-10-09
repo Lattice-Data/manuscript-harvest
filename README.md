@@ -320,7 +320,8 @@ extraction stage will not offer it as main text.
 
 ### Watching a run, and stopping one
 
-A batch is slow by design — one request per host every 3 seconds — so both loops
+A batch is paced by design — at most one request a second to any host, NCBI's at
+their documented three a second (`fetch.min_interval_overrides`) — so both loops
 can be watched from outside and interrupted without losing what they have done.
 
     manuscript-fetch batch dois.txt --progress-jsonl run.progress
@@ -359,6 +360,21 @@ It never downloads and never deletes; the worst it can do is move an article fro
 `complete` to `failed`, which is the direction that makes a corpus more honest. Run
 over the 392 articles here it corrected exactly the two in the table above and left
 the other 390 untouched.
+
+`fill-xml` is the other repair that starts from what is already on disk. For every
+stored article without a JATS it asks only the tiers that can supply one, only for
+the XML, and writes only `fulltext.nxml` and its manifest entry; the PDF, the
+supplements and every status stay as they are. It exists because 79 of the 330 PMC
+articles here were fetched before the XML was a need of its own, and a `--force`
+re-fetch would have re-run the browser for 55 of them:
+
+    manuscript-fetch fill-xml              # report only (costs the same requests)
+    manuscript-fetch fill-xml --apply      # write the XML and the manifest entries
+
+The next `manuscript-extract all` re-extracts the filled articles from their JATS.
+Run over this corpus on 2026-10-09 it filled 80 of the 123 articles without one (66
+from the S3 bucket, 8 from Europe PMC, 6 from bioRxiv) and flagged none; the 43 left
+have no PMCID, or no JATS at any tier.
 
 ### Fetching only what text can come out of
 

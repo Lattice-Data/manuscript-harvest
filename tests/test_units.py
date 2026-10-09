@@ -1595,3 +1595,42 @@ def test_a_staged_file_is_filed_exactly_as_a_bytes_one_would_be(tmp_path):
     assert (article / "supplementary/07_table.bin").read_bytes() == b"payload"
     assert not staged.exists(), "moved, not copied -- 423 MB is not worth duplicating"
     assert set(entry) == set(store.save_file(article, "other.bin", b"payload"))
+
+
+def test_save_staged_file_removes_the_emptied_staging_directory(tmp_path):
+    """`proxy_browser._download_streamed` stages each body in its own `mkdtemp`
+    directory under the system temp dir. Moving the file out used to leave that
+    directory behind, one per streamed supplement, and nothing swept them."""
+    staging = tmp_path / "mh-stream-abc"
+    staging.mkdir()
+    (staging / "big.xlsx").write_bytes(b"x" * 10)
+    article = tmp_path / "article"
+
+    entry = store.save_staged_file(article, "supplementary/01_big.xlsx", staging / "big.xlsx")
+
+    assert (article / entry["path"]).read_bytes() == b"x" * 10
+    assert entry["sha256"] == store.sha256_bytes(b"x" * 10)
+    assert not staging.exists()
+
+
+def test_a_streamed_body_the_fetcher_declines_is_deleted_not_leaked(tmp_path):
+    """Only `_write_group` ever consumed `staged_path`, and only for files that were
+    kept. A refused or duplicate streamed body therefore sat in the temp dir with
+    nothing pointing at it -- up to a 488 MB supplement. Its digest also has to come
+    off the disk: `content` is `b""` for every streamed file, so hashing that would
+    give two large supplements sharing a name the same dedupe key."""
+    from manuscript_harvest.fetch import fetcher
+    from manuscript_harvest.fetch.sources.base import ROLE_SUPPLEMENT, FetchedFile
+
+    staging = tmp_path / "mh-stream-x"
+    staging.mkdir()
+    staged = staging / "movie.mp4"
+    staged.write_bytes(b"m" * 8)
+    item = FetchedFile(role=ROLE_SUPPLEMENT, name="movie.mp4", content=b"",
+                       staged_path=str(staged))
+
+    assert fetcher._digest_of(item) == store.sha256_bytes(b"m" * 8)
+    fetcher._discard_staged(item)
+    assert not staged.exists()
+    assert not staging.exists()
+    fetcher._discard_staged(item)  # nothing left to delete, and nothing raised

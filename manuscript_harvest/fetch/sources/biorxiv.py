@@ -41,6 +41,7 @@ _MEDIA_RX = re.compile(r"""/content/[^\s"']*?/DC\d+/embed/media-[^\s"']+""", re.
 
 class BiorxivSource(Source):
     name = "biorxiv"
+    provides_xml = True
 
     def applies(self, ids) -> bool:
         # Covers both the historical 10.1101 prefix and openRxiv's 10.64898, plus
@@ -48,7 +49,8 @@ class BiorxivSource(Source):
         # another server simply fails the details lookup and records that.
         return ids.is_preprint
 
-    def fetch(self, ids, need_pdf: bool, need_supplements: bool) -> SourceResult:
+    def fetch(self, ids, need_pdf: bool, need_supplements: bool,
+              need_xml: Optional[bool] = None) -> SourceResult:
         result = SourceResult(tier=self.name)
 
         details = self._details(ids, result)
@@ -62,8 +64,8 @@ class BiorxivSource(Source):
 
         if need_pdf:
             self._fetch_pdf_url(f"{stem}.full.pdf", result)
-            if jats_url:
-                self._fetch_jats(jats_url, result)
+        if self.wants_xml(need_pdf, need_xml) and jats_url:
+            self._fetch_jats(jats_url, result)
         if need_supplements:
             self._fetch_supplements(f"{stem}.supplementary-material", base, result)
 
