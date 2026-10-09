@@ -280,7 +280,8 @@ class ElsevierTdmSource(Source):
 
     # -- the one listing request --------------------------------------------
 
-    def fetch(self, ids, need_pdf: bool, need_supplements: bool) -> SourceResult:
+    def fetch(self, ids, need_pdf: bool, need_supplements: bool,
+              need_xml: Optional[bool] = None) -> SourceResult:
         result = SourceResult(tier=self.name)
         if not need_pdf and not need_supplements:
             # No request at all. The listing is the only thing this tier could ask

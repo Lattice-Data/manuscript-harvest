@@ -1,7 +1,9 @@
 """Tier orchestration.
 
-Each tier is asked only for what is still missing, and the loop stops as soon as
-there is a usable PDF and the supplement question is settled.
+Each tier is asked only for what is still missing. Once there is a usable PDF and
+the supplement question is settled, the only tiers still asked are those that can
+supply the article's JATS, and only while none has arrived -- see `need_xml` on
+`Source.fetch`.
 
 The status taxonomy is the point of this module. An empty result and a failed
 result look identical downstream unless something names them apart, and the trap
@@ -365,7 +367,7 @@ def build_http(config: dict) -> Http:
     response_mb = fetch_cfg.get("max_response_mb")
     return Http(
         contact_email=fetch_cfg.get("contact_email"),
-        min_interval_seconds=fetch_cfg.get("min_interval_seconds", 3.0),
+        min_interval_seconds=fetch_cfg.get("min_interval_seconds", 1.0),
         # Per-host exceptions to that interval. Absent means an empty mapping, which
         # is the single global interval this had before -- so a config that does not
         # mention the key behaves exactly as it did.
@@ -492,8 +494,18 @@ def fetch_publication(
     text_bearing_only = text_bearing.policy_is_on(fetch_cfg)
 
     for source in build_sources(tier_names, http, fetch_cfg):
+        need_xml = xml_file is None
         if not need_pdf and not need_supplements:
-            break
+            # `continue`, not `break`: a tier that serves JATS still gets its turn
+            # while the XML is missing, and no other tier does. 79 of this corpus's
+            # 330 PMC articles had no JATS because the loop used to stop here the
+            # moment Europe PMC's PDF route succeeded, its `fullTextXML` 404 answered
+            # by nobody -- while the S3 bucket listed `<prefix>.xml` for every one
+            # probed. `getattr` because a tier may be duck-typed (the tests do); the
+            # base class says False, so a tier that has not thought about XML is
+            # skipped rather than asked.
+            if not (need_xml and getattr(source, "provides_xml", False)):
+                continue
         if not source.applies(ids):
             record["attempts"].append(
                 {"tier": source.name, "action": "skipped", "status": "not_applicable"}
@@ -502,7 +514,8 @@ def fetch_publication(
 
         record["tiers_tried"].append(source.name)
         try:
-            result = source.fetch(ids, need_pdf=need_pdf, need_supplements=need_supplements)
+            result = source.fetch(ids, need_pdf=need_pdf, need_supplements=need_supplements,
+                                  need_xml=need_xml)
         except Exception as e:  # a broken tier must not sink the whole fetch
             record["problems"].append(f"tier {source.name} raised {type(e).__name__}: {e}")
             record["attempts"].append(

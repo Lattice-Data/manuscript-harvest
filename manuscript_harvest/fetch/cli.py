@@ -4,6 +4,7 @@
     manuscript-fetch batch dois.txt
     manuscript-fetch usage --by-size     # what is taking the space
     manuscript-fetch revalidate          # is each stored full text the right paper?
+    manuscript-fetch fill-xml            # JATS for stored articles that lack one; nothing else touched
     manuscript-fetch prune --dry-run     # what a budget sweep would evict
     manuscript-fetch drop-media          # stored files no text can come out of
     manuscript-fetch drop-orphans        # stored files no manifest entry points at
@@ -42,22 +43,29 @@ DEFAULT_FETCH_CONFIG = {
     # finds the key absent rather than missing, and a run without one is a no-op for
     # that tier instead of an error.
     "elsevier_api_key": None,
-    "min_interval_seconds": 3.0,
-    # Belongs with the defaults rather than only in `config.yaml`, because
-    # `pmc_s3` is in `DEFAULT_TIERS` and is the one tier that spends a request per
-    # *file*: at the 3.0 s default a 14-supplement article sleeps ~45 s and one at
-    # the `max_files` cap ~150 s, against a bulk object store that asks for no
-    # interval at all. A run that does not find a config file -- `manuscript-fetch`
-    # from a subdirectory, or from an install, since `config.yaml` sits outside the
-    # package -- lands on these defaults and is otherwise 15x slower per request
-    # than designed, silently: `warn_if_config_missing` prints to stderr and the
-    # files and statuses are all correct. Every other knob this tier needs
-    # (`max_files`, `max_file_mb`) was already here.
+    # The per-host politeness interval and its exceptions, kept here as well as in
+    # `config.yaml` -- which carries the reasoning behind each number -- because a
+    # run that does not find a config file lands on these: `manuscript-fetch` from a
+    # subdirectory, or from an install, since `config.yaml` sits outside the
+    # package. Such a run is silent about it (`warn_if_config_missing` prints to
+    # stderr and the files and statuses are all correct), so the two copies must not
+    # disagree; `test_fetch_cli` pins them in step. `pmc_s3` is why the exceptions
+    # exist at all: it spends a request per *file*, and on the old 3.0 s default a
+    # 14-supplement article slept ~45 s.
     #
     # `merge_config` recurses into dicts, so a user's own map is merged onto this
-    # one rather than replacing it: adding hosts works, and *removing* this entry
+    # one rather than replacing it: adding hosts works, and *removing* an entry
     # takes editing it to a slower number rather than deleting the line.
-    "min_interval_overrides": {"pmc-oa-opendata.s3.amazonaws.com": 0.2},
+    "min_interval_seconds": 1.0,
+    "min_interval_overrides": {
+        "www.ncbi.nlm.nih.gov": 0.4,
+        "pmc.ncbi.nlm.nih.gov": 0.4,
+        "www.ebi.ac.uk": 1.0,
+        "pmc-oa-opendata.s3.amazonaws.com": 0.2,
+        "api.elsevier.com": 0.2,
+        "www.biorxiv.org": 5.0,
+        "api.biorxiv.org": 5.0,
+    },
     "timeout_seconds": 60,
     # Kept in step with `config.yaml`, which carries the measurement behind the
     # numbers: at 50 and 200 one article in 393 lost files to the count and two lost
@@ -417,6 +425,56 @@ def cmd_revalidate(args) -> int:
     return 0
 
 
+def cmd_fill_xml(args) -> int:
+    """Fetch the JATS for stored articles that have none, touching nothing else.
+
+    `--force` was the alternative and is the wrong tool for it: 55 of the 79 articles
+    this was written for got their PDF through the proxy browser, so a forced re-fetch
+    means a live login, a browser launch apiece and the smaller-supplement-set trap
+    `orphans.sweep_article` records. See `fetch/fill_xml.py`.
+
+    Report-only by default like `revalidate`, and unlike `revalidate` the report costs
+    the same requests as `--apply`: the only way to learn a JATS is there is to fetch
+    it. Exit 0 either way; an article no tier can serve is a note, not a failure.
+    """
+    from .fill_xml import fill_xml_corpus, summarize
+
+    config = _apply_cli_overrides(load_config(args.config), args)
+    corpus_dir = config["fetch"]["corpus_dir"]
+    reports = fill_xml_corpus(corpus_dir, config, apply=args.apply, slugs=args.slug or None)
+    if not reports:
+        print(f"{corpus_dir}: no articles", file=sys.stderr)
+        return 0
+
+    verb = "filled" if args.apply else "would fill"
+    for report in reports:
+        if report["filled"]:
+            print(f"  {verb} {report['slug']}: fulltext.nxml from {report['tier']} "
+                  f"({store.human_bytes(report['bytes'])}, {report['status']})")
+            for line in report["problems"]:
+                print(f"    ! {line}", file=sys.stderr)
+        elif report["candidate"]:
+            print(f"  {report['slug']}: {report['note']}", file=sys.stderr)
+
+    totals = summarize(reports)
+    by_tier = ", ".join(f"{count} from {tier}" for tier, count
+                        in sorted(totals["by_tier"].items(), key=lambda kv: -kv[1]))
+    print(f"\n{totals['articles']} article(s) checked, {totals['candidates']} without a "
+          f"JATS: {totals['filled']} {verb}" + (f" ({by_tier})" if by_tier else "")
+          + f", {totals['remaining']} still without one"
+          + (f"; {totals['flagged']} flagged, see the lines above" if totals["flagged"]
+             else ""),
+          file=sys.stderr)
+    if totals["filled"] and not args.apply:
+        print("re-run with --apply to write them and their manifest entries",
+              file=sys.stderr)
+    elif totals["filled"]:
+        print("Each filled manifest gained a fulltext_xml entry and nothing else changed; "
+              "the next `manuscript-extract all` re-extracts these articles from the JATS.",
+              file=sys.stderr)
+    return 0
+
+
 def cmd_drop_media(args) -> int:
     """Delete stored files no text can be extracted from; keep their record.
 
@@ -756,6 +814,23 @@ def build_parser() -> argparse.ArgumentParser:
                                    help="write the verdicts into the manifests "
                                         "(default: report only)")
     revalidate_parser.set_defaults(func=cmd_revalidate)
+
+    fill_xml_parser = subparsers.add_parser(
+        "fill-xml",
+        help="fetch the JATS XML for stored articles that have none, touching nothing "
+             "else (the PDF, the supplements and every status stay as they are)",
+    )
+    fill_xml_parser.add_argument("slug", nargs="*",
+                                 help="corpus directory names; default: all")
+    fill_xml_parser.add_argument("--corpus-dir", default=None)
+    fill_xml_parser.add_argument("--tiers", default=None,
+                                 help="comma-separated tier order; only tiers that can "
+                                      "supply XML are used (default: those among the "
+                                      "configured tiers)")
+    fill_xml_parser.add_argument("--apply", action="store_true",
+                                 help="write the XML and its manifest entry (default: "
+                                      "report only, which costs the same requests)")
+    fill_xml_parser.set_defaults(func=cmd_fill_xml)
 
     drop_media_parser = subparsers.add_parser(
         "drop-media",

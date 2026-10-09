@@ -655,7 +655,8 @@ class ProxyBrowserSource(Source):
         # challenge is decided inside `fetch`, not here.
         return True
 
-    def fetch(self, ids, need_pdf: bool, need_supplements: bool) -> SourceResult:
+    def fetch(self, ids, need_pdf: bool, need_supplements: bool,
+              need_xml: Optional[bool] = None) -> SourceResult:
         result = SourceResult(tier=self.name)
         try:
             with browser_context(self.config) as context:

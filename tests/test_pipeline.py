@@ -91,6 +91,63 @@ def test_second_fetch_is_cached_and_force_overrides(tmp_path):
     assert not forced.get("cached") and len(http.calls) > calls
 
 
+def test_a_missing_jats_is_still_asked_of_a_later_tier_once_the_pdf_has_arrived(tmp_path):
+    """79 of the corpus's 330 PMC articles had no JATS on disk. Europe PMC's PDF
+    route had succeeded, its `fullTextXML` had answered 404, and no tier asked the S3
+    bucket for `<prefix>.xml`, because every tier took the XML only while the PDF was
+    still wanted and the loop stopped the moment it was not. The XML is a need of its
+    own now: a tier that serves it still gets its turn after the PDF and the
+    supplements are settled, and is asked for the JATS and nothing else."""
+    http = s3_http(deposit=[(f"{PMCID}.1/{PMCID}.1.xml", 2048)], routes={
+        SEARCH: (200, europepmc_search_json(), "application/json"),
+        PDF_URL: (200, make_pdf(), "application/pdf"),
+        XML: (404, b"", ""),
+        SUPPL: (200, make_zip([("a.xlsx", b"xlsx")]), "application/zip"),
+    })
+    record = fetcher.fetch_publication(
+        DOI, fetch_config(tmp_path, ["europepmc", "pmc_s3"]), http=http)
+
+    assert record["status"] == "complete"
+    assert record["fulltext"]["tier"] == "europepmc"
+    assert record["fulltext_xml"]["tier"] == "pmc_s3"
+    assert record["tiers_tried"] == ["europepmc", "pmc_s3"]
+    assert http.called_matching(f"{PMCID}.1.xml") == 1
+    assert http.called_matching(f"{PMCID}.1.pdf") == 0, "only the JATS was still wanted"
+
+
+def test_nothing_missing_means_no_later_tier_is_asked(tmp_path):
+    """The other side of the same rule. With the PDF, the JATS and the supplements
+    all in hand from Europe PMC, the S3 tier is not even listed: the `continue` that
+    replaced the old `break` skips it without a request."""
+    http = s3_http(deposit=[(f"{PMCID}.1/{PMCID}.1.xml", 2048)], routes={
+        SEARCH: (200, europepmc_search_json(), "application/json"),
+        PDF_URL: (200, make_pdf(), "application/pdf"),
+        XML: (200, b"<article><body/></article>", "application/xml"),
+        SUPPL: (200, make_zip([("a.xlsx", b"xlsx")]), "application/zip"),
+    })
+    record = fetcher.fetch_publication(
+        DOI, fetch_config(tmp_path, ["europepmc", "pmc_s3"]), http=http)
+
+    assert record["status"] == "complete"
+    assert record["fulltext_xml"]["tier"] == "europepmc"
+    assert record["tiers_tried"] == ["europepmc"]
+    assert http.called_matching("pmc-oa-opendata") == 0
+
+
+def test_a_missing_jats_never_sends_an_article_to_the_browser(tmp_path):
+    """Only tiers that serve JATS are asked for it. The browser tier cannot, and a
+    headless Chrome launched to fetch nothing would be the cost of getting the skip
+    rule wrong -- `break` became `continue`, and this pins what `continue` skips."""
+    http = _http({SUPPL: (200, make_zip([("a.xlsx", b"xlsx")]), "application/zip")})
+    record = fetcher.fetch_publication(
+        DOI, fetch_config(tmp_path, ["europepmc", "proxy_browser"]), http=http)
+
+    assert record["status"] == "complete"
+    assert record.get("fulltext_xml") is None
+    assert record["tiers_tried"] == ["europepmc"]
+    assert not any(a.get("tier") == "proxy_browser" for a in record["attempts"])
+
+
 # -- the supplement taxonomy -------------------------------------------------
 
 def test_hassuppl_yes_with_nothing_retrieved_is_the_bug_case(tmp_path):
@@ -585,7 +642,7 @@ def _advising_tier(monkeypatch, *, hands_over_a_file: bool):
     from manuscript_harvest.fetch.sources.base import FetchedFile, ROLE_SUPPLEMENT
     from manuscript_harvest.fetch.sources.europepmc import EuropePmcSource
 
-    def blocked(self, ids, need_pdf, need_supplements):
+    def blocked(self, ids, need_pdf, need_supplements, need_xml=None):
         from manuscript_harvest.fetch.sources.base import SourceResult
         result = SourceResult(tier="europepmc")
         result.problems.append("2 supplementary file(s) are behind NCBI's proof-of-work page")
@@ -637,7 +694,7 @@ def test_advice_survives_when_the_supplements_really_are_missing(tmp_path, monke
 def test_a_raising_tier_is_recorded_not_fatal(tmp_path, monkeypatch):
     from manuscript_harvest.fetch.sources.europepmc import EuropePmcSource
 
-    def explode(self, ids, need_pdf, need_supplements):
+    def explode(self, ids, need_pdf, need_supplements, need_xml=None):
         raise RuntimeError("tier exploded")
 
     monkeypatch.setattr(EuropePmcSource, "fetch", explode)
@@ -1065,7 +1122,7 @@ def _later_tier_recording_what_it_was_asked(monkeypatch, *files):
 
     asked = []
 
-    def recorded(self, ids, need_pdf, need_supplements):
+    def recorded(self, ids, need_pdf, need_supplements, need_xml=None):
         asked.append({"pdf": need_pdf, "supplements": need_supplements})
         result = SourceResult(tier="pmc_oa")
         if need_supplements:
@@ -1202,7 +1259,7 @@ def _tier_handing_back(monkeypatch, *files, pdf_status=None):
     from manuscript_harvest.fetch.sources.base import SourceResult
     from manuscript_harvest.fetch.sources.europepmc import EuropePmcSource
 
-    def handed_over(self, ids, need_pdf, need_supplements):
+    def handed_over(self, ids, need_pdf, need_supplements, need_xml=None):
         result = SourceResult(tier="europepmc")
         result.suppl_status = "fetched_unverified"
         result.pdf_status = pdf_status

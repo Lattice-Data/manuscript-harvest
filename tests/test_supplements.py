@@ -344,13 +344,27 @@ def test_the_corpus_totals_hold():
     fetched file. `FETCHED` 2015 -> 2016 and `evidence_lost` 22 -> 21 are the same
     file counted on the other side, which is why they move together and by one. A
     drift in only one of them would not be this.
+
+    **Moved again by `fetch fill-xml`, 2026-10-09, and this time the check is what
+    did not move.** 80 articles gained a JATS they had been fetched without; 79 of
+    them declare supplements, so `measurable` 260 -> 339 and `declared` 2305 -> 2888.
+    Most of those JATS files are PMC author-manuscript deposits whose hrefs carry
+    NIHMS names (`NIHMS2097821-supplement-SupplData1.xlsx`), while the files on disk
+    came from the publisher through the browser under its own names
+    (`41588_2025_2083_MOESM1_ESM.pdf`, `mmc1.pdf`) -- the same supplements under two
+    naming schemes, which the ledger declines to pair by guesswork. That is the
+    `NOT_RECONCILED` 177 -> 708 (a named unknown, by design) against `FETCHED`
+    2018 -> 2070, and it is why `evidence_lost` and the count of articles carrying
+    it did not move at all: the pass made declarations visible, it did not lose a
+    file. The 80 are not yet re-extracted; the read-side numbers below do not
+    depend on that.
     """
     ledgers = [led for led in supplements.survey(CORPUS)
                if led.measurable]
-    assert len(ledgers) == 260
-    assert sum(led.declared for led in ledgers) == 2305
-    assert sum(led.count(FETCHED) for led in ledgers) == 2018
-    assert sum(led.count(NOT_RECONCILED) for led in ledgers) == 177
+    assert len(ledgers) == 339
+    assert sum(led.declared for led in ledgers) == 2888
+    assert sum(led.count(FETCHED) for led in ledgers) == 2070
+    assert sum(led.count(NOT_RECONCILED) for led in ledgers) == 708
     assert sum(led.evidence_lost for led in ledgers) == 20
     assert len([led for led in ledgers if led.evidence_lost]) == 11
 

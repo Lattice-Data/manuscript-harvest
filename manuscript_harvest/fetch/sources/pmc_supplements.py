@@ -58,7 +58,8 @@ class PmcSupplementsSource(Source):
     def applies(self, ids) -> bool:
         return bool(ids.pmcid)
 
-    def fetch(self, ids, need_pdf: bool, need_supplements: bool) -> SourceResult:
+    def fetch(self, ids, need_pdf: bool, need_supplements: bool,
+              need_xml: Optional[bool] = None) -> SourceResult:
         result = SourceResult(tier=self.name)
         if not need_supplements:
             return result

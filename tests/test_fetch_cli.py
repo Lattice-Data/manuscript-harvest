@@ -364,10 +364,11 @@ def test_a_run_with_no_config_file_can_still_reach_the_s3_bucket_at_speed(tmp_pa
     fetch_cfg = cli.load_config(tmp_path / "nonexistent.yaml")["fetch"]
 
     assert "pmc_s3" in fetch_cfg["tiers"]
+    assert fetch_cfg["min_interval_overrides"]["pmc-oa-opendata.s3.amazonaws.com"] == 0.2
     assert fetch_cfg["min_interval_overrides"] == \
-        {"pmc-oa-opendata.s3.amazonaws.com": 0.2}
+        cli.DEFAULT_FETCH_CONFIG["min_interval_overrides"]
     assert build_http({"fetch": fetch_cfg}).min_interval_overrides == \
-        {"pmc-oa-opendata.s3.amazonaws.com": 0.2}, "and it reaches the client"
+        cli.DEFAULT_FETCH_CONFIG["min_interval_overrides"], "and it reaches the client"
 
 
 def test_a_run_with_no_config_file_still_fetches_only_what_text_comes_out_of(tmp_path):
@@ -408,7 +409,37 @@ def test_a_users_own_overrides_are_added_to_the_default_not_swapped_for_it(tmp_p
     config = _config_file(tmp_path, min_interval_overrides={"api.example": 1.0})
     overrides = cli.load_config(config)["fetch"]["min_interval_overrides"]
 
-    assert overrides == {"pmc-oa-opendata.s3.amazonaws.com": 0.2, "api.example": 1.0}
+    assert overrides == {**cli.DEFAULT_FETCH_CONFIG["min_interval_overrides"],
+                         "api.example": 1.0}
+    assert overrides["pmc-oa-opendata.s3.amazonaws.com"] == 0.2
+
+
+def test_the_shipped_intervals_match_the_built_in_ones_and_respect_ncbis_ceiling():
+    """Two copies of the politeness numbers, pinned in step the way
+    `text_bearing_only` is: `config.yaml` for a run that finds it and
+    `DEFAULT_FETCH_CONFIG` for one that does not. The `api.elsevier.com` entry had
+    already drifted between them when this was written.
+
+    And the numbers themselves. NCBI's E-utilities allow 3 requests a second without
+    a key, so neither NCBI host may sit below a third of a second -- the old 3.0 s
+    default was a misreading of that guideline as one request every 3 seconds. The
+    bioRxiv hosts sit *above* the default, being the one operator that has answered
+    this client with 429s.
+    """
+    from pathlib import Path
+
+    import yaml
+
+    shipped = yaml.safe_load(
+        (Path(__file__).resolve().parent.parent / "config.yaml").read_text())["fetch"]
+    built_in = cli.DEFAULT_FETCH_CONFIG
+
+    assert shipped["min_interval_seconds"] == built_in["min_interval_seconds"]
+    assert shipped["min_interval_overrides"] == built_in["min_interval_overrides"]
+    for host in ("www.ncbi.nlm.nih.gov", "pmc.ncbi.nlm.nih.gov"):
+        assert 1 / 3 <= built_in["min_interval_overrides"][host] < built_in["min_interval_seconds"]
+    for host in ("www.biorxiv.org", "api.biorxiv.org"):
+        assert built_in["min_interval_overrides"][host] > built_in["min_interval_seconds"]
 
 
 def test_no_proxy_and_headed_reach_the_nested_config():

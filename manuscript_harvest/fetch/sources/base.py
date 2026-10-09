@@ -145,9 +145,16 @@ class SourceResult:
 
 
 class Source:
-    """Base class. Subclasses set `name` and implement `applies` and `fetch`."""
+    """Base class. Subclasses set `name` and implement `applies` and `fetch`.
+
+    `provides_xml` says whether a tier can hand back the article's JATS. The fetcher
+    reads it once the PDF and the supplements are settled: a tier that cannot supply
+    XML is skipped then rather than asked, and the browser never opens for a file it
+    could not produce.
+    """
 
     name = "base"
+    provides_xml = False
 
     def __init__(self, http, config: Optional[dict] = None):
         self.http = http
@@ -304,5 +311,20 @@ class Source:
     def applies(self, ids) -> bool:
         raise NotImplementedError
 
-    def fetch(self, ids, need_pdf: bool, need_supplements: bool) -> SourceResult:
+    def fetch(self, ids, need_pdf: bool, need_supplements: bool,
+              need_xml: Optional[bool] = None) -> SourceResult:
+        """Fetch what is still missing: the PDF, the supplements, the JATS.
+
+        `need_xml` is the newest of the three and the only one with a default, because
+        every caller before it existed got the XML exactly when the PDF was wanted.
+        None keeps that contract and `wants_xml` resolves it; the fetcher always passes
+        an explicit bool. 79 of this corpus's 330 PMC articles sat without a JATS
+        because their PDF arrived from Europe PMC while its `fullTextXML` answered 404,
+        and no tier was ever asked for the XML on its own.
+        """
         raise NotImplementedError
+
+    @staticmethod
+    def wants_xml(need_pdf: bool, need_xml: Optional[bool]) -> bool:
+        """`need_xml`, or the pre-`need_xml` contract when the caller did not say."""
+        return need_pdf if need_xml is None else need_xml
