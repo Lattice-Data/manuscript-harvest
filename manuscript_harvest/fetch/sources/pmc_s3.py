@@ -134,6 +134,7 @@ from .base import (
     FetchedFile,
     Source,
     SourceResult,
+    as_int,
 )
 from .pmc_oa import supplement_or_media
 
@@ -176,7 +177,7 @@ class _Object(NamedTuple):
     """One listed object: its key, its declared size, and the key parsed.
 
     `size` is Optional because a malformed `<Size>` has to mean *unknown* rather
-    than zero -- see `_as_int`.
+    than zero -- see `base.as_int`.
     """
 
     key: str
@@ -197,20 +198,6 @@ def _child_text(element, name: str) -> str:
         if _local(child.tag) == name:
             return (child.text or "").strip()
     return ""
-
-
-def _as_int(text: str) -> Optional[int]:
-    """`<Size>` as an int, or None when it is absent or not a number.
-
-    None is *unknown*, not zero, and the difference is the whole point of the
-    pre-download refusal: reading a malformed size as 0 would wave a 4 GB object
-    through the cap. Unknown skips the early refusal and falls back to the
-    post-download length check in `_download`.
-    """
-    try:
-        return int(text)
-    except (TypeError, ValueError):
-        return None
 
 
 def _read_page(root) -> Tuple[List[Tuple[str, Optional[int]]], Optional[str]]:
@@ -235,7 +222,7 @@ def _read_page(root) -> Tuple[List[Tuple[str, Optional[int]]], Optional[str]]:
         if local == "Contents":
             key = _child_text(child, "Key")
             if key:
-                keys.append((key, _as_int(_child_text(child, "Size"))))
+                keys.append((key, as_int(_child_text(child, "Size"))))
         elif local == "NextContinuationToken":
             token = (child.text or "").strip()
     return keys, (token or None)

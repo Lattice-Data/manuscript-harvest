@@ -81,7 +81,6 @@ def test_every_extension_the_policy_keeps_is_fetchable():
     for extension in sorted(text_bearing.KEPT_EXTENSIONS):
         name = f"supplement{extension}"
         assert text_bearing.skip_reason(name) is None, name
-        assert text_bearing.text_can_be_extracted(name), name
 
 
 def test_archives_are_kept_although_no_extension_in_them_is_text():
@@ -97,7 +96,6 @@ def test_images_and_audio_video_are_the_two_refusals():
     assert text_bearing.skip_reason("panel.TIFF") == text_bearing.SKIP_IMAGE
     assert text_bearing.skip_reason("movie1.mp4") == text_bearing.SKIP_AUDIO_VIDEO
     assert text_bearing.skip_reason("audio-s1.WAV") == text_bearing.SKIP_AUDIO_VIDEO
-    assert text_bearing.text_can_be_extracted("movie1.mp4") is False
 
 
 def test_svg_is_refused_although_it_is_xml_on_the_wire():

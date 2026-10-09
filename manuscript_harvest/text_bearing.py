@@ -151,11 +151,6 @@ def skip_reason(name: str) -> Optional[str]:
     return None
 
 
-def text_can_be_extracted(name: str) -> bool:
-    """The predicate, for readers who want it as a question rather than a reason."""
-    return skip_reason(name) is None
-
-
 def policy_is_on(fetch_cfg: Optional[dict]) -> bool:
     """Is the fetch stage restricted to files text can come out of?
 

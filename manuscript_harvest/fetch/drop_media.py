@@ -106,28 +106,6 @@ def _removable(directory: Path, record: dict) -> List[dict]:
     return out
 
 
-def _prune_empty_dirs(directory: Path) -> List[str]:
-    """Remove `supplementary/` or `media/` if the sweep emptied it. Returns the names.
-
-    An empty `supplementary/` is worse than untidy: it reads as an article whose
-    supplements were never fetched, which is the one thing this corpus's whole status
-    taxonomy exists to distinguish from an article that has none.
-    """
-    gone = []
-    for name in (store.SUPPLEMENT_DIR, store.MEDIA_DIR):
-        target = directory / name
-        if not target.is_dir():
-            continue
-        if any(target.iterdir()):
-            continue
-        try:
-            target.rmdir()
-        except OSError:
-            continue
-        gone.append(name)
-    return gone
-
-
 def drop_media_article(directory, apply: bool = False) -> dict:
     """Report -- and with `apply`, perform -- one article's removals.
 
@@ -214,9 +192,9 @@ def drop_media_article(directory, apply: bool = False) -> dict:
         report["failed"] = failed
         report["note"] = f"{len(failed)} file(s) could not be deleted"
     if done:
-        # After the writes, not before: `_prune_empty_dirs` only removes a directory
+        # After the writes, not before: `prune_empty_group_dirs` only removes a directory
         # it finds empty, so the manifest on disk is already consistent with it.
-        report["emptied_dirs"] = _prune_empty_dirs(directory)
+        report["emptied_dirs"] = store.prune_empty_group_dirs(directory)
     return report
 
 

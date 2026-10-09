@@ -213,7 +213,7 @@ class EuropePmcSource(Source):
         # The endpoint sometimes answers 200 with something that is not an archive
         # (an error page, for instance). Check the magic bytes before unpacking so
         # the manifest says "not a zip" rather than leaking a BadZipFile.
-        if not resp.content[:2] == b"PK":
+        if resp.content[:2] != b"PK":
             result.suppl_status = "partial_failure"
             result.problems.append(
                 "europepmc supplementaryFiles returned a non-ZIP body "

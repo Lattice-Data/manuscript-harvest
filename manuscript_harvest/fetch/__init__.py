@@ -1,7 +1,9 @@
 """Acquisition stage: DOI -> article PDF + supplementary files on disk.
 
-Open-access routes are tried first (Europe PMC, PMC supplements, PMC OA, bioRxiv)
-because they need no credentials and no browser. Two of them do scrape a rendered
+Open-access routes are tried first -- `sources.OA_TIERS` is the one statement of
+which and in what order; today Europe PMC, PMC's S3 bucket, Elsevier's TDM API,
+PMC supplements, PMC OA and bioRxiv -- because none of them opens a browser or
+waits for a human. Two of them do scrape a rendered
 page -- `pmc_supplements` regexes PMC's HTML for `/bin/` paths and bioRxiv regexes
 its supplement page -- which is why those return `fetched_unverified` rather than
 `fetched`: see `fetcher`. The authenticated-browser route through the Stanford

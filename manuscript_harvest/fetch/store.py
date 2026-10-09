@@ -3,8 +3,11 @@
     corpus/<doi_slug>/
         manifest.json
         fulltext.pdf
-        fulltext.nxml            when Europe PMC, bioRxiv or an OA package had JATS
+        fulltext.nxml            when Europe PMC, PMC's S3 bucket or bioRxiv had JATS
         supplementary/01_...     original filenames, sanitised and ordered
+        media/01_...             a deposit's own article figures, sorted out of
+                                 supplementary/ by `pmc_oa.supplement_or_media`;
+                                 empty under `fetch.text_bearing_only`
         landing.html             browser tier only, for adapter debugging
 
 One record per article that says exactly where every byte came from, including
@@ -43,6 +46,23 @@ def article_dir(corpus_dir, doi: str) -> Path:
 
 def sha256_bytes(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
+
+
+def sha256_file(path, chunk: int = 1 << 20) -> str:
+    """`sha256_bytes` for a file too large to want in memory.
+
+    Read in 1 MB blocks: the corpus holds a 91.9 MB `.xlsx` among its unreferenced
+    files, a 326.9 MB article made entirely of them, and streamed supplements past
+    the browser transport's ~384 MB wall, so hashing whole files from memory is the
+    one shape that would not scale. One definition -- `save_staged_file`,
+    `fetch/orphans.py` and `fetch/manual_fetch.py` had each grown a copy of this
+    loop.
+    """
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(chunk), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def sanitize_filename(name: str, fallback: str = "file") -> str:
@@ -231,27 +251,34 @@ def save_staged_file(directory, relative_path: str, staged) -> dict:
     nowhere else, and a digest of what was *streamed* rather than of what is *on
     disk* would diverge the moment a move half-failed.
 
-    `replace` rather than `rename`, so a retry over a previous attempt's file
-    overwrites rather than raising on Windows; `shutil.move` rather than either
-    when the stage is on another filesystem, which it is not today (the stage is a
-    sibling temp file in the article directory, chosen precisely so the move is
-    atomic) but would be the moment someone points a temp dir elsewhere.
+    `shutil.move` rather than `rename`: the stage is a directory `tempfile.mkdtemp`
+    made under the system temp dir (`proxy_browser._download_streamed`), which on
+    this machine shares a filesystem with the corpus and so moves by rename, and
+    which on another may not -- `move` copies in that case where `rename` raises.
+    The emptied staging directory is removed afterwards: left behind, one per
+    streamed file, it was the leak that this docstring's old claim of a sibling
+    stage in the article directory hid.
     """
     staged = Path(staged)
     target = Path(directory) / relative_path
     target.parent.mkdir(parents=True, exist_ok=True)
     if staged.resolve() != target.resolve():
         shutil.move(str(staged), str(target))
+        _remove_if_empty(staged.parent)
 
-    digest = hashlib.sha256()
-    with open(target, "rb") as handle:
-        for block in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(block)
     return {
         "path": relative_path,
         "bytes": target.stat().st_size,
-        "sha256": digest.hexdigest(),
+        "sha256": sha256_file(target),
     }
+
+
+def _remove_if_empty(directory: Path) -> None:
+    """`rmdir` that is a no-op for a directory still holding anything, or already gone."""
+    try:
+        directory.rmdir()
+    except OSError:
+        pass
 
 
 def new_record(ids) -> dict:
@@ -545,6 +572,32 @@ def enforce_budget(corpus_dir, max_bytes: Optional[int], dry_run: bool = False) 
             "(all evicted already, or only the newest is left)"
         )
     return result
+
+
+def prune_empty_group_dirs(directory) -> List[str]:
+    """Remove `supplementary/` or `media/` when a sweep has emptied it. Returns the names.
+
+    An empty `supplementary/` is worse than untidy: it reads as an article whose
+    supplements were never fetched, which is the one thing this corpus's status
+    taxonomy exists to distinguish from an article that has none. Shared by
+    `drop_media` (a policy sweep) and `orphans` (an integrity sweep) from here rather
+    than by one importing the other, so neither command depends on the other's
+    module -- the coupling the two private copies were written to avoid.
+    """
+    directory = Path(directory)
+    gone = []
+    for name in (SUPPLEMENT_DIR, MEDIA_DIR):
+        target = directory / name
+        if not target.is_dir():
+            continue
+        if any(target.iterdir()):
+            continue
+        try:
+            target.rmdir()
+        except OSError:
+            continue
+        gone.append(name)
+    return gone
 
 
 def human_bytes(count: int) -> str:

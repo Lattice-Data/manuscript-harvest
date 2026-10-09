@@ -118,11 +118,6 @@ from .sources.base import (
     not_text_bearing_note,
 )
 
-# Statuses that mean the PDF is on disk and usable. Defined in `store`, which is
-# where `finalize_status` reads it, so the orchestrator and the record it writes
-# cannot disagree about what counts as having the article.
-_PDF_SUCCESS = store.PDF_USABLE
-
 #: Tier `suppl_status` values that mean *another route may still hold the files*: a
 #: download or an archive that failed, or a page nothing could read. Exactly the
 #: statuses a tier can set that `store.SUPPL_SETTLED` does not contain, and the one
@@ -157,7 +152,7 @@ def _best_pdf_status(reported: List[str]) -> str:
     one tier or from two.
     """
     for status in reported:
-        if status in _PDF_SUCCESS:
+        if status in store.PDF_USABLE:
             return status
     if not reported:
         return "not_found"
@@ -587,6 +582,7 @@ def fetch_publication(
                     else None
                 if reason is not None:
                     skipped_here.append((item.name, item.role, reason))
+                    _discard_staged(item)
                     continue
                 # Europe PMC's ZIP and the PMC listing overlap, so the same file
                 # can arrive twice. The key is (bytes, name), not bytes alone:
@@ -594,8 +590,13 @@ def fetch_publication(
                 # templates, repeated controls), and dropping one of those would
                 # be exactly the kind of silent loss this pipeline avoids.
                 # Storing a rare duplicate is the cheaper mistake.
-                key = (store.sha256_bytes(item.content), store.sanitize_filename(item.name))
+                #
+                # A streamed body has no `content` to hash -- `b""`, the same for
+                # every such file -- so its digest is read off the staged file; two
+                # large supplements sharing a name would otherwise collapse into one.
+                key = (_digest_of(item), store.sanitize_filename(item.name))
                 if key in seen_digests:
+                    _discard_staged(item)
                     continue
                 seen_digests[key] = item.name
                 item.tier = source.name
@@ -890,3 +891,30 @@ def _write_group(directory, subdir: str, files: List) -> List[dict]:
         })
         entries.append(entry)
     return entries
+
+
+def _digest_of(item) -> str:
+    """sha256 of a fetched file's bytes, wherever they are: in memory, or staged on disk."""
+    staged = getattr(item, "staged_path", None)
+    if staged:
+        return store.sha256_file(staged)
+    return store.sha256_bytes(item.content)
+
+
+def _discard_staged(item) -> None:
+    """Delete a streamed body this run decided not to keep.
+
+    `_write_group` is the only other consumer of `staged_path`, and it moves the
+    file. A file the text-bearing filter refused, or one dropped as a duplicate,
+    never reaches it -- so without this the bytes, up to a 488 MB supplement, stay
+    in the temp dir with nothing pointing at them.
+    """
+    staged = getattr(item, "staged_path", None)
+    if not staged:
+        return
+    path = Path(staged)
+    path.unlink(missing_ok=True)
+    try:
+        path.parent.rmdir()
+    except OSError:
+        pass

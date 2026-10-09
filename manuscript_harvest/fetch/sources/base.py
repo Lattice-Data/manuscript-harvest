@@ -66,6 +66,21 @@ def not_text_bearing_note(tier: str, skipped: Sequence[Tuple[str, str, str]],
     return note
 
 
+def as_int(raw) -> Optional[int]:
+    """A declared size as an int, or None when it is absent or not a number.
+
+    None is *unknown*, not zero, and the difference is the whole point of a
+    pre-download refusal: reading a malformed size as 0 would wave a 4 GB object
+    through the cap, while unknown skips the early refusal and falls back to the
+    post-download length check. `pmc_s3` reads S3's `<Size>` through this and
+    `elsevier_tdm` the JSON `size` string -- one definition where there were two.
+    """
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 @dataclass
 class FetchedFile:
     role: str

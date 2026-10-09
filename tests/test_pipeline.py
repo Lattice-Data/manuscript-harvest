@@ -1163,7 +1163,7 @@ def test_a_refetch_of_a_wholly_swept_set_does_not_claim_files_on_disk(tmp_path):
     `_entry_accounted_for` deliberately accepts a removal marker, and it has to: the
     alternative discards a swept article's record, which the test above defends. But
     the sentence it unlocked still promised bytes on disk, and after a whole-set sweep
-    there are none -- `drop-media` unlinked the last file and `_prune_empty_dirs`
+    there are none -- `drop-media` unlinked the last file and `store.prune_empty_group_dirs`
     removed `supplementary/` itself. `problems` is the field a reader trusts to
     describe the corpus, and this one is written into `manifest.json`, so a false
     sentence there outlives the run that wrote it.

@@ -91,21 +91,6 @@ UNIQUE = "unique"
 LOSSLESS = {REDUNDANT, REDUNDANT_ARCHIVE}
 
 
-def sha256_path(path, chunk: int = 1 << 20) -> str:
-    """`store.sha256_bytes` for a file too large to want in memory.
-
-    The corpus holds a 91.9 MB `.xlsx` among its unreferenced files and a 326.9 MB
-    article made entirely of them, and this runs over every candidate plus every
-    referenced file in the same article, so reading whole files into memory to hash
-    them is the one shape that would not scale here.
-    """
-    digest = hashlib.sha256()
-    with open(path, "rb") as handle:
-        for block in iter(lambda: handle.read(chunk), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
 def unreferenced_files(directory, record: Optional[dict]) -> List[dict]:
     """Every file under `supplementary/` or `media/` that `record` does not name.
 
@@ -226,34 +211,8 @@ def sweep_article(directory, record: Optional[dict]) -> dict:
         result["files"].append(row["path"])
         result["bytes"] += row["bytes"]
     if result["files"]:
-        result["emptied_dirs"] = _prune_empty_dirs(directory)
+        result["emptied_dirs"] = store.prune_empty_group_dirs(directory)
     return result
-
-
-def _prune_empty_dirs(directory: Path) -> List[str]:
-    """Remove `supplementary/` or `media/` if the sweep emptied it. Returns the names.
-
-    `drop_media._prune_empty_dirs` verbatim in behaviour and here for the same
-    reason it gives: an empty `supplementary/` reads as an article whose supplements
-    were never fetched, which is the one thing this corpus's status taxonomy exists
-    to distinguish from an article that has none. Not imported from there because
-    that module is about a text-bearing policy and this one is not; the shared thing
-    is three lines of `rmdir`, and coupling the two commands to save them would tie
-    a policy sweep to an integrity sweep.
-    """
-    gone = []
-    for name in _GROUPS:
-        target = directory / name
-        if not target.is_dir():
-            continue
-        if any(target.iterdir()):
-            continue
-        try:
-            target.rmdir()
-        except OSError:
-            continue
-        gone.append(name)
-    return gone
 
 
 def _referenced_hashes(directory: Path, record: dict) -> Dict[str, List[str]]:
@@ -278,7 +237,7 @@ def _referenced_hashes(directory: Path, record: dict) -> Dict[str, List[str]]:
             # It is not this command's business, and it must not become evidence that
             # anything else is redundant.
             continue
-        by_hash.setdefault(sha256_path(path), []).append(relative)
+        by_hash.setdefault(store.sha256_file(path), []).append(relative)
     return by_hash
 
 
@@ -379,7 +338,7 @@ def classify(directory, record: Optional[dict],
     rows = []
     for item in candidates:
         row = dict(item)
-        row["sha256"] = sha256_path(directory / item["path"])
+        row["sha256"] = store.sha256_file(directory / item["path"])
         rows.append(row)
 
     among_candidates: Dict[str, List[str]] = {}
@@ -473,7 +432,7 @@ def adopt_landing_html(directory, record: dict) -> dict:
     entry = {
         "path": store.LANDING_HTML,
         "bytes": path.stat().st_size,
-        "sha256": sha256_path(path),
+        "sha256": store.sha256_file(path),
         "adopted": True,
         "adopted_reason": ("file predates the manifest's landing_html key; the run "
                            "that saved it is no longer in this record, so its URL "
@@ -538,7 +497,7 @@ def adopt_supplement(directory, record: dict, relative_path: str) -> dict:
     entry = {
         "path": relative_path,
         "bytes": target.stat().st_size,
-        "sha256": sha256_path(target),
+        "sha256": store.sha256_file(target),
         "index": int(prefix),
         "label": original,
         "original_name": original,
@@ -645,7 +604,7 @@ def sweep_article_report(directory, apply: bool = False, include_unique: bool = 
     report.update({"files": done, "bytes": freed, "removed": bool(done),
                    "failed": failed})
     if done:
-        report["emptied_dirs"] = _prune_empty_dirs(directory)
+        report["emptied_dirs"] = store.prune_empty_group_dirs(directory)
     if failed:
         report["note"] = f"{len(failed)} file(s) could not be deleted"
     if adopt_landing and report["landing"] == "unreferenced":

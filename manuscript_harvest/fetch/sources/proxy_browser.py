@@ -201,6 +201,15 @@ def _import_playwright():
     return sync_playwright
 
 
+def _close_quietly(page) -> None:
+    """`page.close()` that cannot raise. A page torn down by a context that has
+    already died is not a new failure, and every exit path here closes one."""
+    try:
+        page.close()
+    except Exception:
+        pass
+
+
 def proxied_url(url: str, fetch_cfg: dict) -> str:
     """Wrap a publisher URL in the library proxy prefix, if enabled."""
     proxy = (fetch_cfg.get("proxy") or {})
@@ -639,8 +648,12 @@ class ProxyBrowserSource(Source):
         return content_deadline(self.config)
 
     def applies(self, ids) -> bool:
-        # Useful either for a paywalled publisher page or for PMC's challenge.
-        return bool(ids.landing_url or ids.doi or ids.pmcid)
+        # Always. The old test, `landing_url or doi or pmcid`, could never be false:
+        # `ids.doi` is set by `normalize_doi`, which raises rather than return an
+        # empty one, and a publisher page is reachable from the DOI alone through
+        # doi.org. Whether the browser is wanted for a paywalled page or for PMC's
+        # challenge is decided inside `fetch`, not here.
+        return True
 
     def fetch(self, ids, need_pdf: bool, need_supplements: bool) -> SourceResult:
         result = SourceResult(tier=self.name)
@@ -699,10 +712,7 @@ class ProxyBrowserSource(Source):
             result.note("pmc_page", url=url, status="error", error=f"{type(e).__name__}: {e}")
             return
         finally:
-            try:
-                page.close()
-            except Exception:
-                pass
+            _close_quietly(page)
 
         if not parsed:
             result.suppl_status = "page_not_parsed"
@@ -758,10 +768,7 @@ class ProxyBrowserSource(Source):
                 result.pdf_status = named.denial
             if need_supplements:
                 result.suppl_status = "page_not_parsed"
-            try:
-                page.close()
-            except Exception:
-                pass
+            _close_quietly(page)
             return
         except Exception as e:
             # Before settling for `download_failed`, ask the page what it is. A
@@ -779,10 +786,7 @@ class ProxyBrowserSource(Source):
             if need_supplements:
                 # Nothing was looked at, so nothing licenses "none".
                 result.suppl_status = "page_not_parsed"
-            try:
-                page.close()
-            except Exception:
-                pass
+            _close_quietly(page)
             return
 
         # Keep the page we saw; it is the only way to debug an adapter later.
@@ -825,10 +829,7 @@ class ProxyBrowserSource(Source):
                 # Never `unknown_none_found` here: nothing was looked at, so
                 # nothing licenses the claim that this article has none.
                 result.suppl_status = "page_not_parsed"
-            try:
-                page.close()
-            except Exception:
-                pass
+            _close_quietly(page)
             return
 
         adapter = adapter_for(final_url)
@@ -867,10 +868,7 @@ class ProxyBrowserSource(Source):
                     result.pdf_status = "publisher_stub_page"
                 if need_supplements:
                     result.suppl_status = "page_not_parsed"
-                try:
-                    page.close()
-                except Exception:
-                    pass
+                _close_quietly(page)
                 return
             # From here on the page under the adapter is the one cell.com served.
             final_url, body = recovered
@@ -945,10 +943,7 @@ class ProxyBrowserSource(Source):
                                 listed=len(links), attempted=attempted,
                                 fetched=fetched, adapter=adapter.name)
 
-        try:
-            page.close()
-        except Exception:
-            pass
+        _close_quietly(page)
 
     def _cell_press_retry(self, page, adapter, ids, result: SourceResult):
         """Reload a stubbed Elsevier page at cell.com.
@@ -1227,17 +1222,13 @@ class ProxyBrowserSource(Source):
     def _oversize_mb(self, context, url: str, referer: str) -> Optional[float]:
         """Content-Length in MB if it exceeds the cap, else None.
 
-        Checked *before* transferring. Measured on
-        10.1126/science.aax6234: one supplement is a 487.8 MB gzip, so the old
-        post-hoc check both wasted the whole transfer and then died inside
-        Playwright, whose Node driver marshals bodies as strings and cannot exceed
-        V8's ~512 MB limit ("Cannot create a string longer than 0x1fffffe8").
+        Checked *before* transferring. Measured on 10.1126/science.aax6234: one
+        supplement is a 487.8 MB gzip, so the old post-hoc check both wasted the
+        whole transfer and then died inside Playwright at the base64 wall -- about
+        384 MB of file, see `_TRANSPORT_SAFE_BYTES`, not the ~512 MB this docstring
+        used to claim.
         """
-        try:
-            head = context.request.head(url, headers={"Referer": referer})
-            length = int(head.headers.get("content-length") or 0)
-        except Exception:
-            return None
+        length = self._content_length(context, url, referer)
         if length and length > self.max_file_bytes:
             return round(length / 1024 / 1024, 1)
         return None
@@ -1278,10 +1269,13 @@ class ProxyBrowserSource(Source):
         exports exactly the ones scoped to this URL; nothing else is shared, and
         the client keeps its own polite User-Agent and per-host interval.
 
-        The temp file is a sibling in the corpus, not in the system temp dir, so
-        `save_staged_file`'s move stays on one filesystem and stays atomic -- 423 MB
-        copied across devices at the end of a download is exactly the cost this
-        route exists to avoid.
+        The stage is a private directory under the system temp dir
+        (`tempfile.mkdtemp`), because this tier does not know the article directory:
+        `store.save_staged_file` moves the file into place -- a rename when the temp
+        dir shares a filesystem with the corpus, a copy when it does not -- and
+        removes the emptied staging directory. Staging beside the article would make
+        the move a rename always, at the cost of a crashed fetch leaving a 400 MB
+        file inside the corpus; see FINDINGS-2026-10-09-fetch-review.md.
         """
         try:
             jar = {c["name"]: c["value"] for c in context.cookies(url)}
@@ -1322,8 +1316,9 @@ class ProxyBrowserSource(Source):
     def _refuse_oversize(self, url: str, oversize, result: SourceResult, via: str) -> None:
         """Record a file the cap refused. Shared by both download paths.
 
-        They return different arities -- `_download_one` a 4-tuple, `_download_via_page`
-        a 3-tuple -- so this records and the caller shapes its own return.
+        They return different arities -- `_download_one` and `_download_streamed` a
+        5-tuple, `_download_via_page` a 3-tuple -- so this records and the caller
+        shapes its own return.
         """
         result.problems.append(
             f"{url.rsplit('/', 1)[-1]} not fetched: {oversize} MB exceeds the "
@@ -1488,10 +1483,7 @@ class ProxyBrowserSource(Source):
                 result.note("challenge", url=url, via=via, status="cleared",
                             waited_seconds=wait_seconds)
             finally:
-                try:
-                    page.close()
-                except Exception:
-                    pass
+                _close_quietly(page)
 
         # Re-check the size: before the challenge was cleared, Content-Length
         # described the 1.8 KB challenge page, not the file.
